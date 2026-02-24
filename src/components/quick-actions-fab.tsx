@@ -5,12 +5,12 @@ import Link from "next/link";
 import { Plus, Camera, Receipt, FileText, PhoneIncoming, BriefcaseBusiness } from "lucide-react";
 
 const actions = [
-  { href: "/leads#new-lead-form", label: "New Lead", icon: PhoneIncoming },
-  { href: "/jobs", label: "New Job", icon: BriefcaseBusiness },
+  { href: "/leads#new-lead-form", label: "New Lead (estimate)", icon: PhoneIncoming },
+  { href: "/jobs#new-job", label: "New Job (already sold)", icon: BriefcaseBusiness },
   { href: "/attendance#add-worker-form", label: "Add Worker", icon: Plus },
   { href: "/jobs?view=today", label: "Open Job Expenses", icon: Receipt },
   { href: "/jobs?view=today", label: "Open Photo Capture", icon: Camera },
-  { href: "/leads", label: "Joist Import", icon: FileText },
+  { href: "/leads#joist-import", label: "Joist Import (from CSV)", icon: FileText },
 ];
 
 export function QuickActionsFab() {

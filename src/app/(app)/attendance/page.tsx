@@ -310,46 +310,68 @@ export default async function AttendancePage({
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
-                <tr key={row.user.id} className="border-b border-slate-100">
-                  <td className="px-2 py-1.5 font-medium text-slate-900">{row.user.fullName}</td>
-                  {weekDays.map((day) => {
-                    const blocks = getBlocksForDay(row.user.id, day);
-                    const isToday = format(day, "yyyy-MM-dd") === format(now, "yyyy-MM-dd");
-                    return (
-                      <td
-                        key={day.toISOString()}
-                        className={`px-2 py-1.5 align-top ${isToday ? "bg-amber-50/50" : ""}`}
-                      >
-                        {blocks.length === 0 ? (
-                          <span className="text-slate-400">—</span>
-                        ) : (
-                          <ul className="space-y-0.5">
-                            {blocks.map((b, i) => (
-                              <li key={b.eventId ?? i} className="text-xs text-slate-700">
-                                {b.jobId && b.eventId ? (
-                                  <Link
-                                    href={`/jobs/${b.jobId}?edit=${b.eventId}#schedule`}
-                                    className="inline-flex flex-wrap items-baseline gap-0.5 rounded px-0.5 -mx-0.5 hover:bg-slate-100 hover:text-slate-900"
-                                  >
-                                    <span className="font-medium text-slate-800">{b.jobName}</span>
-                                    <span className="text-slate-500"> {format(b.startAt, "h:mm a")}–{format(b.endAt, "h:mm a")}</span>
-                                  </Link>
-                                ) : (
-                                  <>
-                                    <span className="font-medium text-slate-800">{b.jobName}</span>
-                                    <span className="text-slate-500"> {format(b.startAt, "h:mm a")}–{format(b.endAt, "h:mm a")}</span>
-                                  </>
-                                )}
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
+              {rows.map((row) => {
+                const minutes = weeklyScheduledMinutesByUser.get(row.user.id) ?? 0;
+                const hours = minutes / 60;
+                return (
+                  <tr key={row.user.id} className="border-b border-slate-100">
+                    <td className="px-2 py-1.5 font-medium text-slate-900">
+                      <div className="flex flex-col">
+                        <Link
+                          href={`/time?workerId=${row.user.id}`}
+                          className="max-w-[180px] truncate text-slate-900 hover:underline"
+                        >
+                          {row.user.fullName}
+                        </Link>
+                        {hours > 0 ? (
+                          <span className="text-[11px] text-slate-500">Scheduled: {hours.toFixed(1)}h</span>
+                        ) : null}
+                      </div>
+                    </td>
+                    {weekDays.map((day) => {
+                      const blocks = getBlocksForDay(row.user.id, day);
+                      const isToday = format(day, "yyyy-MM-dd") === format(now, "yyyy-MM-dd");
+                      return (
+                        <td
+                          key={day.toISOString()}
+                          className={`px-2 py-1.5 align-top ${isToday ? "bg-amber-50/50" : ""}`}
+                        >
+                          {blocks.length === 0 ? (
+                            <span className="text-slate-400">—</span>
+                          ) : (
+                            <ul className="space-y-0.5">
+                              {blocks.map((b, i) => (
+                                <li key={b.eventId ?? i} className="text-xs text-slate-700">
+                                  {b.jobId && b.eventId ? (
+                                    <Link
+                                      href={`/jobs/${b.jobId}?edit=${b.eventId}#schedule`}
+                                      className="inline-flex flex-wrap items-baseline gap-0.5 rounded px-0.5 -mx-0.5 hover:bg-slate-100 hover:text-slate-900"
+                                    >
+                                      <span className="font-medium text-slate-800">{b.jobName}</span>
+                                      <span className="text-slate-500">
+                                        {" "}
+                                        {format(b.startAt, "h:mm a")}–{format(b.endAt, "h:mm a")}
+                                      </span>
+                                    </Link>
+                                  ) : (
+                                    <>
+                                      <span className="font-medium text-slate-800">{b.jobName}</span>
+                                      <span className="text-slate-500">
+                                        {" "}
+                                        {format(b.startAt, "h:mm a")}–{format(b.endAt, "h:mm a")}
+                                      </span>
+                                    </>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

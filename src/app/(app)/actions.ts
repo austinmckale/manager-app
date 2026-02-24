@@ -1791,6 +1791,35 @@ export async function updateTimeEntryAction(formData: FormData) {
   revalidatePath("/today");
 }
 
+export async function deleteTimeEntryAction(formData: FormData) {
+  if (isDemoMode()) {
+    revalidatePath("/time");
+    return;
+  }
+
+  const auth = await requireAuth();
+  const timeEntryId = String(formData.get("timeEntryId") ?? "");
+  if (!timeEntryId) return;
+
+  const entry = await prisma.timeEntry.findUniqueOrThrow({ where: { id: timeEntryId } });
+
+  if (await isPayrollWeekLocked(auth.orgId, entry.start)) {
+    throw new Error("Payroll week is locked. Reopen the week to delete time.");
+  }
+
+  if (entry.workerId !== auth.userId && !canManageOrg(auth.role)) {
+    throw new Error("You do not have permission to delete this time entry.");
+  }
+
+  await prisma.timeEntry.delete({ where: { id: timeEntryId } });
+
+  await logActivity(auth.orgId, entry.jobId, auth.userId, "time.deleted", { timeEntryId });
+  revalidatePath("/time");
+  if (entry.jobId) revalidatePath(`/jobs/${entry.jobId}`);
+  revalidatePath("/attendance");
+  revalidatePath("/today");
+}
+
 export async function updateOrgSettingsAction(formData: FormData) {
   if (isDemoMode()) {
     revalidatePath("/settings/targets");

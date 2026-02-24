@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { format, setHours, setMinutes, setSeconds, startOfDay } from "date-fns";
 import { requireAuth } from "@/lib/auth";
-import { getRunningTimer, getTodayOpsSummary } from "@/lib/data";
+import { getTodayOpsSummary } from "@/lib/data";
 import { computeDashboardKpis } from "@/lib/kpis";
 import { isDemoMode } from "@/lib/demo";
 import { canManageOrg } from "@/lib/permissions";
@@ -12,9 +12,8 @@ import { sendMissingClockInsAlertAction } from "@/app/(app)/actions";
 export default async function TodayPage() {
   const auth = await requireAuth();
   const isOwnerOrAdmin = canManageOrg(auth.role);
-  const [ops, runningTimer, kpis, attendanceAlertCount] = await Promise.all([
+  const [ops, kpis, attendanceAlertCount] = await Promise.all([
     getTodayOpsSummary({ orgId: auth.orgId, userId: auth.userId, role: auth.role }),
-    isOwnerOrAdmin ? getRunningTimer(auth.userId) : Promise.resolve(null),
     isOwnerOrAdmin ? computeDashboardKpis(auth.orgId) : Promise.resolve({ outstandingInvoicesTotal: 0 }),
     (async () => {
       if (isDemoMode()) return 1;
@@ -42,22 +41,31 @@ export default async function TodayPage() {
     })(),
   ]);
 
+  const jobsTodayCount = new Set(ops.todayEvents.map((event) => event.job.id)).size;
+  const visitsTodayCount = ops.todayEvents.length;
+
   return (
     <div className="space-y-4">
       {isOwnerOrAdmin ? (
         <>
           <section className="rounded-2xl border border-slate-200 bg-white p-4">
             <h2 className="text-sm font-semibold text-slate-900">Owner Command Center</h2>
-            {runningTimer ? (
-              <p className="mt-2 text-sm text-amber-700">Timer running now: {runningTimer.job.jobName}</p>
-            ) : (
-              <p className="mt-2 text-sm text-slate-600">No active timer. Start one before work begins.</p>
-            )}
+            <p className="mt-2 text-sm text-slate-600">
+              Start on Today each morning, then use Team for schedule and Time for weekly hours.
+            </p>
             <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-              <Link href="/attendance" className="rounded-xl border border-slate-300 px-3 py-2">Clock Employees</Link>
-              <Link href="/leads#new-lead-form" className="rounded-xl border border-slate-300 px-3 py-2">New Lead</Link>
-              <Link href="/time" className="rounded-xl border border-slate-300 px-3 py-2">Payroll Week</Link>
-              <Link href="/reports" className="rounded-xl border border-slate-300 px-3 py-2">Export Reports</Link>
+              <Link href="/attendance" className="rounded-xl border border-slate-300 px-3 py-2">
+                Clock Employees
+              </Link>
+              <Link href="/leads#new-lead-form" className="rounded-xl border border-slate-300 px-3 py-2">
+                New Lead
+              </Link>
+              <Link href="/time" className="rounded-xl border border-slate-300 px-3 py-2">
+                Payroll Week
+              </Link>
+              <Link href="/reports" className="rounded-xl border border-slate-300 px-3 py-2">
+                Export Reports
+              </Link>
             </div>
           </section>
 
@@ -136,9 +144,16 @@ export default async function TodayPage() {
         </h2>
         <p className="mt-1 text-xs text-slate-500">
           {isOwnerOrAdmin
-            ? "Every scheduled block across the company today. For each row: Hub (scope/Joist, details) → Time (clock crew) → Capture (photos/receipts)."
-            : "Your scheduled blocks today. For each: open Hub (scope & details), log Time, then Capture photos/receipts."}
+            ? "Every scheduled block across the company today. For each row: Hub (scope/Joist, details) → Time (confirm hours) → Capture (photos/receipts)."
+            : "Your scheduled blocks today. For each: open Hub (scope & details), confirm hours on Time, then Capture photos/receipts."}
         </p>
+        {isOwnerOrAdmin ? (
+          <p className="mt-1 text-xs font-semibold text-slate-700">
+            Today: {jobsTodayCount} job{jobsTodayCount === 1 ? "" : "s"} · {visitsTodayCount} visit
+            {visitsTodayCount === 1 ? "" : "s"} · {attendanceAlertCount} missing clock-in
+            {attendanceAlertCount === 1 ? "" : "s"}
+          </p>
+        ) : null}
         <div className="mt-3 space-y-2 text-sm">
           {(() => {
             const seen = new Set<string>();
@@ -148,26 +163,60 @@ export default async function TodayPage() {
               seen.add(key);
               return true;
             });
-            return todayDeduped.map((event) => {
-              return (
-                <article key={event.id} className="rounded-xl border border-slate-200 p-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="font-medium text-slate-900">{event.job.jobName}</p>
-                      <p className="mt-0.5 text-xs text-slate-600">
-                        <span className="font-medium">{format(event.startAt, "h:mm a")} – {format(event.endAt, "h:mm a")}</span>
-                        {event.notes ? <span className="text-slate-500"> · {event.notes}</span> : null}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 gap-1">
-                      <Link href={`/jobs/${event.job.id}`} className="rounded-lg border border-slate-300 px-2 py-1 text-xs">Hub</Link>
-                      <Link href={`/time?jobId=${event.job.id}`} className="rounded-lg border border-slate-300 px-2 py-1 text-xs">Time</Link>
-                      <Link href={`/jobs/${event.job.id}#capture`} className="rounded-lg border border-slate-300 px-2 py-1 text-xs">Capture</Link>
-                    </div>
+            const grouped = new Map<
+              string,
+              {
+                jobId: string;
+                jobName: string;
+                events: typeof todayDeduped;
+              }
+            >();
+            for (const event of todayDeduped) {
+              const jobId = event.job.id;
+              const jobName = event.job.jobName;
+              const existing = grouped.get(jobId) ?? { jobId, jobName, events: [] as typeof todayDeduped };
+              existing.events = [...existing.events, event];
+              grouped.set(jobId, existing);
+            }
+            return [...grouped.values()].map((group) => (
+              <article key={group.jobId} className="rounded-xl border border-slate-200 p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="font-medium text-slate-900">{group.jobName}</p>
+                    <ul className="mt-1 space-y-0.5 text-xs text-slate-600">
+                      {group.events.map((event) => (
+                        <li key={event.id}>
+                          <span className="font-medium">
+                            {format(event.startAt, "h:mm a")} – {format(event.endAt, "h:mm a")}
+                          </span>
+                          {event.notes ? <span className="text-slate-500"> · {event.notes}</span> : null}
+                        </li>
+                      ))}
+                    </ul>
                   </div>
-                </article>
-              );
-            });
+                  <div className="flex shrink-0 gap-1">
+                    <Link
+                      href={`/jobs/${group.jobId}`}
+                      className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                    >
+                      Hub
+                    </Link>
+                    <Link
+                      href={`/time?jobId=${group.jobId}`}
+                      className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                    >
+                      Time
+                    </Link>
+                    <Link
+                      href={`/jobs/${group.jobId}#capture`}
+                      className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                    >
+                      Capture
+                    </Link>
+                  </div>
+                </div>
+              </article>
+            ));
           })()}
           {ops.todayEvents.length === 0 ? (
             <p className="text-sm text-slate-500">

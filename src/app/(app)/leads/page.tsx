@@ -168,7 +168,7 @@ export default async function LeadsPage() {
         </form>
       </section>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-4">
+      <section id="joist-import" className="rounded-2xl border border-slate-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-slate-900">Joist CSV Import</h3>
         <p className="mt-1 text-xs text-slate-500">Upload Joist estimate/invoice export to auto-create and update leads.</p>
         <form action={importJoistCsvAction} className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">

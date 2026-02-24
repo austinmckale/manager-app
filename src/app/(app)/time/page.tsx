@@ -1,13 +1,7 @@
 import { endOfWeek, format, startOfWeek } from "date-fns";
-import {
-  createTimeEntryAction,
-  setPayrollWeekStateAction,
-  startTimerAction,
-  stopTimerAction,
-  updateTimeEntryAction,
-} from "@/app/(app)/actions";
+import { createTimeEntryAction, deleteTimeEntryAction, setPayrollWeekStateAction, updateTimeEntryAction } from "@/app/(app)/actions";
 import { requireAuth } from "@/lib/auth";
-import { getJobs, getOrgUsers, getRunningTimer } from "@/lib/data";
+import { getJobs, getOrgUsers } from "@/lib/data";
 import { demoJobs, demoUsers, isDemoMode, listDemoRuntimeTimeEntries } from "@/lib/demo";
 import { canEditTimeEntry, canManageOrg } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
@@ -43,10 +37,9 @@ export default async function TimePage({
   const from = params.from ? new Date(params.from) : defaultFrom;
   const to = params.to ? new Date(params.to) : now;
 
-  const [users, jobs, runningTimer, settings] = await Promise.all([
+  const [users, jobs, settings] = await Promise.all([
     getOrgUsers(auth.orgId),
     getJobs({ orgId: auth.orgId, role: auth.role, userId: auth.userId, view: "all" }),
-    getRunningTimer(auth.userId),
     isDemoMode() ? null : prisma.organizationSetting.findUnique({ where: { orgId: auth.orgId } }),
   ]);
 
@@ -270,37 +263,6 @@ export default async function TimePage({
         </div>
       </section>
 
-      {/* Timer */}
-      <section className="rounded-2xl border border-slate-200 bg-white p-4">
-        <h3 className="text-sm font-semibold text-slate-900">Timer</h3>
-        {runningTimer ? (
-          <div className="mt-2 rounded-xl bg-amber-50 p-3 text-sm text-amber-800">
-            <p>Running: {runningTimer.job.jobName}</p>
-            <p className="text-xs">Started {format(runningTimer.start, "EEE MMM d, h:mm a")}</p>
-            <form action={stopTimerAction} className="mt-2">
-              <input type="hidden" name="timeEntryId" value={runningTimer.id} />
-              <button type="submit" className="rounded-lg bg-amber-600 px-3 py-1.5 text-sm text-white">Stop timer</button>
-            </form>
-          </div>
-        ) : (
-          <form action={startTimerAction} className="mt-2 flex flex-wrap items-center gap-2">
-            <select name="jobId" required className="rounded-xl border border-slate-300 px-3 py-2 text-sm">
-              <option value="">Select job</option>
-              {jobs.map((job) => (
-                <option key={job.id} value={job.id}>{job.jobName}</option>
-              ))}
-            </select>
-            <button
-              type="submit"
-              disabled={payrollWeekLocked}
-              className="rounded-xl bg-teal-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Start timer
-            </button>
-          </form>
-        )}
-      </section>
-
       {/* Manual entry */}
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-slate-900">Add time manually</h3>
@@ -383,13 +345,42 @@ export default async function TimePage({
                   </div>
                 </div>
                 {canEdit && !payrollWeekLocked ? (
-                  <form action={updateTimeEntryAction} className="mt-2 grid gap-2 sm:grid-cols-4">
-                    <input type="hidden" name="timeEntryId" value={entry.id} />
-                    <input name="start" type="datetime-local" required defaultValue={toDateTimeLocal(entry.start)} className="rounded-lg border border-slate-300 px-2 py-1 text-xs" />
-                    <input name="end" type="datetime-local" defaultValue={entry.end ? toDateTimeLocal(entry.end) : ""} className="rounded-lg border border-slate-300 px-2 py-1 text-xs" />
-                    <button type="submit" className="rounded-lg border border-slate-300 px-2 py-1 text-xs">Update</button>
-                    <input name="notes" defaultValue={entry.notes ?? ""} placeholder="Notes" className="rounded-lg border border-slate-300 px-2 py-1 text-xs sm:col-span-4" />
-                  </form>
+                  <>
+                    <form action={updateTimeEntryAction} className="mt-2 grid gap-2 sm:grid-cols-4">
+                      <input type="hidden" name="timeEntryId" value={entry.id} />
+                      <input
+                        name="start"
+                        type="datetime-local"
+                        required
+                        defaultValue={toDateTimeLocal(entry.start)}
+                        className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                      />
+                      <input
+                        name="end"
+                        type="datetime-local"
+                        defaultValue={entry.end ? toDateTimeLocal(entry.end) : ""}
+                        className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                      />
+                      <button type="submit" className="rounded-lg border border-slate-300 px-2 py-1 text-xs">
+                        Update
+                      </button>
+                      <input
+                        name="notes"
+                        defaultValue={entry.notes ?? ""}
+                        placeholder="Notes"
+                        className="rounded-lg border border-slate-300 px-2 py-1 text-xs sm:col-span-4"
+                      />
+                    </form>
+                    <form action={deleteTimeEntryAction} className="mt-2">
+                      <input type="hidden" name="timeEntryId" value={entry.id} />
+                      <button
+                        type="submit"
+                        className="rounded-lg border border-rose-300 px-2 py-1 text-xs text-rose-700 hover:bg-rose-50"
+                      >
+                        Delete entry
+                      </button>
+                    </form>
+                  </>
                 ) : (
                   <p className="mt-1 text-xs text-slate-500">{canEdit ? "Week locked" : "Read only"}</p>
                 )}

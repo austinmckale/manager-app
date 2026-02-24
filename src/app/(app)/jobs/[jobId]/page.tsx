@@ -495,12 +495,34 @@ export default async function JobDetailPage({
       </section>
 
       <section id="capture" className="rounded-2xl border border-slate-200 bg-white p-4">
-        <h3 className="text-sm font-semibold text-slate-900">2) Photo + Receipt Capture</h3>
+        <h3 className="text-sm font-semibold text-slate-900">2) Field capture (photos & receipts)</h3>
+        <p className="mt-1 text-xs text-slate-500">
+          Use this section in the field to document work and receipts. Today&apos;s captures show first; older items stay available
+          below.
+        </p>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <FileCapture jobId={job.id} fileType="PHOTO" />
-          <div className="space-y-2">
-            <p className="text-xs text-slate-600">Photos ({photoAssets.length})</p>
-            <div className="grid grid-cols-3 gap-2">
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <button
+                type="button"
+                className="rounded-xl border border-slate-300 bg-slate-900 px-2 py-1.5 text-white"
+              >
+                Add job photos
+              </button>
+              <button
+                type="button"
+                className="rounded-xl border border-slate-300 bg-white px-2 py-1.5 text-slate-900"
+              >
+                Add receipt
+              </button>
+            </div>
+            <FileCapture jobId={job.id} fileType="PHOTO" />
+          </div>
+          <div className="space-y-3">
+            <div>
+              <p className="text-xs font-medium text-slate-700">Photos ({photoAssets.length})</p>
+              <p className="mt-0.5 text-[11px] text-slate-500">Most recent first. Tap to view full size.</p>
+              <div className="mt-1 grid grid-cols-3 gap-2">
               {photoAssets.slice(0, 12).map((asset) => (
                 <div key={asset.id} className="group relative">
                   <a href={getStoragePublicUrl(asset.storageKey)} target="_blank" rel="noreferrer" className="block">
@@ -528,8 +550,9 @@ export default async function JobDetailPage({
                   ) : null}
                 </div>
               ))}
+              </div>
+              {photoAssets.length === 0 ? <p className="text-xs text-slate-500">No photos uploaded yet.</p> : null}
             </div>
-            {photoAssets.length === 0 ? <p className="text-xs text-slate-500">No photos uploaded yet.</p> : null}
 
             <div className="rounded-xl border border-slate-200 p-2 text-xs">
               <p className="font-medium text-slate-700">Receipts ({receiptAssets.length})</p>
