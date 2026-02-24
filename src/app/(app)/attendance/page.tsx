@@ -6,7 +6,16 @@ import {
   updateOrgSettingsAction,
 } from "@/app/(app)/actions";
 import { requireAuth } from "@/lib/auth";
-import { demoJobs, demoUsers, isDemoMode, listDemoRuntimeTimeEntries } from "@/lib/demo";
+import {
+  demoJobAssignments,
+  demoJobs,
+  demoScheduleEvents,
+  demoUsers,
+  isDemoMode,
+  listDemoRuntimeAssignments,
+  listDemoRuntimeScheduleEvents,
+  listDemoRuntimeTimeEntries,
+} from "@/lib/demo";
 import { canManageOrg } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 
@@ -28,8 +37,9 @@ export default async function AttendancePage() {
 
   const now = new Date();
   const dayStart = startOfDay(now);
+  const dayEnd = addMinutes(dayStart, 24 * 60 - 1);
 
-  const [settings, users, jobs, todaysEntries] = isDemoMode()
+  const [settings, users, jobs, todaysEntries, assignmentRows] = isDemoMode()
     ? [
         {
           defaultClockInTime: "07:00",
@@ -46,6 +56,18 @@ export default async function AttendancePage() {
             job: demoJobs.find((job) => job.id === entry.jobId) ?? demoJobs[0],
             worker: demoUsers.find((user) => user.id === entry.workerId) ?? demoUsers[0],
           })),
+        [
+          ...demoJobAssignments,
+          ...listDemoRuntimeAssignments(),
+        ].map((assignment) => ({
+          ...assignment,
+          job: {
+            ...(demoJobs.find((job) => job.id === assignment.jobId) ?? demoJobs[0]),
+            scheduleEvents: [...demoScheduleEvents, ...listDemoRuntimeScheduleEvents()].filter(
+              (event) => event.jobId === assignment.jobId,
+            ),
+          },
+        })),
       ]
     : await Promise.all([
         prisma.organizationSetting.findUnique({ where: { orgId: auth.orgId } }),
@@ -60,6 +82,19 @@ export default async function AttendancePage() {
           include: { job: true, worker: true },
           orderBy: { start: "asc" },
         }),
+        prisma.jobAssignment.findMany({
+          where: { orgId: auth.orgId },
+          include: {
+            job: {
+              include: {
+                scheduleEvents: {
+                  where: { startAt: { gte: dayStart, lte: dayEnd } },
+                  orderBy: { startAt: "asc" },
+                },
+              },
+            },
+          },
+        }),
       ]);
 
   const clock = parseClockTime(settings?.defaultClockInTime);
@@ -72,13 +107,24 @@ export default async function AttendancePage() {
     const entries = todaysEntries.filter((entry) => entry.workerId === user.id);
     const first = entries[0];
     const running = entries.find((entry) => !entry.end);
+    const assignedJobs = assignmentRows
+      .filter((assignment) => assignment.userId === user.id)
+      .map((assignment) => assignment.job);
+    const uniqueAssignedJobs = assignedJobs.filter(
+      (job, index, all) => all.findIndex((item) => item.id === job.id) === index,
+    );
+    const todaysAssignedJobs = uniqueAssignedJobs.filter((job) =>
+      job.scheduleEvents.some((event) => event.startAt >= dayStart && event.startAt <= dayEnd),
+    );
+    const clockInOptions = todaysAssignedJobs.length > 0 ? todaysAssignedJobs : uniqueAssignedJobs.length > 0 ? uniqueAssignedJobs : jobs;
+    const defaultJobId = clockInOptions[0]?.id ?? "";
 
     let status = "on_time";
     if (!first && now > missedAt) status = "missing";
     else if (first && first.start > missedAt) status = "late";
     else if (!first) status = "pending";
 
-    return { user, first, running, status };
+    return { user, first, running, status, clockInOptions, defaultJobId, todaysAssignedJobs };
   });
 
   const reminderCandidates = rows.filter((row) => !row.first).map((row) => row.user);
@@ -150,6 +196,11 @@ export default async function AttendancePage() {
                 {row.first ? `First clock-in: ${row.first.start.toLocaleTimeString()}` : "No clock-in yet"}
                 {row.running ? ` • Running on ${row.running.job.jobName}` : ""}
               </p>
+              {row.todaysAssignedJobs.length > 0 ? (
+                <p className="mt-1 text-xs text-teal-700">
+                  Assigned today: {row.todaysAssignedJobs.map((job) => job.jobName).join(", ")}
+                </p>
+              ) : null}
 
               {row.running ? (
                 <form action={ownerClockOutEmployeeAction} className="mt-2">
@@ -162,11 +213,11 @@ export default async function AttendancePage() {
                   <select
                     name="jobId"
                     required
-                    defaultValue={jobs[0]?.id ?? ""}
+                    defaultValue={row.defaultJobId}
                     className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
                   >
                     <option value="">Select job</option>
-                    {jobs.map((job) => (
+                    {row.clockInOptions.map((job) => (
                       <option key={job.id} value={job.id}>{job.jobName}</option>
                     ))}
                   </select>
