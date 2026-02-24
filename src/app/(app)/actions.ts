@@ -1,6 +1,7 @@
 "use server";
 
 import { ExpenseCategory, InvoiceStatus, JobStatus, LeadSource, LeadStage, LineItemType, Prisma, Role } from "@prisma/client";
+import { format, startOfWeek } from "date-fns";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
@@ -20,7 +21,6 @@ import {
 import { ensureDefaultKpis } from "@/lib/kpis";
 import { canManageOrg } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
-import { revalidateSitePortfolio } from "@/lib/revalidate-site";
 import { toNumber } from "@/lib/utils";
 
 function parseMoney(value: FormDataEntryValue | null) {
@@ -119,6 +119,28 @@ async function logActivity(
       metadata,
     },
   });
+}
+
+function readWeekStartFromMetadata(metadata: Prisma.JsonValue | null) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return "";
+  const value = (metadata as Record<string, unknown>).weekStart;
+  return typeof value === "string" ? value : "";
+}
+
+async function isPayrollWeekLocked(orgId: string, date: Date) {
+  const weekStartKey = format(startOfWeek(date, { weekStartsOn: 1 }), "yyyy-MM-dd");
+  const logs = await prisma.activityLog.findMany({
+    where: {
+      orgId,
+      action: {
+        in: ["payroll.week.locked", "payroll.week.opened", "payroll.week.paid"],
+      },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+  });
+  const latest = logs.find((log) => readWeekStartFromMetadata(log.metadata) === weekStartKey);
+  return latest?.action === "payroll.week.locked" || latest?.action === "payroll.week.paid";
 }
 
 export async function createCustomerAction(formData: FormData) {
@@ -306,6 +328,19 @@ export async function convertLeadToJobAction(formData: FormData) {
     leadId: lead.id,
     customerId: customer.id,
   });
+
+  import("@/lib/ga4-server").then(({ sendGA4ConversionEvent }) =>
+    sendGA4ConversionEvent({
+      leadId: lead.id,
+      jobId: job.id,
+      contactName: lead.contactName,
+      serviceType: lead.serviceType,
+      utmSource: lead.utmSource ?? null,
+      utmMedium: lead.utmMedium ?? null,
+      utmCampaign: lead.utmCampaign ?? null,
+    }).catch(() => {}),
+  );
+
   revalidatePath("/leads");
   revalidatePath("/jobs");
   revalidatePath("/dashboard");
@@ -718,6 +753,11 @@ export async function createTimeEntryAction(formData: FormData) {
   });
 
   const workerId = canManageOrg(auth.role) && parsed.workerId ? parsed.workerId : auth.userId;
+  const startAt = new Date(parsed.start);
+
+  if (await isPayrollWeekLocked(auth.orgId, startAt)) {
+    throw new Error("Payroll week is locked. Reopen the week to add/edit time.");
+  }
 
   const worker = await prisma.userProfile.findUniqueOrThrow({ where: { id: workerId } });
   const hourlyRate = toNumber(worker.hourlyRateDefault) || 35;
@@ -726,8 +766,8 @@ export async function createTimeEntryAction(formData: FormData) {
     data: {
       jobId: parsed.jobId,
       workerId,
-      date: new Date(parsed.start),
-      start: new Date(parsed.start),
+      date: startAt,
+      start: startAt,
       end: parsed.end ? new Date(parsed.end) : null,
       breakMinutes: parsed.breakMinutes,
       notes: parsed.notes || null,
@@ -752,6 +792,12 @@ export async function startTimerAction(formData: FormData) {
 
   const auth = await requireAuth();
   const jobId = String(formData.get("jobId"));
+  if (!jobId) return;
+
+  const now = new Date();
+  if (await isPayrollWeekLocked(auth.orgId, now)) {
+    throw new Error("Payroll week is locked. Reopen the week to start new timers.");
+  }
 
   const active = await prisma.timeEntry.findFirst({
     where: { workerId: auth.userId, end: null },
@@ -763,7 +809,6 @@ export async function startTimerAction(formData: FormData) {
 
   const worker = await prisma.userProfile.findUniqueOrThrow({ where: { id: auth.userId } });
 
-  const now = new Date();
   await prisma.timeEntry.create({
     data: {
       jobId,
@@ -1309,12 +1354,17 @@ export async function updateTimeEntryAction(formData: FormData) {
     throw new Error("You do not have permission to edit this time entry.");
   }
 
+  const startAt = new Date(start);
+  if (await isPayrollWeekLocked(auth.orgId, startAt)) {
+    throw new Error("Payroll week is locked. Reopen the week to edit time.");
+  }
+
   await prisma.timeEntry.update({
     where: { id: timeEntryId },
     data: {
-      start: new Date(start),
+      start: startAt,
       end: end ? new Date(end) : null,
-      date: new Date(start),
+      date: startAt,
       breakMinutes,
       notes: notes || null,
     },
@@ -1384,6 +1434,11 @@ export async function ownerClockInEmployeeAction(formData: FormData) {
     throw new Error("Only owner/admin can clock in employees.");
   }
 
+  const now = new Date();
+  if (await isPayrollWeekLocked(auth.orgId, now)) {
+    throw new Error("Payroll week is locked. Reopen the week to clock employees in.");
+  }
+
   const active = await prisma.timeEntry.findFirst({
     where: { workerId, end: null },
     select: { id: true },
@@ -1396,7 +1451,6 @@ export async function ownerClockInEmployeeAction(formData: FormData) {
     where: { id: workerId, orgId: auth.orgId },
   });
 
-  const now = new Date();
   const entry = await prisma.timeEntry.create({
     data: {
       jobId,
@@ -1483,6 +1537,49 @@ export async function sendClockRemindersAction(formData: FormData) {
   });
 
   revalidatePath("/attendance");
+}
+
+export async function setPayrollWeekStateAction(formData: FormData) {
+  const weekStart = String(formData.get("weekStart") ?? "").trim();
+  const state = String(formData.get("state") ?? "LOCKED").trim().toUpperCase();
+  const note = String(formData.get("note") ?? "").trim();
+
+  if (!weekStart) return;
+
+  if (isDemoMode()) {
+    revalidatePath("/time");
+    revalidatePath("/today");
+    revalidatePath("/reports");
+    return;
+  }
+
+  const auth = await requireAuth();
+  if (!canManageOrg(auth.role)) {
+    throw new Error("Only owner/admin can change payroll week state.");
+  }
+
+  const event =
+    state === "PAID"
+      ? "payroll.week.paid"
+      : state === "OPEN"
+        ? "payroll.week.opened"
+        : "payroll.week.locked";
+
+  await prisma.activityLog.create({
+    data: {
+      orgId: auth.orgId,
+      actorId: auth.userId,
+      action: event,
+      metadata: {
+        weekStart,
+        note: note || null,
+      },
+    },
+  });
+
+  revalidatePath("/time");
+  revalidatePath("/today");
+  revalidatePath("/reports");
 }
 
 export async function createWorkerAction(formData: FormData) {
@@ -1769,7 +1866,7 @@ export async function togglePortfolioAction(formData: FormData) {
 
   const asset = await prisma.fileAsset.findFirst({
     where: { id: assetId, job: { orgId: auth.orgId } },
-    select: { id: true, isPortfolio: true, jobId: true },
+    select: { id: true, isPortfolio: true, jobId: true, storageKey: true },
   });
 
   if (!asset) return;
@@ -1791,8 +1888,11 @@ export async function togglePortfolioAction(formData: FormData) {
     },
   });
 
+  const { onPortfolioPublish, onPortfolioUnpublish } = await import("@/lib/portfolio-publish");
   if (newValue) {
-    revalidateSitePortfolio().catch(() => {});
+    onPortfolioPublish(assetId, asset.storageKey).catch(() => {});
+  } else {
+    onPortfolioUnpublish(asset.storageKey).catch(() => {});
   }
 
   revalidatePath(`/jobs/${asset.jobId}`);

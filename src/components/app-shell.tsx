@@ -9,11 +9,11 @@ type AppShellProps = {
 };
 
 const navItems = [
-  { href: "/today", label: "Inbox", icon: CalendarDays },
+  { href: "/today", label: "Today", icon: CalendarDays },
   { href: "/leads", label: "Leads", icon: PhoneIncoming },
   { href: "/jobs", label: "Jobs", icon: BriefcaseBusiness },
   { href: "/attendance", label: "Attendance", icon: ClipboardCheck },
-  { href: "/dashboard", label: "KPI", icon: ChartNoAxesCombined },
+  { href: "/dashboard", label: "Dashboard", icon: ChartNoAxesCombined },
   { href: "/accounting", label: "Accounting", icon: ReceiptText },
   { href: "/settings/targets", label: "Settings", icon: Settings },
 ];

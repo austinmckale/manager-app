@@ -4,8 +4,16 @@ import { getJobs, getOrgUsers, getRunningTimer } from "@/lib/data";
 import { isDemoMode } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
 import { currency, toNumber } from "@/lib/utils";
-import { createTimeEntryAction, startTimerAction, stopTimerAction } from "@/app/(app)/actions";
+import { createTimeEntryAction, setPayrollWeekStateAction, startTimerAction, stopTimerAction } from "@/app/(app)/actions";
 import { endOfWeek, format, startOfWeek } from "date-fns";
+
+type PayrollWeekState = "OPEN" | "LOCKED" | "PAID";
+
+function readWeekStart(metadata: unknown) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return "";
+  const value = (metadata as Record<string, unknown>).weekStart;
+  return typeof value === "string" ? value : "";
+}
 
 export default async function TimePage({
   searchParams,
@@ -29,6 +37,7 @@ export default async function TimePage({
   const to = params.to ? new Date(params.to) : now;
   const weekStart = startOfWeek(now, { weekStartsOn: 1 });
   const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
+  const weekStartKey = format(weekStart, "yyyy-MM-dd");
 
   const entries = isDemoMode()
     ? []
@@ -62,6 +71,19 @@ export default async function TimePage({
         },
         orderBy: { start: "asc" },
         take: 500,
+      });
+
+  const payrollWeekStateLogs = isDemoMode()
+    ? []
+    : await prisma.activityLog.findMany({
+        where: {
+          orgId: auth.orgId,
+          action: {
+            in: ["payroll.week.locked", "payroll.week.opened", "payroll.week.paid"],
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 100,
       });
 
   const payrollByWorker = new Map<
@@ -150,6 +172,15 @@ export default async function TimePage({
     { hours: 0, pay: 0 },
   );
 
+  const latestWeekStateLog = payrollWeekStateLogs.find((log) => readWeekStart(log.metadata) === weekStartKey);
+  const payrollWeekState: PayrollWeekState =
+    latestWeekStateLog?.action === "payroll.week.paid"
+      ? "PAID"
+      : latestWeekStateLog?.action === "payroll.week.locked"
+        ? "LOCKED"
+        : "OPEN";
+  const payrollWeekLocked = payrollWeekState === "LOCKED" || payrollWeekState === "PAID";
+
   return (
     <div className="space-y-4">
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
@@ -175,11 +206,52 @@ export default async function TimePage({
                 </option>
               ))}
             </select>
-            <button type="submit" className="rounded-xl bg-teal-600 px-4 py-2 text-sm font-semibold text-white">
+            <button type="submit" disabled={payrollWeekLocked} className="rounded-xl bg-teal-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
               Start timer
             </button>
           </form>
         )}
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-4">
+        <h2 className="text-sm font-semibold text-slate-900">Weekly Payroll Control</h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Week of {format(weekStart, "MMM d, yyyy")} - status:
+          {" "}
+          <span
+            className={`rounded-full px-2 py-0.5 text-[11px] ${
+              payrollWeekState === "PAID"
+                ? "bg-emerald-100 text-emerald-700"
+                : payrollWeekState === "LOCKED"
+                  ? "bg-amber-100 text-amber-700"
+                  : "bg-slate-100 text-slate-700"
+            }`}
+          >
+            {payrollWeekState}
+          </span>
+        </p>
+        {canManageOrg(auth.role) ? (
+          <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+            <form action={setPayrollWeekStateAction}>
+              <input type="hidden" name="weekStart" value={weekStartKey} />
+              <input type="hidden" name="state" value="OPEN" />
+              <button type="submit" className="w-full rounded-xl border border-slate-300 px-2 py-2">Reopen Week</button>
+            </form>
+            <form action={setPayrollWeekStateAction}>
+              <input type="hidden" name="weekStart" value={weekStartKey} />
+              <input type="hidden" name="state" value="LOCKED" />
+              <button type="submit" className="w-full rounded-xl border border-slate-300 px-2 py-2">Lock Week</button>
+            </form>
+            <form action={setPayrollWeekStateAction}>
+              <input type="hidden" name="weekStart" value={weekStartKey} />
+              <input type="hidden" name="state" value="PAID" />
+              <button type="submit" className="w-full rounded-xl border border-slate-300 px-2 py-2">Mark Paid</button>
+            </form>
+          </div>
+        ) : null}
+        {payrollWeekLocked ? (
+          <p className="mt-2 text-xs text-amber-700">This payroll week is locked. Time entry is read-only until reopened.</p>
+        ) : null}
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
@@ -207,7 +279,7 @@ export default async function TimePage({
           <input name="end" type="datetime-local" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
           <input name="breakMinutes" type="number" min={0} defaultValue={0} placeholder="Break minutes" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
           <textarea name="notes" rows={2} placeholder="Notes" className="rounded-xl border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
-          <button type="submit" className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white sm:col-span-2">
+          <button type="submit" disabled={payrollWeekLocked} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 sm:col-span-2">
             Save Time Entry
           </button>
         </form>

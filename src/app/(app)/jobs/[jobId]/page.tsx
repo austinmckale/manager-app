@@ -71,6 +71,19 @@ export default async function JobDetailPage({
     },
     { hours: 0, pay: 0 },
   );
+  const scheduleReady = (job.scheduleEvents?.length ?? 0) > 0;
+  const photosCaptured = job.fileAssets.filter((asset) => asset.type === "PHOTO").length;
+  const receiptsCaptured = job.fileAssets.filter((asset) => asset.type === "RECEIPT").length;
+  const openTasks = job.tasks.filter((task) => task.status !== TaskStatus.DONE).length;
+  const sentInvoices = job.invoices.filter((invoice) => ["SENT", "PAID", "OVERDUE"].includes(invoice.status)).length;
+  const executionChecklist = [
+    { label: "Crew scheduled", done: scheduleReady, href: "#schedule" },
+    { label: "Photos captured", done: photosCaptured > 0, href: "#capture" },
+    { label: "Receipts logged", done: receiptsCaptured > 0, href: "#capture" },
+    { label: "Punch list closed", done: openTasks === 0, href: "#tasks" },
+    { label: "Invoice sent", done: sentInvoices > 0, href: "#finance" },
+  ];
+  const executionDone = executionChecklist.filter((item) => item.done).length;
   const [shareLinks, portalLinks] = isDemoMode()
     ? [[], []]
     : await Promise.all([
@@ -99,6 +112,21 @@ export default async function JobDetailPage({
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
+        <h3 className="text-sm font-semibold text-slate-900">Execution Checklist</h3>
+        <p className="mt-1 text-xs text-slate-500">Progress {executionDone}/{executionChecklist.length} complete for this job.</p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          {executionChecklist.map((item) => (
+            <a key={item.label} href={item.href} className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2 text-sm">
+              <span>{item.label}</span>
+              <span className={`rounded-full px-2 py-0.5 text-[11px] ${item.done ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                {item.done ? "Done" : "Needs action"}
+              </span>
+            </a>
+          ))}
+        </div>
+      </section>
+
+      <section id="schedule" className="rounded-2xl border border-slate-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-slate-900">0) Schedule + Crew</h3>
         <form action={quickScheduleCrewAction} className="mt-3 grid gap-3 rounded-xl border border-slate-200 p-3 text-sm">
           <input type="hidden" name="jobId" value={job.id} />
@@ -177,7 +205,7 @@ export default async function JobDetailPage({
         </div>
       </section>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-4">
+      <section id="tasks" className="rounded-2xl border border-slate-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-slate-900">1) Tasks / Punch List</h3>
         <form action={createTaskAction} className="mt-3 grid gap-2 sm:grid-cols-2">
           <input type="hidden" name="jobId" value={job.id} />
@@ -211,7 +239,7 @@ export default async function JobDetailPage({
         </div>
       </section>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-4">
+      <section id="capture" className="rounded-2xl border border-slate-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-slate-900">2) Photo + Receipt Capture</h3>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <FileCapture jobId={job.id} fileType="PHOTO" />
@@ -286,7 +314,7 @@ export default async function JobDetailPage({
         </div>
       </section>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-4">
+      <section id="finance" className="rounded-2xl border border-slate-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-slate-900">4) Estimates / Change Orders / Invoices</h3>
 
         <form action={createEstimateAction} className="mt-3 grid gap-2 sm:grid-cols-2">

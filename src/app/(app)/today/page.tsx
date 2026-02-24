@@ -52,55 +52,64 @@ export default async function TodayPage() {
   return (
     <div className="space-y-4">
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
-        <h2 className="text-sm font-semibold text-slate-900">Today Focus</h2>
+        <h2 className="text-sm font-semibold text-slate-900">Owner Command Center</h2>
         {runningTimer ? (
-          <p className="mt-2 text-sm text-amber-700">Timer running on: {runningTimer.job.jobName}</p>
+          <p className="mt-2 text-sm text-amber-700">Timer running now: {runningTimer.job.jobName}</p>
         ) : (
           <p className="mt-2 text-sm text-slate-600">No active timer. Start one before work begins.</p>
         )}
         <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
           <Link href="/attendance" className="rounded-xl border border-slate-300 px-3 py-2">Clock Employees</Link>
-          <Link href="/jobs?view=today" className="rounded-xl border border-slate-300 px-3 py-2">Capture Receipts</Link>
-          <Link href="/jobs?view=today" className="rounded-xl border border-slate-300 px-3 py-2">Capture Photos</Link>
-          <Link href="/leads#new-lead-form" className="rounded-xl border border-slate-300 px-3 py-2">Lead Intake</Link>
+          <Link href="/leads#new-lead-form" className="rounded-xl border border-slate-300 px-3 py-2">New Lead</Link>
+          <Link href="/time" className="rounded-xl border border-slate-300 px-3 py-2">Payroll Week</Link>
+          <Link href="/reports" className="rounded-xl border border-slate-300 px-3 py-2">Export Reports</Link>
         </div>
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
-        <h2 className="text-sm font-semibold text-slate-900">Fast Job Actions</h2>
-        <p className="mt-1 text-xs text-slate-500">From here: open job hub, start timer, or add receipts/photos in two taps.</p>
-        <div className="mt-3 space-y-2">
-          {ops.todayEvents.slice(0, 3).map((event) => (
-            <article key={event.id} className="rounded-xl border border-slate-200 p-3">
-              <p className="font-medium text-slate-900">{event.job.jobName}</p>
-              <p className="text-xs text-slate-500">{format(event.startAt, "h:mm a")} - {format(event.endAt, "h:mm a")}</p>
-              <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
-                <Link href={`/jobs/${event.job.id}`} className="rounded-lg border border-slate-300 px-2 py-1 text-center">Job Hub</Link>
-                <Link href={`/time?jobId=${event.job.id}`} className="rounded-lg border border-slate-300 px-2 py-1 text-center">Time</Link>
-                <Link href={`/jobs/${event.job.id}`} className="rounded-lg border border-slate-300 px-2 py-1 text-center">Receipts</Link>
-              </div>
-            </article>
-          ))}
-          {ops.todayEvents.length === 0 ? <p className="text-sm text-slate-500">No scheduled jobs today.</p> : null}
+        <h2 className="text-sm font-semibold text-slate-900">Priority Queue</h2>
+        <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+          <Link href="/attendance" className="rounded-xl border border-rose-200 bg-rose-50 p-3">
+            <p className="text-xs text-rose-700">Missing Clock-ins</p>
+            <p className="mt-1 text-xl font-semibold text-rose-700">{attendanceAlertCount}</p>
+          </Link>
+          <Link href="/today" className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+            <p className="text-xs text-amber-700">Overdue Tasks</p>
+            <p className="mt-1 text-xl font-semibold text-amber-700">{ops.overdueTasks.length}</p>
+          </Link>
+          <Link href="/jobs" className="rounded-xl border border-sky-200 bg-sky-50 p-3">
+            <p className="text-xs text-sky-700">Missing Receipts</p>
+            <p className="mt-1 text-xl font-semibold text-sky-700">{ops.missingReceipts}</p>
+          </Link>
+          <Link href="/accounting" className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+            <p className="text-xs text-amber-700">Outstanding AR</p>
+            <p className="mt-1 text-xl font-semibold text-amber-700">{currency(kpis.outstandingInvoicesTotal)}</p>
+          </Link>
         </div>
       </section>
 
       <section className="grid grid-cols-2 gap-2">
         <ScoreCard label="Gross Margin" value={percent(kpis.grossMarginPercent)} />
         <ScoreCard label="Labor % Revenue" value={percent(kpis.laborPercentRevenue)} />
-        <ScoreCard label="Outstanding AR" value={currency(kpis.outstandingInvoicesTotal)} />
+        <ScoreCard label="Materials % Revenue" value={percent(kpis.materialsPercentRevenue)} />
         <ScoreCard label="Lead Win Rate" value={percent(kpis.leadToWinRate)} />
-        <ScoreCard label="Missing Clock-ins" value={String(attendanceAlertCount)} />
+        <ScoreCard label="Avg Days To Pay" value={kpis.averageDaysToPayment.toFixed(1)} />
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
-        <h2 className="text-sm font-semibold text-slate-900">Schedule (Today)</h2>
+        <h2 className="text-sm font-semibold text-slate-900">Today Job Run Sheet</h2>
+        <p className="mt-1 text-xs text-slate-500">Complete each row in order: job hub, then time, then receipts/photos.</p>
         <div className="mt-3 space-y-2 text-sm">
           {ops.todayEvents.map((event) => (
             <article key={event.id} className="rounded-xl border border-slate-200 p-3">
               <p className="font-medium text-slate-900">{event.job.jobName}</p>
               <p className="text-xs text-slate-500">{format(event.startAt, "h:mm a")} - {format(event.endAt, "h:mm a")}</p>
               {event.notes ? <p className="text-xs text-slate-600">{event.notes}</p> : null}
+              <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+                <Link href={`/jobs/${event.job.id}`} className="rounded-lg border border-slate-300 px-2 py-1 text-center">Job Hub</Link>
+                <Link href={`/time?jobId=${event.job.id}`} className="rounded-lg border border-slate-300 px-2 py-1 text-center">Time</Link>
+                <Link href={`/jobs/${event.job.id}#capture`} className="rounded-lg border border-slate-300 px-2 py-1 text-center">Capture</Link>
+              </div>
             </article>
           ))}
           {ops.todayEvents.length === 0 ? <p className="text-sm text-slate-500">No schedule blocks for today.</p> : null}
@@ -108,7 +117,7 @@ export default async function TodayPage() {
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
-        <h2 className="text-sm font-semibold text-slate-900">This Week</h2>
+        <h2 className="text-sm font-semibold text-slate-900">This Week Outlook</h2>
         <div className="mt-3 space-y-2 text-sm">
           {ops.weekEvents.slice(0, 8).map((event) => (
             <article key={event.id} className="rounded-xl border border-slate-200 p-3">
@@ -117,24 +126,6 @@ export default async function TodayPage() {
             </article>
           ))}
           {ops.weekEvents.length === 0 ? <p className="text-sm text-slate-500">No schedule blocks this week.</p> : null}
-        </div>
-      </section>
-
-      <section className="rounded-2xl border border-slate-200 bg-white p-4">
-        <h2 className="text-sm font-semibold text-slate-900">Attention Needed</h2>
-        <div className="mt-3 grid grid-cols-3 gap-2 text-sm">
-          <div className="rounded-xl bg-rose-50 p-3">
-            <p className="text-xs text-rose-600">Overdue Tasks</p>
-            <p className="mt-1 text-xl font-semibold text-rose-700">{ops.overdueTasks.length}</p>
-          </div>
-          <div className="rounded-xl bg-amber-50 p-3">
-            <p className="text-xs text-amber-700">Unsent Estimates</p>
-            <p className="mt-1 text-xl font-semibold text-amber-700">{ops.unsentEstimates}</p>
-          </div>
-          <div className="rounded-xl bg-sky-50 p-3">
-            <p className="text-xs text-sky-700">Missing Receipts</p>
-            <p className="mt-1 text-xl font-semibold text-sky-700">{ops.missingReceipts}</p>
-          </div>
         </div>
       </section>
 
