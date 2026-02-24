@@ -88,13 +88,14 @@ export default async function JobDetailPage({
           <div>
             <p className="font-medium">Dates (next 7 days)</p>
             <div className="mt-2 grid gap-2 sm:grid-cols-4">
-              {quickDates.map((dateValue) => (
+              {quickDates.map((dateValue, index) => (
                 <label key={dateValue.toISOString()} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1 text-xs">
-                  <input type="checkbox" name="dates" value={format(dateValue, "yyyy-MM-dd")} />
+                  <input type="checkbox" name="dates" value={format(dateValue, "yyyy-MM-dd")} defaultChecked={index === 0} />
                   {format(dateValue, "EEE M/d")}
                 </label>
               ))}
             </div>
+            <p className="mt-1 text-[11px] text-slate-500">At least one date is required. Today is preselected.</p>
           </div>
 
           <div>

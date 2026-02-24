@@ -7,8 +7,8 @@ import { Plus, Camera, Receipt, FileText, PhoneIncoming, ClipboardCheck } from "
 const actions = [
   { href: "/leads#new-lead-form", label: "New Lead", icon: PhoneIncoming },
   { href: "/attendance", label: "Attendance", icon: ClipboardCheck },
-  { href: "/jobs", label: "Add Expense", icon: Receipt },
-  { href: "/jobs", label: "Capture Photo", icon: Camera },
+  { href: "/jobs?view=today", label: "Add Expense", icon: Receipt },
+  { href: "/jobs?view=today", label: "Capture Photo", icon: Camera },
   { href: "/leads", label: "Joist Import", icon: FileText },
 ];
 
