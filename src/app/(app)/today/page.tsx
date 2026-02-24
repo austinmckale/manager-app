@@ -145,7 +145,7 @@ export default async function TodayPage() {
         <p className="mt-1 text-xs text-slate-500">
           {isOwnerOrAdmin
             ? "Every scheduled block across the company today. For each row: Hub (scope/Joist, details) → Time (confirm hours) → Capture (photos/receipts)."
-            : "Your scheduled blocks today. For each: open Hub (scope & details), confirm hours on Time, then Capture photos/receipts."}
+            : "Your scheduled blocks today. For each: open Hub (scope & details), confirm hours on Time, then Capture (photos/receipts)."}
         </p>
         {isOwnerOrAdmin ? (
           <p className="mt-1 text-xs font-semibold text-slate-700">
@@ -211,7 +211,7 @@ export default async function TodayPage() {
                       href={`/jobs/${group.jobId}#capture`}
                       className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
                     >
-                      Capture
+                      Photos / Receipts
                     </Link>
                   </div>
                 </div>
