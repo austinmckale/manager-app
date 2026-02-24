@@ -287,6 +287,75 @@ export async function createLeadAction(formData: FormData) {
   revalidatePath("/dashboard");
 }
 
+export async function sendDailyOpsDigestAction() {
+  const auth = await requireAuth();
+  if (!canManageOrg(auth.role)) {
+    throw new Error("Only owners and admins can send digests.");
+  }
+  if (isDemoMode()) return;
+
+  const webhookUrl = process.env.DISCORD_MISSING_CLOCKINS_WEBHOOK_URL;
+  if (!webhookUrl) return;
+
+  const todayStart = startOfDay(new Date());
+  const todayEnd = endOfDay(new Date());
+
+  const [alerts, missingClockIns] = await Promise.all([
+    getJobsPageAlerts({ orgId: auth.orgId, role: auth.role, userId: auth.userId }),
+    (async () => {
+      const [settings, users, entries] = await Promise.all([
+        prisma.organizationSetting.findUnique({ where: { orgId: auth.orgId } }),
+        prisma.userProfile.findMany({ where: { orgId: auth.orgId, isActive: true }, select: { id: true, fullName: true } }),
+        prisma.timeEntry.findMany({
+          where: {
+            job: { orgId: auth.orgId },
+            start: { gte: todayStart },
+          },
+          select: { workerId: true, start: true },
+        }),
+      ]);
+
+      const [hourText, minuteText] = (settings?.defaultClockInTime ?? "07:00").split(":");
+      const scheduled = setSeconds(
+        setMinutes(setHours(startOfDay(new Date()), Number(hourText || 7)), Number(minuteText || 0)),
+        0,
+      );
+      const cutoff = scheduled.getTime() + (settings?.clockGraceMinutes ?? 10) * 60000;
+
+      const workersWithOnTimeEntry = new Set(
+        entries.filter((entry) => entry.start.getTime() <= cutoff).map((entry) => entry.workerId),
+      );
+
+      return users.filter((user) => !workersWithOnTimeEntry.has(user.id)).map((user) => user.fullName);
+    })(),
+  ]);
+
+  const overdueCount = alerts.overdueTasks.length;
+  const missingReceiptsCount = alerts.jobIdsWithMissingReceipts.length;
+
+  const lines: string[] = [];
+  lines.push(`Daily ops digest for ${format(new Date(), "MMM d, yyyy")}`);
+  lines.push("");
+  lines.push(`• Overdue tasks: ${overdueCount}`);
+  lines.push(`• Jobs with missing receipts: ${missingReceiptsCount}`);
+  lines.push(`• Workers missing clock-in: ${missingClockIns.length}`);
+  if (missingClockIns.length > 0) {
+    lines.push("");
+    lines.push("Missing clock-in:");
+    for (const name of missingClockIns) {
+      lines.push(`- ${name}`);
+    }
+  }
+
+  await fetch(webhookUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      content: lines.join("\n"),
+    }),
+  });
+}
+
 export async function updateLeadStageAction(formData: FormData) {
   if (isDemoMode()) {
     revalidatePath("/leads");

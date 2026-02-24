@@ -15,7 +15,7 @@ export function QuickActionsFab() {
   const [open, setOpen] = useState(false);
 
   return (
-    <div className="fixed bottom-24 right-4 z-30">
+    <div className="fixed bottom-20 right-4 z-30 sm:bottom-24">
       {open ? (
         <div className="mb-2 space-y-2">
           {actions.map((action) => {

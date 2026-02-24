@@ -150,8 +150,7 @@ async function dumpDatabase(databaseUrl: string, outputPath: string) {
 }
 
 async function listBucketFilesRecursive(
-  // Loose typing to avoid Supabase generic mismatches breaking production builds.
-  client: any,
+  client: ReturnType<typeof createClient>,
   bucket: string,
   prefix = "",
 ): Promise<StorageManifestFile[]> {
@@ -209,7 +208,7 @@ async function listBucketFilesRecursive(
 }
 
 async function downloadBucketFile(
-  client: any,
+  client: ReturnType<typeof createClient>,
   outputDir: string,
   file: StorageManifestFile,
 ) {

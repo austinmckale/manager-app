@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { format, setHours, setMinutes, setSeconds, startOfDay } from "date-fns";
+import { endOfDay, format, setHours, setMinutes, setSeconds, startOfDay } from "date-fns";
 import { requireAuth } from "@/lib/auth";
 import { getTodayOpsSummary } from "@/lib/data";
 import { computeDashboardKpis } from "@/lib/kpis";
@@ -7,12 +7,12 @@ import { isDemoMode } from "@/lib/demo";
 import { canManageOrg } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 import { currency } from "@/lib/utils";
-import { sendMissingClockInsAlertAction } from "@/app/(app)/actions";
+import { sendDailyOpsDigestAction, sendMissingClockInsAlertAction } from "@/app/(app)/actions";
 
 export default async function TodayPage() {
   const auth = await requireAuth();
   const isOwnerOrAdmin = canManageOrg(auth.role);
-  const [ops, kpis, attendanceAlertCount] = await Promise.all([
+  const [ops, kpis, attendanceAlertCount, captureCountsByJob] = await Promise.all([
     getTodayOpsSummary({ orgId: auth.orgId, userId: auth.userId, role: auth.role }),
     isOwnerOrAdmin ? computeDashboardKpis(auth.orgId) : Promise.resolve({ outstandingInvoicesTotal: 0 }),
     (async () => {
@@ -38,6 +38,29 @@ export default async function TodayPage() {
 
       const workersWithAnyEntry = new Set(entries.filter((entry) => entry.start.getTime() <= cutoff).map((entry) => entry.workerId));
       return users.filter((user) => !workersWithAnyEntry.has(user.id)).length;
+    })(),
+    (async () => {
+      if (isDemoMode()) return {} as Record<string, { photosToday: number; receiptsToday: number }>;
+
+      const todayStart = startOfDay(new Date());
+      const todayEnd = endOfDay(new Date());
+      const assets = await prisma.fileAsset.findMany({
+        where: {
+          job: { orgId: auth.orgId },
+          createdAt: { gte: todayStart, lte: todayEnd },
+          type: { in: ["PHOTO", "RECEIPT"] },
+        },
+        select: { jobId: true, type: true },
+      });
+
+      const summary: Record<string, { photosToday: number; receiptsToday: number }> = {};
+      for (const asset of assets) {
+        const current = summary[asset.jobId] ?? { photosToday: 0, receiptsToday: 0 };
+        if (asset.type === "PHOTO") current.photosToday += 1;
+        if (asset.type === "RECEIPT") current.receiptsToday += 1;
+        summary[asset.jobId] = current;
+      }
+      return summary;
     })(),
   ]);
 
@@ -71,7 +94,9 @@ export default async function TodayPage() {
 
           <section className="rounded-2xl border border-slate-200 bg-white p-4">
             <h2 className="text-sm font-semibold text-slate-900">Priority Queue</h2>
-            <p className="mt-0.5 text-xs text-slate-500">Click a card to go fix it. Overdue = tasks past due date. Missing receipts = expenses with no receipt attached.</p>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Click a card to go fix it. Overdue = tasks past due date. Missing receipts = expenses with no receipt attached.
+            </p>
             <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
               <Link href="/leads" className="rounded-xl border border-rose-300 bg-rose-50 p-3">
                 <p className="text-xs text-rose-700">New Leads (Uncontacted)</p>
@@ -106,6 +131,20 @@ export default async function TodayPage() {
                 <p className="text-xs text-sky-700">Missing Receipts</p>
                 <p className="mt-1 text-xl font-semibold text-sky-700">{ops.missingReceipts}</p>
               </Link>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <p className="text-xs text-slate-700">Daily ops digest</p>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Sends a one-time Discord summary of overdue tasks, missing receipts, and missing clock-ins for today.
+                </p>
+                <form action={sendDailyOpsDigestAction} className="mt-2">
+                  <button
+                    type="submit"
+                    className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50"
+                  >
+                    Send digest now
+                  </button>
+                </form>
+              </div>
               <Link href="/accounting" className="rounded-xl border border-amber-200 bg-amber-50 p-3">
                 <p className="text-xs text-amber-700">Unpaid invoices (owed to you)</p>
                 <p className="mt-1 text-xl font-semibold text-amber-700">{currency(kpis.outstandingInvoicesTotal)}</p>
@@ -178,45 +217,53 @@ export default async function TodayPage() {
               existing.events = [...existing.events, event];
               grouped.set(jobId, existing);
             }
-            return [...grouped.values()].map((group) => (
-              <article key={group.jobId} className="rounded-xl border border-slate-200 p-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="font-medium text-slate-900">{group.jobName}</p>
-                    <ul className="mt-1 space-y-0.5 text-xs text-slate-600">
-                      {group.events.map((event) => (
-                        <li key={event.id}>
-                          <span className="font-medium">
-                            {format(event.startAt, "h:mm a")} – {format(event.endAt, "h:mm a")}
-                          </span>
-                          {event.notes ? <span className="text-slate-500"> · {event.notes}</span> : null}
-                        </li>
-                      ))}
-                    </ul>
+            return [...grouped.values()].map((group) => {
+              const capture = captureCountsByJob[group.jobId];
+              return (
+                <article key={group.jobId} className="rounded-xl border border-slate-200 p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="font-medium text-slate-900">{group.jobName}</p>
+                      {capture ? (
+                        <p className="mt-0.5 text-[11px] text-slate-500">
+                          Photos today: {capture.photosToday} · Receipts: {capture.receiptsToday}
+                        </p>
+                      ) : null}
+                      <ul className="mt-1 space-y-0.5 text-xs text-slate-600">
+                        {group.events.map((event) => (
+                          <li key={event.id}>
+                            <span className="font-medium">
+                              {format(event.startAt, "h:mm a")} – {format(event.endAt, "h:mm a")}
+                            </span>
+                            {event.notes ? <span className="text-slate-500"> · {event.notes}</span> : null}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div className="flex shrink-0 gap-1">
+                      <Link
+                        href={`/jobs/${group.jobId}`}
+                        className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                      >
+                        Hub
+                      </Link>
+                      <Link
+                        href={`/time?jobId=${group.jobId}`}
+                        className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                      >
+                        Time
+                      </Link>
+                      <Link
+                        href={`/jobs/${group.jobId}#capture`}
+                        className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                      >
+                        Photos / Receipts
+                      </Link>
+                    </div>
                   </div>
-                  <div className="flex shrink-0 gap-1">
-                    <Link
-                      href={`/jobs/${group.jobId}`}
-                      className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
-                    >
-                      Hub
-                    </Link>
-                    <Link
-                      href={`/time?jobId=${group.jobId}`}
-                      className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
-                    >
-                      Time
-                    </Link>
-                    <Link
-                      href={`/jobs/${group.jobId}#capture`}
-                      className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
-                    >
-                      Photos / Receipts
-                    </Link>
-                  </div>
-                </div>
-              </article>
-            ));
+                </article>
+              );
+            });
           })()}
           {ops.todayEvents.length === 0 ? (
             <p className="text-sm text-slate-500">

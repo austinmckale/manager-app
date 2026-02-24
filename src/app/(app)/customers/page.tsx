@@ -27,9 +27,19 @@ export default async function CustomersPage() {
       <section className="space-y-2">
         {customers.map((customer) => (
           <article key={customer.id} className="rounded-2xl border border-slate-200 bg-white p-3">
-            <p className="text-base font-semibold text-slate-900">{customer.name}</p>
-            <p className="text-sm text-slate-600">{customer.phone || "No phone"}</p>
-            <p className="text-sm text-slate-600">{customer.email || "No email"}</p>
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="text-base font-semibold text-slate-900">{customer.name}</p>
+                <p className="text-sm text-slate-600">{customer.phone || "No phone"}</p>
+                <p className="text-sm text-slate-600">{customer.email || "No email"}</p>
+              </div>
+              <Link
+                href={`/customers/${customer.id}`}
+                className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs text-slate-700"
+              >
+                Client hub
+              </Link>
+            </div>
             <div className="mt-2 flex flex-wrap gap-2 text-xs">
               <Link
                 href={`/jobs?customerId=${customer.id}#new-job`}

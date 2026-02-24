@@ -98,6 +98,20 @@ export default async function JobDetailPage({
     .slice(0, 20)
     .map((asset) => asset.id)
     .join(",");
+  const todayStart = startOfDay(new Date());
+  const tomorrowStart = addDays(todayStart, 1);
+  const todayPhotoAssets = photoAssets.filter(
+    (asset) => asset.createdAt >= todayStart && asset.createdAt < tomorrowStart,
+  );
+  const earlierPhotoAssets = photoAssets.filter(
+    (asset) => asset.createdAt < todayStart || asset.createdAt >= tomorrowStart,
+  );
+  const todayReceiptAssets = receiptAssets.filter(
+    (asset) => asset.createdAt >= todayStart && asset.createdAt < tomorrowStart,
+  );
+  const earlierReceiptAssets = receiptAssets.filter(
+    (asset) => asset.createdAt < todayStart || asset.createdAt >= tomorrowStart,
+  );
   const photosCaptured = photoAssets.length;
   const receiptsCaptured = receiptAssets.length;
   const openTasks = job.tasks.filter((task) => task.status !== TaskStatus.DONE).length;
@@ -497,8 +511,8 @@ export default async function JobDetailPage({
       <section id="capture" className="rounded-2xl border border-slate-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-slate-900">2) Field capture (photos & receipts)</h3>
         <p className="mt-1 text-xs text-slate-500">
-          Use this section in the field to document work and receipts. Today&apos;s captures show first; older items stay available
-          below.
+          Use this section in the field to document work and receipts. Today&apos;s captures are grouped first; older items stay
+          available below.
         </p>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <div className="space-y-3">
@@ -521,48 +535,136 @@ export default async function JobDetailPage({
           <div className="space-y-3">
             <div>
               <p className="text-xs font-medium text-slate-700">Photos ({photoAssets.length})</p>
-              <p className="mt-0.5 text-[11px] text-slate-500">Most recent first. Tap to view full size.</p>
-              <div className="mt-1 grid grid-cols-3 gap-2">
-              {photoAssets.slice(0, 12).map((asset) => (
-                <div key={asset.id} className="group relative">
-                  <a href={getStoragePublicUrl(asset.storageKey)} target="_blank" rel="noreferrer" className="block">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={getStoragePublicUrl(asset.storageKey)} alt={asset.description ?? "asset"} className="aspect-square w-full rounded-xl object-cover" />
-                  </a>
-                  <form action={togglePortfolioAction} className="absolute right-1 top-1">
-                    <input type="hidden" name="assetId" value={asset.id} />
-                    <button
-                      type="submit"
-                      title={asset.isPortfolio ? "Remove from portfolio" : "Add to portfolio"}
-                      className={`rounded-lg px-1.5 py-0.5 text-[10px] font-semibold shadow-sm backdrop-blur-sm ${
-                        asset.isPortfolio
-                          ? "bg-teal-600/90 text-white"
-                          : "bg-white/80 text-slate-600 opacity-0 group-hover:opacity-100"
-                      }`}
-                    >
-                      {asset.isPortfolio ? "Portfolio On" : "Add Portfolio"}
-                    </button>
-                  </form>
-                  {asset.stage ? (
-                    <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
-                      {asset.stage}
-                    </span>
+              <p className="mt-0.5 text-[11px] text-slate-500">Today first, then earlier. Tap to view full size.</p>
+              {photoAssets.length === 0 ? (
+                <p className="mt-1 text-xs text-slate-500">No photos uploaded yet.</p>
+              ) : (
+                <div className="mt-1 space-y-2">
+                  {todayPhotoAssets.length > 0 ? (
+                    <div>
+                      <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500">Today</p>
+                      <div className="grid grid-cols-3 gap-2">
+                        {todayPhotoAssets.map((asset) => (
+                          <div key={asset.id} className="group relative">
+                            <a href={getStoragePublicUrl(asset.storageKey)} target="_blank" rel="noreferrer" className="block">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={getStoragePublicUrl(asset.storageKey)}
+                                alt={asset.description ?? "asset"}
+                                className="aspect-square w-full rounded-xl object-cover"
+                              />
+                            </a>
+                            <form action={togglePortfolioAction} className="absolute right-1 top-1">
+                              <input type="hidden" name="assetId" value={asset.id} />
+                              <button
+                                type="submit"
+                                title={asset.isPortfolio ? "Remove from portfolio" : "Add to portfolio"}
+                                className={`rounded-lg px-1.5 py-0.5 text-[10px] font-semibold shadow-sm backdrop-blur-sm ${
+                                  asset.isPortfolio
+                                    ? "bg-teal-600/90 text-white"
+                                    : "bg-white/80 text-slate-600 opacity-0 group-hover:opacity-100"
+                                }`}
+                              >
+                                {asset.isPortfolio ? "Portfolio On" : "Add Portfolio"}
+                              </button>
+                            </form>
+                            {asset.stage ? (
+                              <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
+                                {asset.stage}
+                              </span>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {earlierPhotoAssets.length > 0 ? (
+                    <div>
+                      <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500">Earlier</p>
+                      <div className="grid grid-cols-3 gap-2">
+                        {earlierPhotoAssets.map((asset) => (
+                          <div key={asset.id} className="group relative">
+                            <a href={getStoragePublicUrl(asset.storageKey)} target="_blank" rel="noreferrer" className="block">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={getStoragePublicUrl(asset.storageKey)}
+                                alt={asset.description ?? "asset"}
+                                className="aspect-square w-full rounded-xl object-cover"
+                              />
+                            </a>
+                            <form action={togglePortfolioAction} className="absolute right-1 top-1">
+                              <input type="hidden" name="assetId" value={asset.id} />
+                              <button
+                                type="submit"
+                                title={asset.isPortfolio ? "Remove from portfolio" : "Add to portfolio"}
+                                className={`rounded-lg px-1.5 py-0.5 text-[10px] font-semibold shadow-sm backdrop-blur-sm ${
+                                  asset.isPortfolio
+                                    ? "bg-teal-600/90 text-white"
+                                    : "bg-white/80 text-slate-600 opacity-0 group-hover:opacity-100"
+                                }`}
+                              >
+                                {asset.isPortfolio ? "Portfolio On" : "Add Portfolio"}
+                              </button>
+                            </form>
+                            {asset.stage ? (
+                              <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
+                                {asset.stage}
+                              </span>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   ) : null}
                 </div>
-              ))}
-              </div>
-              {photoAssets.length === 0 ? <p className="text-xs text-slate-500">No photos uploaded yet.</p> : null}
+              )}
             </div>
 
             <div className="rounded-xl border border-slate-200 p-2 text-xs">
               <p className="font-medium text-slate-700">Receipts ({receiptAssets.length})</p>
-              <div className="mt-1 space-y-1">
-                {receiptAssets.slice(0, 5).map((asset) => (
-                  <a key={asset.id} href={getStoragePublicUrl(asset.storageKey)} target="_blank" rel="noreferrer" className="block truncate text-teal-700 underline">
-                    {asset.fileName}
-                  </a>
-                ))}
-                {receiptAssets.length === 0 ? <p className="text-slate-500">No receipts uploaded yet.</p> : null}
+              <div className="mt-1 space-y-1 text-xs">
+                {receiptAssets.length === 0 ? (
+                  <p className="text-slate-500">No receipts uploaded yet.</p>
+                ) : (
+                  <>
+                    {todayReceiptAssets.length > 0 ? (
+                      <div>
+                        <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Today</p>
+                        <div className="mt-0.5 space-y-0.5">
+                          {todayReceiptAssets.map((asset) => (
+                            <a
+                              key={asset.id}
+                              href={getStoragePublicUrl(asset.storageKey)}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="block truncate text-teal-700 underline"
+                            >
+                              {asset.fileName}
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                    {earlierReceiptAssets.length > 0 ? (
+                      <div className="mt-1">
+                        <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Earlier</p>
+                        <div className="mt-0.5 space-y-0.5">
+                          {earlierReceiptAssets.map((asset) => (
+                            <a
+                              key={asset.id}
+                              href={getStoragePublicUrl(asset.storageKey)}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="block truncate text-teal-700 underline"
+                            >
+                              {asset.fileName}
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                  </>
+                )}
               </div>
             </div>
           </div>

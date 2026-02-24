@@ -155,28 +155,74 @@ export default async function JobsPage({
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
-        <form className="grid gap-2 sm:grid-cols-3">
-          <input
-            name="q"
-            defaultValue={q}
-            placeholder="Search jobs or customers"
-            className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
-          />
-          <select name="status" defaultValue={status} className="rounded-xl border border-slate-300 px-3 py-2 text-sm">
-            {statusOptions.map((option) => (
-              <option key={option} value={option}>
-                {option === "ALL" ? "All statuses" : option.replaceAll("_", " ")}
-              </option>
-            ))}
-          </select>
-          <select name="view" defaultValue={view} className="rounded-xl border border-slate-300 px-3 py-2 text-sm">
-            {viewOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-          <button type="submit" className="rounded-xl border border-slate-300 px-3 py-2 text-sm sm:col-span-3">
-            Apply filters
-          </button>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900">Jobs board</h2>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Focus on this week&apos;s active work, but you can switch filters below.
+            </p>
+          </div>
+          <div className="text-right text-xs text-slate-500">
+            <p>
+              Showing <span className="font-semibold">{jobs.length}</span> job{jobs.length === 1 ? "" : "s"}
+            </p>
+          </div>
+        </div>
+        <form className="mt-3 space-y-2 text-xs">
+          <div className="flex flex-wrap gap-2">
+            {viewOptions.map((option) => {
+              const active = view === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="submit"
+                  name="view"
+                  value={option.value}
+                  className={`rounded-full px-3 py-1 ${
+                    active ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className="text-[11px] uppercase tracking-wide text-slate-500">Status</span>
+            <div className="flex flex-wrap gap-1">
+              {statusOptions.map((option) => {
+                const value = option;
+                const active = status === value;
+                return (
+                  <button
+                    key={value}
+                    type="submit"
+                    name="status"
+                    value={value}
+                    className={`rounded-full px-2.5 py-1 text-[11px] ${
+                      active ? "bg-teal-600 text-white" : "bg-slate-100 text-slate-700"
+                    }`}
+                  >
+                    {value === "ALL" ? "All" : value.replaceAll("_", " ")}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+            <input
+              name="q"
+              defaultValue={q}
+              placeholder="Search jobs or customers"
+              className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
+            />
+            <button
+              type="submit"
+              className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
+            >
+              Apply filters
+            </button>
+          </div>
         </form>
       </section>
 
