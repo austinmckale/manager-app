@@ -1,4 +1,4 @@
-﻿"use server";
+"use server";
 
 import { ExpenseCategory, InvoiceStatus, JobStatus, LeadSource, LeadStage, LineItemType, Prisma, Role } from "@prisma/client";
 import { revalidatePath } from "next/cache";
@@ -9,12 +9,18 @@ import {
   demoAssignWorkersToJob,
   demoClockInWorker,
   demoClockOutWorker,
-  demoUsers,
+  demoCreateWorker,
+  demoSetJobAssignments,
+  demoSetWorkerActive,
+  demoUpdateWorker,
+  getDemoOrgId,
+  getDemoUserById,
   isDemoMode,
 } from "@/lib/demo";
 import { ensureDefaultKpis } from "@/lib/kpis";
 import { canManageOrg } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
+import { revalidateSitePortfolio } from "@/lib/revalidate-site";
 import { toNumber } from "@/lib/utils";
 
 function parseMoney(value: FormDataEntryValue | null) {
@@ -486,7 +492,7 @@ export async function assignWorkerToJobAction(formData: FormData) {
   if (isDemoMode()) {
     if (jobId && userId) {
       demoAssignWorkersToJob({
-        orgId: demoUsers[0]?.orgId ?? "00000000-0000-0000-0000-000000000001",
+        orgId: getDemoOrgId(),
         jobId,
         workerIds: [userId],
       });
@@ -531,7 +537,7 @@ export async function createScheduleEventAction(formData: FormData) {
     if (jobId && startAt && endAt) {
       demoAddScheduleEvents([
         {
-          orgId: demoUsers[0]?.orgId ?? "00000000-0000-0000-0000-000000000001",
+          orgId: getDemoOrgId(),
           jobId,
           startAt: new Date(startAt),
           endAt: new Date(endAt),
@@ -587,7 +593,7 @@ export async function quickScheduleCrewAction(formData: FormData) {
   if (isDemoMode()) {
     if (workerIds.length > 0) {
       demoAssignWorkersToJob({
-        orgId: demoUsers[0]?.orgId ?? "00000000-0000-0000-0000-000000000001",
+        orgId: getDemoOrgId(),
         jobId,
         workerIds,
       });
@@ -605,7 +611,7 @@ export async function quickScheduleCrewAction(formData: FormData) {
       const endAt = new Date(base);
       endAt.setHours(slotHours.endHour, 0, 0, 0);
       return {
-        orgId: demoUsers[0]?.orgId ?? "00000000-0000-0000-0000-000000000001",
+        orgId: getDemoOrgId(),
         jobId,
         startAt,
         endAt,
@@ -1361,7 +1367,7 @@ export async function ownerClockInEmployeeAction(formData: FormData) {
   if (!workerId || !jobId) return;
 
   if (isDemoMode()) {
-    const worker = demoUsers.find((user) => user.id === workerId);
+    const worker = getDemoUserById(workerId);
     demoClockInWorker({
       workerId,
       jobId,
@@ -1480,17 +1486,6 @@ export async function sendClockRemindersAction(formData: FormData) {
 }
 
 export async function createWorkerAction(formData: FormData) {
-  if (isDemoMode()) {
-    revalidatePath("/settings/targets");
-    revalidatePath("/team");
-    return;
-  }
-
-  const auth = await requireAuth();
-  if (!canManageOrg(auth.role)) {
-    throw new Error("Only owner/admin can add workers.");
-  }
-
   const fullName = String(formData.get("fullName") ?? "").trim();
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const phone = String(formData.get("phone") ?? "").trim();
@@ -1499,6 +1494,26 @@ export async function createWorkerAction(formData: FormData) {
 
   if (!fullName || !email) {
     throw new Error("Name and email are required.");
+  }
+
+  if (isDemoMode()) {
+    demoCreateWorker({
+      fullName,
+      email,
+      phone: phone || null,
+      role,
+      hourlyRateDefault: hourlyRate > 0 ? hourlyRate : null,
+    });
+    revalidatePath("/settings/targets");
+    revalidatePath("/team");
+    revalidatePath("/attendance");
+    revalidatePath("/time");
+    return;
+  }
+
+  const auth = await requireAuth();
+  if (!canManageOrg(auth.role)) {
+    throw new Error("Only owner/admin can add workers.");
   }
 
   await prisma.userProfile.create({
@@ -1520,18 +1535,6 @@ export async function createWorkerAction(formData: FormData) {
 }
 
 export async function updateWorkerAction(formData: FormData) {
-  if (isDemoMode()) {
-    revalidatePath("/settings/targets");
-    revalidatePath("/team");
-    revalidatePath("/time");
-    return;
-  }
-
-  const auth = await requireAuth();
-  if (!canManageOrg(auth.role)) {
-    throw new Error("Only owner/admin can update workers.");
-  }
-
   const workerId = String(formData.get("workerId") ?? "");
   const fullName = String(formData.get("fullName") ?? "").trim();
   const phone = String(formData.get("phone") ?? "").trim();
@@ -1539,6 +1542,26 @@ export async function updateWorkerAction(formData: FormData) {
   const hourlyRate = Number(formData.get("hourlyRateDefault") ?? 0);
 
   if (!workerId) return;
+
+  if (isDemoMode()) {
+    demoUpdateWorker({
+      workerId,
+      fullName: fullName || undefined,
+      phone: phone || null,
+      role,
+      hourlyRateDefault: hourlyRate > 0 ? hourlyRate : null,
+    });
+    revalidatePath("/settings/targets");
+    revalidatePath("/team");
+    revalidatePath("/time");
+    revalidatePath("/attendance");
+    return;
+  }
+
+  const auth = await requireAuth();
+  if (!canManageOrg(auth.role)) {
+    throw new Error("Only owner/admin can update workers.");
+  }
 
   await prisma.userProfile.update({
     where: { id: workerId },
@@ -1556,10 +1579,16 @@ export async function updateWorkerAction(formData: FormData) {
 }
 
 export async function setWorkerActiveAction(formData: FormData) {
+  const workerId = String(formData.get("workerId") ?? "");
+  const isActive = String(formData.get("isActive") ?? "true") === "true";
+  if (!workerId) return;
+
   if (isDemoMode()) {
+    demoSetWorkerActive(workerId, isActive);
     revalidatePath("/settings/targets");
     revalidatePath("/team");
     revalidatePath("/time");
+    revalidatePath("/attendance");
     return;
   }
 
@@ -1567,10 +1596,6 @@ export async function setWorkerActiveAction(formData: FormData) {
   if (!canManageOrg(auth.role)) {
     throw new Error("Only owner/admin can activate/deactivate workers.");
   }
-
-  const workerId = String(formData.get("workerId") ?? "");
-  const isActive = String(formData.get("isActive") ?? "true") === "true";
-  if (!workerId) return;
 
   await prisma.userProfile.update({
     where: { id: workerId },
@@ -1592,9 +1617,15 @@ export async function saveJobAssignmentsAction(formData: FormData) {
   if (!jobId) return;
 
   if (isDemoMode()) {
+    demoSetJobAssignments({
+      orgId: getDemoOrgId(),
+      jobId,
+      workerIds: selectedWorkerIds,
+    });
     revalidatePath("/team");
     revalidatePath("/time");
     revalidatePath(`/jobs/${jobId}`);
+    revalidatePath("/attendance");
     return;
   }
 
@@ -1728,4 +1759,41 @@ export async function postPortalMessageAction(formData: FormData) {
   revalidatePath(`/portal/${token}`);
 }
 
+export async function togglePortfolioAction(formData: FormData) {
+  const auth = await requireAuth();
+  const assetId = String(formData.get("assetId"));
 
+  if (isDemoMode()) {
+    return;
+  }
+
+  const asset = await prisma.fileAsset.findFirst({
+    where: { id: assetId, job: { orgId: auth.orgId } },
+    select: { id: true, isPortfolio: true, jobId: true },
+  });
+
+  if (!asset) return;
+
+  const newValue = !asset.isPortfolio;
+
+  await prisma.fileAsset.update({
+    where: { id: assetId },
+    data: { isPortfolio: newValue },
+  });
+
+  await prisma.activityLog.create({
+    data: {
+      orgId: auth.orgId,
+      jobId: asset.jobId,
+      actorId: auth.userId,
+      action: newValue ? "file.portfolio.added" : "file.portfolio.removed",
+      metadata: { fileAssetId: assetId },
+    },
+  });
+
+  if (newValue) {
+    revalidateSitePortfolio().catch(() => {});
+  }
+
+  revalidatePath(`/jobs/${asset.jobId}`);
+}

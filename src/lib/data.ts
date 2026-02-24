@@ -7,10 +7,10 @@ import {
   demoJobs,
   demoScheduleEvents,
   demoTasks,
-  demoUsers,
-  isDemoMode,
   listDemoRuntimeAssignments,
+  listDemoRuntimeUsers,
   listDemoRuntimeScheduleEvents,
+  isDemoMode,
 } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
 
@@ -35,7 +35,7 @@ function getMergedDemoScheduleEvents() {
 }
 
 export async function getOrgUsers(orgId: string) {
-  if (isDemoMode()) return demoUsers as never[];
+  if (isDemoMode()) return listDemoRuntimeUsers().filter((user) => user.isActive) as never[];
 
   return prisma.userProfile.findMany({
     where: { orgId, isActive: true },
@@ -280,7 +280,7 @@ export async function getJobById(params: {
       expenses: [],
       tasks: demoTasks.filter((task) => task.jobId === job.id).map((task) => ({
         ...task,
-        assignee: demoUsers.find((user) => user.id === task.assignedTo) ?? null,
+        assignee: listDemoRuntimeUsers().find((user) => user.id === task.assignedTo) ?? null,
       })),
       invoices: [],
       activityLogs: [],

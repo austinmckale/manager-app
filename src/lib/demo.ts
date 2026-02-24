@@ -35,6 +35,19 @@ export const demoUsers = [
   },
 ];
 
+type DemoRuntimeUser = {
+  id: string;
+  orgId: string;
+  fullName: string;
+  email: string;
+  role: Role;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  phone: string | null;
+  hourlyRateDefault: number | null;
+};
+
 export const demoCustomers = [
   {
     id: "10000000-0000-0000-0000-000000000001",
@@ -223,9 +236,17 @@ type DemoRuntimeTimeEntry = {
 };
 
 declare global {
+  var __fieldflowDemoUsers: DemoRuntimeUser[] | undefined;
   var __fieldflowDemoAssignments: DemoRuntimeAssignment[] | undefined;
   var __fieldflowDemoScheduleEvents: DemoRuntimeScheduleEvent[] | undefined;
   var __fieldflowDemoTimeEntries: DemoRuntimeTimeEntry[] | undefined;
+}
+
+function getDemoUsersStore() {
+  if (!globalThis.__fieldflowDemoUsers) {
+    globalThis.__fieldflowDemoUsers = demoUsers.map((user) => ({ ...user }));
+  }
+  return globalThis.__fieldflowDemoUsers;
 }
 
 function getDemoAssignmentsStore() {
@@ -247,6 +268,64 @@ function getDemoTimeEntriesStore() {
     globalThis.__fieldflowDemoTimeEntries = [];
   }
   return globalThis.__fieldflowDemoTimeEntries;
+}
+
+export function listDemoRuntimeUsers() {
+  return [...getDemoUsersStore()].sort((a, b) => a.fullName.localeCompare(b.fullName));
+}
+
+export function getDemoUserById(userId: string) {
+  return getDemoUsersStore().find((user) => user.id === userId) ?? null;
+}
+
+export function getDemoOrgId() {
+  return getDemoUsersStore()[0]?.orgId ?? "00000000-0000-0000-0000-000000000001";
+}
+
+export function demoCreateWorker(params: {
+  fullName: string;
+  email: string;
+  phone?: string | null;
+  role: Role;
+  hourlyRateDefault?: number | null;
+}) {
+  const store = getDemoUsersStore();
+  const now = new Date();
+  store.push({
+    id: crypto.randomUUID(),
+    orgId: getDemoOrgId(),
+    fullName: params.fullName,
+    email: params.email,
+    phone: params.phone ?? null,
+    role: params.role,
+    hourlyRateDefault: params.hourlyRateDefault ?? null,
+    isActive: true,
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
+export function demoUpdateWorker(params: {
+  workerId: string;
+  fullName?: string;
+  phone?: string | null;
+  role?: Role;
+  hourlyRateDefault?: number | null;
+}) {
+  const worker = getDemoUsersStore().find((user) => user.id === params.workerId);
+  if (!worker) return;
+  if (params.fullName && params.fullName.trim().length > 0) worker.fullName = params.fullName.trim();
+  worker.phone = params.phone ?? null;
+  if (params.role) worker.role = params.role;
+  worker.hourlyRateDefault = params.hourlyRateDefault ?? null;
+  worker.updatedAt = new Date();
+}
+
+export function demoSetWorkerActive(workerId: string, isActive: boolean) {
+  const worker = getDemoUsersStore().find((user) => user.id === workerId);
+  if (!worker) return;
+  worker.isActive = isActive;
+  worker.updatedAt = new Date();
 }
 
 export function listDemoRuntimeAssignments() {
@@ -278,6 +357,35 @@ export function demoAssignWorkersToJob(params: { orgId: string; jobId: string; w
       updatedAt: now,
     });
   }
+}
+
+export function demoSetJobAssignments(params: { orgId: string; jobId: string; workerIds: string[] }) {
+  const store = getDemoAssignmentsStore();
+  const selected = new Set(params.workerIds);
+  const baseForJob = demoJobAssignments.filter((item) => item.jobId === params.jobId);
+  const keepFromRuntime = store.filter((item) => item.jobId !== params.jobId);
+
+  const mergedForJob = [
+    ...baseForJob.filter((item) => selected.has(item.userId)),
+    ...store.filter((item) => item.jobId === params.jobId && selected.has(item.userId)),
+  ];
+  const existingKeys = new Set(mergedForJob.map((item) => `${item.jobId}:${item.userId}`));
+  const now = new Date();
+
+  for (const userId of selected) {
+    const key = `${params.jobId}:${userId}`;
+    if (existingKeys.has(key)) continue;
+    mergedForJob.push({
+      id: crypto.randomUUID(),
+      orgId: params.orgId,
+      jobId: params.jobId,
+      userId,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  globalThis.__fieldflowDemoAssignments = [...keepFromRuntime, ...mergedForJob];
 }
 
 export function demoAddScheduleEvents(
