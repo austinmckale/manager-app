@@ -1,4 +1,4 @@
-# Auto Lead Intake Setup
+﻿# Auto Lead Intake Setup
 
 Use this to auto-create leads from website forms, phone call tools, and SMS automations.
 
@@ -8,12 +8,22 @@ Use this to auto-create leads from website forms, phone call tools, and SMS auto
 ## Auth
 - Header: `x-lead-intake-key: <LEAD_INGEST_API_KEY>`
 - Or: `Authorization: Bearer <LEAD_INGEST_API_KEY>`
+- Or (for static forms): query param `?key=<LEAD_INGEST_API_KEY>`
+
+## CORS / Website Forms
+- Set `LEAD_INGEST_ALLOWED_ORIGINS` to your website origins:
+  - Example: `https://yourwebsite.com,https://www.yourwebsite.com`
+- Endpoint supports:
+  - `application/json`
+  - `application/x-www-form-urlencoded`
+  - `multipart/form-data`
 
 ## Required Config
 - `LEAD_INGEST_API_KEY`
 - `DEFAULT_ORG_ID` (optional if you pass `orgId` in payload)
+- `LEAD_INGEST_ALLOWED_ORIGINS` (recommended)
 
-## Payload (example)
+## Payload (example JSON)
 ```json
 {
   "externalRef": "webform-12345",
@@ -25,6 +35,20 @@ Use this to auto-create leads from website forms, phone call tools, and SMS auto
   "source": "website_form",
   "message": "Kitchen leak after storm"
 }
+```
+
+## Simple HTML form example
+```html
+<form method="POST" action="https://your-app.com/api/leads/intake?key=YOUR_SECRET">
+  <input name="contactName" placeholder="Name" required />
+  <input name="phone" placeholder="Phone" required />
+  <input name="email" type="email" placeholder="Email" />
+  <input name="address" placeholder="Address" />
+  <input name="serviceType" placeholder="Service" />
+  <input type="hidden" name="source" value="website_form" />
+  <textarea name="message" placeholder="Project details"></textarea>
+  <button type="submit">Submit</button>
+</form>
 ```
 
 ## Source values supported

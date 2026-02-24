@@ -139,3 +139,4 @@ npm run build
 - Rebuild upgrade plan: `docs/rebuild-design-upgrade-plan.md`.
 - Auto lead intake setup: `docs/lead-autointake.md`.
 - Joist-friendly flow: `docs/joist-friendly-flow.md`.
+- Google Voice tracking options: `docs/google-voice-tracking.md`.

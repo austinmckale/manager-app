@@ -31,37 +31,78 @@ function getIntakeKey(request: Request) {
   const fromHeader = request.headers.get("x-lead-intake-key");
   if (fromHeader) return fromHeader;
   const auth = request.headers.get("authorization");
-  if (!auth) return "";
+  if (!auth) {
+    const url = new URL(request.url);
+    return url.searchParams.get("key") ?? "";
+  }
   if (!auth.toLowerCase().startsWith("bearer ")) return "";
   return auth.slice(7).trim();
+}
+
+function getCorsOrigin(request: Request) {
+  const configured = (process.env.LEAD_INGEST_ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const requestOrigin = request.headers.get("origin") ?? "";
+  if (!requestOrigin || configured.length === 0) return "*";
+  return configured.includes(requestOrigin) ? requestOrigin : "null";
+}
+
+function corsHeaders(request: Request) {
+  return {
+    "Access-Control-Allow-Origin": getCorsOrigin(request),
+    "Access-Control-Allow-Methods": "POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Lead-Intake-Key",
+  };
+}
+
+async function parseBody(request: Request) {
+  const contentType = request.headers.get("content-type")?.toLowerCase() ?? "";
+  if (contentType.includes("application/json")) {
+    return request.json();
+  }
+  if (contentType.includes("application/x-www-form-urlencoded")) {
+    const form = await request.formData();
+    return Object.fromEntries(form.entries());
+  }
+  if (contentType.includes("multipart/form-data")) {
+    const form = await request.formData();
+    return Object.fromEntries(form.entries());
+  }
+  return request.json();
 }
 
 export async function GET() {
   return NextResponse.json({ ok: true, endpoint: "/api/leads/intake" });
 }
 
+export async function OPTIONS(request: Request) {
+  return NextResponse.json({ ok: true }, { headers: corsHeaders(request) });
+}
+
 export async function POST(request: Request) {
   const secret = process.env.LEAD_INGEST_API_KEY;
   if (!secret) {
-    return NextResponse.json({ error: "LEAD_INGEST_API_KEY is not configured." }, { status: 500 });
+    return NextResponse.json({ error: "LEAD_INGEST_API_KEY is not configured." }, { status: 500, headers: corsHeaders(request) });
   }
 
   const intakeKey = getIntakeKey(request);
   if (intakeKey !== secret) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(request) });
   }
 
-  const body = await request.json();
+  const body = await parseBody(request);
   const parsed = inputSchema.safeParse(body);
 
   if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid payload", details: parsed.error.flatten() }, { status: 400 });
+    return NextResponse.json({ error: "Invalid payload", details: parsed.error.flatten() }, { status: 400, headers: corsHeaders(request) });
   }
 
   const data = parsed.data;
   const orgId = data.orgId ?? process.env.DEFAULT_ORG_ID ?? "";
   if (!orgId) {
-    return NextResponse.json({ error: "orgId is required (payload.orgId or DEFAULT_ORG_ID env)." }, { status: 400 });
+    return NextResponse.json({ error: "orgId is required (payload.orgId or DEFAULT_ORG_ID env)." }, { status: 400, headers: corsHeaders(request) });
   }
 
   const contactName = (data.contactName || data.name || data.phone || data.email || "Unknown Lead").trim();
@@ -75,7 +116,7 @@ export async function POST(request: Request) {
     });
 
     if (existingByRef) {
-      return NextResponse.json({ ok: true, deduped: true, leadId: existingByRef.id, by: "externalRef" });
+      return NextResponse.json({ ok: true, deduped: true, leadId: existingByRef.id, by: "externalRef" }, { headers: corsHeaders(request) });
     }
   }
 
@@ -97,7 +138,7 @@ export async function POST(request: Request) {
     });
 
     if (existingRecent) {
-      return NextResponse.json({ ok: true, deduped: true, leadId: existingRecent.id, by: "recent_contact" });
+      return NextResponse.json({ ok: true, deduped: true, leadId: existingRecent.id, by: "recent_contact" }, { headers: corsHeaders(request) });
     }
   }
 
@@ -128,5 +169,5 @@ export async function POST(request: Request) {
     },
   });
 
-  return NextResponse.json({ ok: true, deduped: false, leadId: lead.id });
+  return NextResponse.json({ ok: true, deduped: false, leadId: lead.id }, { headers: corsHeaders(request) });
 }
