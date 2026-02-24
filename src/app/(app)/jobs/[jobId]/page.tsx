@@ -1,15 +1,15 @@
 ﻿import { TaskStatus } from "@prisma/client";
+import { addDays, format } from "date-fns";
 import {
   addPaymentAction,
-  assignWorkerToJobAction,
   approveChangeOrderAction,
   approveEstimateAction,
   convertEstimateToInvoiceAction,
   createChangeOrderAction,
   createEstimateAction,
   createExpenseAction,
-  createScheduleEventAction,
   createTaskAction,
+  quickScheduleCrewAction,
   updateJobStatusAction,
   updateTaskStatusAction,
 } from "@/app/(app)/actions";
@@ -41,6 +41,7 @@ export default async function JobDetailPage({
 
   const costing = computeJobCosting(job);
   const assignedUserIds = new Set(job.assignments?.map((assignment) => assignment.userId) ?? []);
+  const quickDates = Array.from({ length: 7 }, (_, index) => addDays(new Date(), index));
   const [shareLinks, portalLinks] = isDemoMode()
     ? [[], []]
     : await Promise.all([
@@ -70,33 +71,53 @@ export default async function JobDetailPage({
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-slate-900">0) Schedule + Crew</h3>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <form action={assignWorkerToJobAction} className="grid gap-2 rounded-xl border border-slate-200 p-3 text-sm">
-            <input type="hidden" name="jobId" value={job.id} />
-            <p className="font-medium">Assign Worker</p>
-            <select name="userId" className="rounded-xl border border-slate-300 px-3 py-2 text-sm">
+        <form action={quickScheduleCrewAction} className="mt-3 grid gap-3 rounded-xl border border-slate-200 p-3 text-sm">
+          <input type="hidden" name="jobId" value={job.id} />
+          <div>
+            <p className="font-medium">Crew (check all working this block)</p>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
               {users.map((user) => (
-                <option key={user.id} value={user.id}>{user.fullName}</option>
+                <label key={user.id} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                  <input type="checkbox" name="workerIds" value={user.id} defaultChecked={assignedUserIds.has(user.id)} />
+                  {user.fullName}
+                </label>
               ))}
-            </select>
-            <button type="submit" className="rounded-xl border border-slate-300 px-3 py-2">Assign</button>
-            <div className="text-xs text-slate-500">
-              {users
-                .filter((user) => assignedUserIds.has(user.id))
-                .map((user) => user.fullName)
-                .join(", ") || "No one assigned yet."}
             </div>
-          </form>
+          </div>
 
-          <form action={createScheduleEventAction} className="grid gap-2 rounded-xl border border-slate-200 p-3 text-sm">
-            <input type="hidden" name="jobId" value={job.id} />
-            <p className="font-medium">Schedule Block</p>
-            <input name="startAt" type="datetime-local" required className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
-            <input name="endAt" type="datetime-local" required className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
-            <input name="notes" placeholder="Notes" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
-            <button type="submit" className="rounded-xl border border-slate-300 px-3 py-2">Add Event</button>
-          </form>
-        </div>
+          <div>
+            <p className="font-medium">Dates (next 7 days)</p>
+            <div className="mt-2 grid gap-2 sm:grid-cols-4">
+              {quickDates.map((dateValue) => (
+                <label key={dateValue.toISOString()} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                  <input type="checkbox" name="dates" value={format(dateValue, "yyyy-MM-dd")} />
+                  {format(dateValue, "EEE M/d")}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <p className="font-medium">Time Block</p>
+            <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+              <label className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1">
+                <input type="radio" name="slot" value="AM" />
+                AM (8-12)
+              </label>
+              <label className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1">
+                <input type="radio" name="slot" value="PM" />
+                PM (1-5)
+              </label>
+              <label className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1">
+                <input type="radio" name="slot" value="FULL" defaultChecked />
+                Full (8-5)
+              </label>
+            </div>
+          </div>
+
+          <input name="notes" placeholder="Block notes (optional)" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+          <button type="submit" className="rounded-xl bg-slate-900 px-3 py-2 text-white">Save Crew + Schedule</button>
+        </form>
 
         <div className="mt-3 space-y-2 text-sm">
           {job.scheduleEvents?.map((event) => (
@@ -348,3 +369,4 @@ export default async function JobDetailPage({
     </div>
   );
 }
+

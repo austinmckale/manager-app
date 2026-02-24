@@ -541,6 +541,84 @@ export async function createScheduleEventAction(formData: FormData) {
   revalidatePath("/jobs");
 }
 
+export async function quickScheduleCrewAction(formData: FormData) {
+  const jobId = String(formData.get("jobId") ?? "");
+  const slot = String(formData.get("slot") ?? "FULL");
+  const notes = String(formData.get("notes") ?? "");
+  const dates = formData
+    .getAll("dates")
+    .map((value) => String(value))
+    .filter(Boolean);
+  const workerIds = formData
+    .getAll("workerIds")
+    .map((value) => String(value))
+    .filter(Boolean);
+
+  if (!jobId || dates.length === 0) return;
+
+  if (isDemoMode()) {
+    revalidatePath(`/jobs/${jobId}`);
+    revalidatePath("/jobs");
+    revalidatePath("/today");
+    revalidatePath("/attendance");
+    return;
+  }
+
+  const auth = await requireAuth();
+  if (!canManageOrg(auth.role)) {
+    throw new Error("Only owner/admin can schedule crew.");
+  }
+
+  const slotHours =
+    slot === "AM"
+      ? { startHour: 8, endHour: 12 }
+      : slot === "PM"
+        ? { startHour: 13, endHour: 17 }
+        : { startHour: 8, endHour: 17 };
+
+  if (workerIds.length > 0) {
+    await prisma.jobAssignment.createMany({
+      data: workerIds.map((userId) => ({
+        orgId: auth.orgId,
+        jobId,
+        userId,
+      })),
+      skipDuplicates: true,
+    });
+  }
+
+  const events = dates.map((dateText) => {
+    const base = new Date(`${dateText}T00:00:00`);
+    const startAt = new Date(base);
+    startAt.setHours(slotHours.startHour, 0, 0, 0);
+    const endAt = new Date(base);
+    endAt.setHours(slotHours.endHour, 0, 0, 0);
+    return {
+      orgId: auth.orgId,
+      jobId,
+      startAt,
+      endAt,
+      notes: notes || null,
+    };
+  });
+
+  await prisma.jobScheduleEvent.createMany({
+    data: events,
+  });
+
+  await logActivity(auth.orgId, jobId, auth.userId, "job.quick_schedule.saved", {
+    datesCount: dates.length,
+    workersCount: workerIds.length,
+    slot,
+  });
+
+  revalidatePath(`/jobs/${jobId}`);
+  revalidatePath("/jobs");
+  revalidatePath("/today");
+  revalidatePath("/attendance");
+  revalidatePath("/team");
+}
+
 export async function createTimeEntryAction(formData: FormData) {
   if (isDemoMode()) {
     const jobId = String(formData.get("jobId") ?? "");
