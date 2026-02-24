@@ -5,6 +5,7 @@
   updateOrgSettingsAction,
   updateWorkerAction,
 } from "@/app/(app)/actions";
+import Link from "next/link";
 import { requireAuth } from "@/lib/auth";
 import { getOrgUsers } from "@/lib/data";
 import { isDemoMode } from "@/lib/demo";
@@ -38,6 +39,9 @@ export default async function TargetSettingsPage() {
       <section className="rounded-2xl border border-teal-200 bg-teal-50 p-4">
         <h2 className="text-base font-semibold text-teal-900">Team Setup</h2>
         <p className="mt-1 text-sm text-teal-800">Add workers here first. Time tracking, payroll cost, assignments, and job accountability depend on this list.</p>
+        <Link href="/settings/todos" className="mt-3 inline-flex rounded-lg border border-teal-300 bg-white px-3 py-1.5 text-xs font-medium text-teal-800">
+          Open Execution To-Do Board
+        </Link>
       </section>
 
       {manage ? (
