@@ -1,14 +1,15 @@
-﻿"use client";
+"use client";
 
 import { useState } from "react";
 import Link from "next/link";
-import { Plus, Camera, Receipt, FileText, PhoneIncoming, ClipboardCheck } from "lucide-react";
+import { Plus, Camera, Receipt, FileText, PhoneIncoming, BriefcaseBusiness } from "lucide-react";
 
 const actions = [
   { href: "/leads#new-lead-form", label: "New Lead", icon: PhoneIncoming },
-  { href: "/attendance", label: "Attendance", icon: ClipboardCheck },
-  { href: "/jobs?view=today", label: "Add Expense", icon: Receipt },
-  { href: "/jobs?view=today", label: "Capture Photo", icon: Camera },
+  { href: "/jobs", label: "New Job", icon: BriefcaseBusiness },
+  { href: "/attendance#add-worker-form", label: "Add Worker", icon: Plus },
+  { href: "/jobs?view=today", label: "Open Job Expenses", icon: Receipt },
+  { href: "/jobs?view=today", label: "Open Photo Capture", icon: Camera },
   { href: "/leads", label: "Joist Import", icon: FileText },
 ];
 

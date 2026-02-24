@@ -1,4 +1,4 @@
-﻿import { ExpenseCategory, JobStatus } from "@prisma/client";
+import { ExpenseCategory, JobStatus } from "@prisma/client";
 import { toNumber } from "@/lib/utils";
 
 export type JobCostingInput = {
@@ -35,7 +35,7 @@ export function computeJobCosting(input: JobCostingInput): JobCostingSummary {
 
   for (const entry of input.timeEntries) {
     if (!entry.end) continue;
-    const minutes = (entry.end.getTime() - entry.start.getTime()) / 60000 - entry.breakMinutes;
+    const minutes = (entry.end.getTime() - entry.start.getTime()) / 60000;
     const hours = Math.max(0, minutes / 60);
     laborHours += hours;
     laborCost += hours * toNumber(entry.hourlyRateLoaded);

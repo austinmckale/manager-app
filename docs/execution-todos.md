@@ -1,30 +1,49 @@
 # Execution To-Dos
 
-## Core Workflow Completion
-- Wire website form intake to `/api/leads/intake` in production.
-- Finalize Joist CSV mapping and duplicate handling.
-- Add one-click Joist estimate to lead/job conversion.
-- Add weekly payroll lock/approve states before payout.
-- Send real attendance reminders (SMS/email), not log-only.
+## P0 - Live Operations Gaps
+- Run a full button/action audit so no control is dead or unclear.
+- Add success/error feedback after critical actions (schedule, clock, invoice send, lead save/import, expense save).
+- Improve expense traceability from CSV reports back to job/expense/receipt in app.
+- Move attendance reminders from log-only to delivered reminders (SMS/email/Discord).
+- Add stronger data guardrails for duplicate/invalid lead and time entry submission.
 
-## Production Hardening
-- Restore full auth UX and remove bypass behavior.
-- Audit and enforce role permissions on all pages/actions.
-- Replace public bucket approach with tighter storage policies/signed URLs.
-- Rotate all exposed keys/tokens and update env secrets.
+## Lead Intake + Pipeline
+- Finalize production website form webhook contract for `/api/leads/intake`.
+- Add Google Voice call/text lead ingest flow.
+- Define strict lead stage SOP and required lost-reason handling.
+- Track response SLA and first-contact KPI with alerts.
 
-## Finance + Integrations
-- Implement QuickBooks sync (customers, invoices, payments).
-- Add Home Depot receipt ingest workflow and auto-tagging.
-- Finalize Joist source-of-truth sync and conflict handling.
+## Joist Workflow
+- Harden Joist CSV mapping for real-world column variations and duplicates.
+- Implement Joist document upload plus AI extraction review flow.
+- Add one-click Start Project from Joist estimate/invoice.
+- Document Joist as source-of-truth policy for estimate/invoice lifecycle.
 
-## Reporting + Operations
-- Validate KPI formulas using live data.
-- Enforce closeout checks before Completed/Paid.
-- Define backup/export schedule and run restore test.
+## Labor + Payroll Operations
+- Finalize worker onboarding with optional Supabase invite/magic-link user creation.
+- Enforce late/missed clock policy with owner override reason logging.
+- Add payroll-ready weekly export by worker and job.
+- Finalize GPS capture consent/compliance policy before enabling broadly.
 
-## QA + Launch
-- Run mobile E2E workflow: lead -> job -> schedule -> time -> expense -> invoice -> payment.
-- Add realistic seed scenarios across statuses.
-- Set up staging + production deployment with separate envs.
+## Job Finance + Closeout
+- Strengthen closeout proof requirements and keep enforcement strict.
+- Implement real QuickBooks sync (not only link-out and CSV).
+- Add receipt OCR/vendor/category suggestions for faster entry.
+- Calibrate cost health thresholds to real company margin expectations.
 
+## Portfolio + Client Portal
+- Add link governance: revoke links, custom expiry, access tracking.
+- Harden starred-photo website routing via controlled service tags.
+- Improve curated gallery and before/after publishing workflow.
+
+## Security + Auth + Ops
+- Enable strict auth in production (`AUTH_REQUIRED=1`) and verify protected routes.
+- Implement/verify Supabase RLS policies for role-based access.
+- Rotate exposed keys/secrets and enforce secret handling process.
+- Run backup/restore drill including storage assets.
+
+## QA + Launch Readiness
+- Run owner-mobile E2E from lead intake through closeout.
+- Expand realistic seed scenarios for edge-case operations.
+- Add error monitoring/alerting for server actions and webhooks.
+- Keep staging and production fully separated (DB/storage/keys/webhooks).

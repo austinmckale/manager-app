@@ -1,4 +1,5 @@
-﻿import { createCustomerAction } from "@/app/(app)/actions";
+import Link from "next/link";
+import { createCustomerAction } from "@/app/(app)/actions";
 import { requireAuth } from "@/lib/auth";
 import { getCustomers } from "@/lib/data";
 
@@ -29,6 +30,20 @@ export default async function CustomersPage() {
             <p className="text-base font-semibold text-slate-900">{customer.name}</p>
             <p className="text-sm text-slate-600">{customer.phone || "No phone"}</p>
             <p className="text-sm text-slate-600">{customer.email || "No email"}</p>
+            <div className="mt-2 flex flex-wrap gap-2 text-xs">
+              <Link
+                href={`/jobs?customerId=${customer.id}#new-job`}
+                className="rounded-lg border border-teal-300 px-2.5 py-1 text-xs font-medium text-teal-700"
+              >
+                New job for this customer
+              </Link>
+              <Link
+                href={`/jobs?q=${encodeURIComponent(customer.name)}`}
+                className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs text-slate-700"
+              >
+                View jobs
+              </Link>
+            </div>
           </article>
         ))}
         {customers.length === 0 ? <p className="text-sm text-slate-500">No customers yet.</p> : null}

@@ -14,6 +14,11 @@ export type UploadQueueItem = {
   isPortfolio?: boolean;
   isClientVisible?: boolean;
   expenseId?: string;
+  expenseVendor?: string;
+  expenseAmount?: number;
+  expenseCategory?: "MATERIALS" | "SUBCONTRACTOR" | "PERMIT" | "EQUIPMENT" | "MISC";
+  expenseDate?: string;
+  expenseNotes?: string;
   retryCount?: number;
   lastError?: string;
   lastAttemptAt?: string;

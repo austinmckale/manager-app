@@ -1,7 +1,8 @@
 "use server";
 
 import { ExpenseCategory, InvoiceStatus, JobStatus, LeadSource, LeadStage, LineItemType, Prisma, Role } from "@prisma/client";
-import { format, startOfWeek } from "date-fns";
+import { format, setHours, setMinutes, setSeconds, startOfDay, startOfWeek, subHours } from "date-fns";
+import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
@@ -11,7 +12,10 @@ import {
   demoClockInWorker,
   demoClockOutWorker,
   demoCreateWorker,
+  demoDeleteScheduleEvent,
   demoSetJobAssignments,
+  demoUpdateJobServiceTags,
+  demoUpdateScheduleEvent,
   demoSetWorkerActive,
   demoUpdateWorker,
   getDemoOrgId,
@@ -21,6 +25,7 @@ import {
 import { ensureDefaultKpis } from "@/lib/kpis";
 import { canManageOrg } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
+import { inferServiceTagFromText, normalizeServiceTags } from "@/lib/service-tags";
 import { toNumber } from "@/lib/utils";
 
 function parseMoney(value: FormDataEntryValue | null) {
@@ -92,6 +97,12 @@ function pickCsvValue(row: Record<string, string>, keys: string[]) {
     if (value) return value.trim();
   }
   return "";
+}
+
+function normalizeLeadPhone(value: string | null | undefined) {
+  if (!value) return "";
+  const digits = value.replace(/\D/g, "");
+  return digits.length >= 7 ? digits : value.trim();
 }
 
 function mapJoistStatusToLeadStage(statusRaw: string): LeadStage {
@@ -216,21 +227,57 @@ export async function createLeadAction(formData: FormData) {
     notes: formData.get("notes") ?? undefined,
   });
 
-  const lead = await prisma.lead.create({
-    data: {
-      orgId: auth.orgId,
-      contactName: parsed.contactName,
-      phone: parsed.phone || null,
-      email: parsed.email || null,
-      address: parsed.address || null,
-      serviceType: parsed.serviceType || null,
-      source: parsed.source,
-      notes: parsed.notes || null,
-      stage: LeadStage.NEW,
-    },
-  });
+  const phone = normalizeLeadPhone(parsed.phone);
+  const email = (parsed.email ?? "").trim().toLowerCase();
+  const openStageFilter = [LeadStage.NEW, LeadStage.CONTACTED, LeadStage.SITE_VISIT_SET, LeadStage.ESTIMATE_SENT];
 
-  await logActivity(auth.orgId, null, auth.userId, "lead.created", {
+  const dedupeCandidates =
+    phone || email
+      ? await prisma.lead.findMany({
+          where: {
+            orgId: auth.orgId,
+            createdAt: { gte: subHours(new Date(), 12) },
+            stage: { in: openStageFilter },
+            OR: [
+              ...(phone ? [{ phone }] : []),
+              ...(email ? [{ email }] : []),
+            ],
+          },
+          orderBy: { createdAt: "desc" },
+          take: 1,
+        })
+      : [];
+
+  const existing = dedupeCandidates[0];
+
+  const lead = existing
+    ? await prisma.lead.update({
+        where: { id: existing.id },
+        data: {
+          contactName: parsed.contactName || existing.contactName,
+          phone: phone || existing.phone,
+          email: email || existing.email,
+          address: parsed.address || existing.address,
+          serviceType: parsed.serviceType || existing.serviceType,
+          source: parsed.source,
+          notes: parsed.notes ? `${existing.notes ? `${existing.notes}\n` : ""}${parsed.notes}` : existing.notes,
+        },
+      })
+    : await prisma.lead.create({
+        data: {
+          orgId: auth.orgId,
+          contactName: parsed.contactName,
+          phone: phone || null,
+          email: email || null,
+          address: parsed.address || null,
+          serviceType: parsed.serviceType || null,
+          source: parsed.source,
+          notes: parsed.notes || null,
+          stage: LeadStage.NEW,
+        },
+      });
+
+  await logActivity(auth.orgId, null, auth.userId, existing ? "lead.deduped" : "lead.created", {
     leadId: lead.id,
     source: parsed.source,
   });
@@ -256,6 +303,17 @@ export async function updateLeadStageAction(formData: FormData) {
     where: { id: leadId, orgId: auth.orgId },
   });
 
+  // If a lead is being marked WON and it doesn't yet have a job, automatically
+  // convert it to a Customer + Job instead of just updating the stage. This
+  // keeps the lead pipeline in sync with jobs without requiring an extra click.
+  if (stage === LeadStage.WON && !existing.jobId) {
+    await convertLeadToJobInternal(auth, existing.id, "");
+    revalidatePath("/leads");
+    revalidatePath("/jobs");
+    revalidatePath("/dashboard");
+    return;
+  }
+
   const lead = await prisma.lead.update({
     where: { id: existing.id },
     data: {
@@ -272,23 +330,15 @@ export async function updateLeadStageAction(formData: FormData) {
   revalidatePath("/dashboard");
 }
 
-export async function convertLeadToJobAction(formData: FormData) {
-  if (isDemoMode()) {
-    revalidatePath("/leads");
-    revalidatePath("/jobs");
-    revalidatePath("/dashboard");
-    return;
-  }
-
-  const auth = await requireAuth();
-  const leadId = String(formData.get("leadId") ?? "");
-  const jobNameInput = String(formData.get("jobName") ?? "").trim();
-
-  if (!leadId) return;
-
+async function convertLeadToJobInternal(auth: { orgId: string; userId: string }, leadId: string, jobNameInput: string) {
   const lead = await prisma.lead.findFirstOrThrow({
     where: { id: leadId, orgId: auth.orgId },
   });
+
+  // If this lead already has a job linked, skip creating another one.
+  if (lead.jobId) {
+    return prisma.job.findFirstOrThrow({ where: { id: lead.jobId, orgId: auth.orgId } });
+  }
 
   const customer = await prisma.customer.create({
     data: {
@@ -309,7 +359,7 @@ export async function convertLeadToJobAction(formData: FormData) {
       jobName: jobNameInput || `${lead.serviceType || "New"} - ${lead.contactName}`,
       address: lead.address || "Address pending",
       status: JobStatus.ESTIMATE,
-      categoryTags: [lead.serviceType || "general", "lead-converted"],
+      categoryTags: [inferServiceTagFromText(lead.serviceType) ?? "general-remodeling", "lead-converted"],
     },
   });
 
@@ -340,6 +390,25 @@ export async function convertLeadToJobAction(formData: FormData) {
       utmCampaign: lead.utmCampaign ?? null,
     }).catch(() => {}),
   );
+
+  return job;
+}
+
+export async function convertLeadToJobAction(formData: FormData) {
+  if (isDemoMode()) {
+    revalidatePath("/leads");
+    revalidatePath("/jobs");
+    revalidatePath("/dashboard");
+    return;
+  }
+
+  const auth = await requireAuth();
+  const leadId = String(formData.get("leadId") ?? "");
+  const jobNameInput = String(formData.get("jobName") ?? "").trim();
+
+  if (!leadId) return;
+
+  await convertLeadToJobInternal(auth, leadId, jobNameInput);
 
   revalidatePath("/leads");
   revalidatePath("/jobs");
@@ -390,7 +459,7 @@ export async function importJoistCsvAction(formData: FormData) {
     }
 
     const externalRef = externalRefBase ? `joist:${externalRefBase}`.slice(0, 191) : "";
-    const notes = `Imported from Joist CSV${statusRaw ? ` • status: ${statusRaw}` : ""}`;
+    const notes = `Imported from Joist CSV${statusRaw ? ` - status: ${statusRaw}` : ""}`;
 
     if (externalRef) {
       const result = await prisma.lead.upsert({
@@ -467,8 +536,33 @@ export async function createJobAction(formData: FormData) {
 
   const auth = await requireAuth();
 
+  const customerIdRaw = String(formData.get("customerId") ?? "").trim();
+  const newCustomerName = String(formData.get("newCustomerName") ?? "").trim();
+  const newCustomerPhone = String(formData.get("newCustomerPhone") ?? "").trim();
+  const newCustomerEmail = String(formData.get("newCustomerEmail") ?? "").trim();
+  const newCustomerAddress = String(formData.get("newCustomerAddress") ?? "").trim();
+
+  let customerId: string;
+
+  if (customerIdRaw && z.string().uuid().safeParse(customerIdRaw).success) {
+    customerId = customerIdRaw;
+  } else if (newCustomerName.length > 0) {
+    const customer = await prisma.customer.create({
+      data: {
+        orgId: auth.orgId,
+        name: newCustomerName,
+        phone: newCustomerPhone || null,
+        email: newCustomerEmail || null,
+        addresses: newCustomerAddress ? [{ label: "primary", value: newCustomerAddress }] : undefined,
+      },
+    });
+    customerId = customer.id;
+    await logActivity(auth.orgId, null, auth.userId, "customer.created", { name: newCustomerName });
+  } else {
+    throw new Error("Select an existing customer or enter a new client name.");
+  }
+
   const schema = z.object({
-    customerId: z.string().uuid(),
     jobName: z.string().min(1),
     address: z.string().min(1),
     status: z.nativeEnum(JobStatus),
@@ -480,10 +574,10 @@ export async function createJobAction(formData: FormData) {
     estimatedTotalBudget: z.coerce.number().optional(),
   });
 
+  const jobAddress = String(formData.get("address") ?? "").trim();
   const parsed = schema.parse({
-    customerId: formData.get("customerId"),
     jobName: formData.get("jobName"),
-    address: formData.get("address"),
+    address: jobAddress || (newCustomerName ? newCustomerAddress : ""),
     status: formData.get("status") ?? JobStatus.LEAD,
     tags: formData.get("tags") ?? "",
     startDate: formData.get("startDate") ?? "",
@@ -493,21 +587,27 @@ export async function createJobAction(formData: FormData) {
     estimatedTotalBudget: formData.get("estimatedTotalBudget") ?? undefined,
   });
 
-  const tags = parsed.tags
+  const selectedServiceTags = formData
+    .getAll("serviceTags")
+    .map((value) => String(value))
+    .filter(Boolean);
+  const fallbackCsvTags = parsed.tags
     ? parsed.tags
         .split(",")
         .map((tag) => tag.trim())
         .filter(Boolean)
     : [];
+  const tags = normalizeServiceTags([...selectedServiceTags, ...fallbackCsvTags]);
+  const finalTags = tags.length > 0 ? tags : ["general-remodeling"];
 
   const job = await prisma.job.create({
     data: {
       orgId: auth.orgId,
-      customerId: parsed.customerId,
+      customerId,
       jobName: parsed.jobName,
       address: parsed.address,
       status: parsed.status,
-      categoryTags: tags,
+      categoryTags: finalTags,
       startDate: parsed.startDate ? new Date(parsed.startDate) : null,
       endDate: parsed.endDate ? new Date(parsed.endDate) : null,
       estimatedLaborBudget: parsed.estimatedLaborBudget,
@@ -563,6 +663,43 @@ export async function assignWorkerToJobAction(formData: FormData) {
   revalidatePath("/today");
 }
 
+export async function updateJobServiceTagsAction(formData: FormData) {
+  const jobId = String(formData.get("jobId") ?? "");
+  const selected = formData
+    .getAll("serviceTags")
+    .map((value) => String(value))
+    .filter(Boolean);
+  const tags = normalizeServiceTags(selected);
+  const finalTags = tags.length > 0 ? tags : ["general-remodeling"];
+
+  if (!jobId) return;
+
+  if (isDemoMode()) {
+    demoUpdateJobServiceTags({ jobId, categoryTags: finalTags });
+    revalidatePath(`/jobs/${jobId}`);
+    revalidatePath("/jobs");
+    return;
+  }
+
+  const auth = await requireAuth();
+  if (!canManageOrg(auth.role)) {
+    throw new Error("Only owner/admin can update service tags.");
+  }
+
+  const job = await prisma.job.update({
+    where: { id: jobId },
+    data: {
+      categoryTags: finalTags,
+    },
+  });
+
+  await logActivity(auth.orgId, job.id, auth.userId, "job.service_tags.updated", {
+    tags: finalTags,
+  });
+  revalidatePath(`/jobs/${jobId}`);
+  revalidatePath("/jobs");
+}
+
 export async function createScheduleEventAction(formData: FormData) {
   const jobId = String(formData.get("jobId") ?? "");
   const startAt = String(formData.get("startAt") ?? "");
@@ -608,22 +745,165 @@ export async function createScheduleEventAction(formData: FormData) {
   revalidatePath(`/jobs/${jobId}`);
   revalidatePath("/today");
   revalidatePath("/jobs");
+  revalidatePath("/attendance");
+}
+
+export async function updateScheduleEventAction(formData: FormData) {
+  const eventId = String(formData.get("eventId") ?? "");
+  const jobId = String(formData.get("jobId") ?? "");
+  const startAt = String(formData.get("startAt") ?? "");
+  const endAt = String(formData.get("endAt") ?? "");
+  const notes = String(formData.get("notes") ?? "").trim() || null;
+  if (!eventId || !jobId || !startAt || !endAt) return;
+
+  if (isDemoMode()) {
+    demoUpdateScheduleEvent(eventId, {
+      orgId: getDemoOrgId(),
+      jobId,
+      startAt: new Date(startAt),
+      endAt: new Date(endAt),
+      notes,
+    });
+    revalidatePath(`/jobs/${jobId}`);
+    revalidatePath("/today");
+    revalidatePath("/jobs");
+    revalidatePath("/attendance");
+    redirect(`/jobs/${jobId}#schedule`);
+  }
+
+  const auth = await requireAuth();
+  if (!canManageOrg(auth.role)) return;
+
+  const existing = await prisma.jobScheduleEvent.findFirst({
+    where: { id: eventId, job: { orgId: auth.orgId } },
+  });
+  if (!existing) return;
+
+  const newStart = new Date(startAt);
+  const newEnd = new Date(endAt);
+
+  // Prevent obvious double-booking: if any worker assigned to this job is already
+  // scheduled on another job that overlaps this block, block the change.
+  const assignedWorkers = await prisma.jobAssignment.findMany({
+    where: { orgId: auth.orgId, jobId },
+    select: { userId: true },
+  });
+  const workerIds = assignedWorkers.map((a) => a.userId);
+
+  if (workerIds.length > 0) {
+    const conflict = await prisma.jobScheduleEvent.findFirst({
+      where: {
+        id: { not: eventId },
+        job: {
+          orgId: auth.orgId,
+          assignments: {
+            some: {
+              userId: { in: workerIds },
+            },
+          },
+        },
+        startAt: { lt: newEnd },
+        endAt: { gt: newStart },
+      },
+      include: {
+        job: { select: { jobName: true } },
+      },
+    });
+
+    if (conflict) {
+      throw new Error(
+        `Schedule conflict: one of the crew is already scheduled on "${conflict.job.jobName}" between ${format(
+          conflict.startAt,
+          "MMM d h:mm a",
+        )}–${format(conflict.endAt, "h:mm a")}. Adjust times or crew and try again.`,
+      );
+    }
+  }
+
+  await prisma.jobScheduleEvent.update({
+    where: { id: eventId },
+    data: {
+      startAt: newStart,
+      endAt: newEnd,
+      notes,
+    },
+  });
+  revalidatePath(`/jobs/${jobId}`);
+  revalidatePath("/today");
+  revalidatePath("/jobs");
+  revalidatePath("/attendance");
+  redirect(`/jobs/${jobId}#schedule`);
+}
+
+export async function deleteScheduleEventAction(formData: FormData) {
+  const eventId = String(formData.get("eventId") ?? "");
+  const jobId = String(formData.get("jobId") ?? "");
+  if (!eventId) return;
+
+  if (isDemoMode()) {
+    demoDeleteScheduleEvent(eventId);
+    if (jobId) {
+      revalidatePath(`/jobs/${jobId}`);
+      redirect(`/jobs/${jobId}#schedule`);
+    }
+    revalidatePath("/jobs");
+    revalidatePath("/today");
+    revalidatePath("/attendance");
+    return;
+  }
+
+  const auth = await requireAuth();
+  if (!canManageOrg(auth.role)) return;
+
+  const existing = await prisma.jobScheduleEvent.findFirst({
+    where: { id: eventId, job: { orgId: auth.orgId } },
+  });
+  if (!existing) return;
+
+  await prisma.jobScheduleEvent.delete({ where: { id: eventId } });
+  revalidatePath(`/jobs/${existing.jobId}`);
+  revalidatePath("/today");
+  revalidatePath("/jobs");
+  revalidatePath("/attendance");
+  redirect(`/jobs/${existing.jobId}#schedule`);
+}
+
+function parseTimeHHMM(value: string): { hour: number; minute: number } {
+  const [h, m] = (value || "").split(":").map(Number);
+  return { hour: Number.isNaN(h) ? 8 : Math.max(0, Math.min(23, h)), minute: Number.isNaN(m) ? 0 : Math.max(0, Math.min(59, m)) };
 }
 
 export async function quickScheduleCrewAction(formData: FormData) {
   const jobId = String(formData.get("jobId") ?? "");
   const slot = String(formData.get("slot") ?? "FULL");
   const notes = String(formData.get("notes") ?? "");
-  const dates = formData
+  const customDate = String(formData.get("customDate") ?? "").trim();
+  const startTime = String(formData.get("startTime") ?? "08:00");
+  const endTime = String(formData.get("endTime") ?? "17:00");
+  let dates = formData
     .getAll("dates")
     .map((value) => String(value))
     .filter(Boolean);
+  if (customDate) dates = [...new Set([...dates, customDate])];
   const workerIds = formData
     .getAll("workerIds")
     .map((value) => String(value))
     .filter(Boolean);
 
   if (!jobId || dates.length === 0) return;
+
+  const slotHours =
+    slot === "CUSTOM"
+      ? (() => {
+          const s = parseTimeHHMM(startTime);
+          const e = parseTimeHHMM(endTime);
+          return { startHour: s.hour, startMinute: s.minute, endHour: e.hour, endMinute: e.minute };
+        })()
+      : slot === "AM"
+        ? { startHour: 8, startMinute: 0, endHour: 12, endMinute: 0 }
+        : slot === "PM"
+          ? { startHour: 13, startMinute: 0, endHour: 17, endMinute: 0 }
+          : { startHour: 8, startMinute: 0, endHour: 17, endMinute: 0 };
 
   if (isDemoMode()) {
     if (workerIds.length > 0) {
@@ -633,18 +913,12 @@ export async function quickScheduleCrewAction(formData: FormData) {
         workerIds,
       });
     }
-    const slotHours =
-      slot === "AM"
-        ? { startHour: 8, endHour: 12 }
-        : slot === "PM"
-          ? { startHour: 13, endHour: 17 }
-          : { startHour: 8, endHour: 17 };
     const demoEvents = dates.map((dateText) => {
       const base = new Date(`${dateText}T00:00:00`);
       const startAt = new Date(base);
-      startAt.setHours(slotHours.startHour, 0, 0, 0);
+      startAt.setHours(slotHours.startHour, slotHours.startMinute, 0, 0);
       const endAt = new Date(base);
-      endAt.setHours(slotHours.endHour, 0, 0, 0);
+      endAt.setHours(slotHours.endHour, slotHours.endMinute, 0, 0);
       return {
         orgId: getDemoOrgId(),
         jobId,
@@ -666,12 +940,45 @@ export async function quickScheduleCrewAction(formData: FormData) {
     throw new Error("Only owner/admin can schedule crew.");
   }
 
-  const slotHours =
-    slot === "AM"
-      ? { startHour: 8, endHour: 12 }
-      : slot === "PM"
-        ? { startHour: 13, endHour: 17 }
-        : { startHour: 8, endHour: 17 };
+  // Guardrail: prevent double-booking workers across jobs for the same time window.
+  // For each date/slot, if any selected worker is already scheduled on a job that
+  // overlaps this block, block the quick schedule.
+  if (workerIds.length > 0) {
+    for (const dateText of dates) {
+      const base = new Date(`${dateText}T00:00:00`);
+      const blockStart = new Date(base);
+      blockStart.setHours(slotHours.startHour, slotHours.startMinute, 0, 0);
+      const blockEnd = new Date(base);
+      blockEnd.setHours(slotHours.endHour, slotHours.endMinute, 0, 0);
+
+      const conflict = await prisma.jobScheduleEvent.findFirst({
+        where: {
+          job: {
+            orgId: auth.orgId,
+            assignments: {
+              some: {
+                userId: { in: workerIds },
+              },
+            },
+          },
+          startAt: { lt: blockEnd },
+          endAt: { gt: blockStart },
+        },
+        include: {
+          job: { select: { jobName: true } },
+        },
+      });
+
+      if (conflict) {
+        throw new Error(
+          `Schedule conflict: one of these workers is already scheduled on "${conflict.job.jobName}" between ${format(
+            conflict.startAt,
+            "MMM d h:mm a",
+          )}–${format(conflict.endAt, "h:mm a")}. Adjust times, crew, or slot and try again.`,
+        );
+      }
+    }
+  }
 
   if (workerIds.length > 0) {
     await prisma.jobAssignment.createMany({
@@ -687,9 +994,9 @@ export async function quickScheduleCrewAction(formData: FormData) {
   const events = dates.map((dateText) => {
     const base = new Date(`${dateText}T00:00:00`);
     const startAt = new Date(base);
-    startAt.setHours(slotHours.startHour, 0, 0, 0);
+    startAt.setHours(slotHours.startHour, slotHours.startMinute, 0, 0);
     const endAt = new Date(base);
-    endAt.setHours(slotHours.endHour, 0, 0, 0);
+    endAt.setHours(slotHours.endHour, slotHours.endMinute, 0, 0);
     return {
       orgId: auth.orgId,
       jobId,
@@ -714,6 +1021,35 @@ export async function quickScheduleCrewAction(formData: FormData) {
   revalidatePath("/today");
   revalidatePath("/attendance");
   revalidatePath("/team");
+}
+
+const FAR_FUTURE = new Date("9999-12-31T23:59:59Z");
+
+async function findOverlappingTimeEntry(
+  orgId: string,
+  workerId: string,
+  start: Date,
+  end: Date | null,
+  excludeEntryId?: string,
+): Promise<{ jobName: string; start: Date; end: Date | null } | null> {
+  const endOrMax = end ?? FAR_FUTURE;
+  const existing = await prisma.timeEntry.findFirst({
+    where: {
+      workerId,
+      job: { orgId },
+      id: excludeEntryId ? { not: excludeEntryId } : undefined,
+      start: { lt: endOrMax },
+      OR: [{ end: null }, { end: { gt: start } }],
+    },
+    include: { job: { select: { jobName: true } } },
+    orderBy: { start: "asc" },
+  });
+  if (!existing) return null;
+  return {
+    jobName: existing.job.jobName,
+    start: existing.start,
+    end: existing.end,
+  };
 }
 
 export async function createTimeEntryAction(formData: FormData) {
@@ -754,9 +1090,18 @@ export async function createTimeEntryAction(formData: FormData) {
 
   const workerId = canManageOrg(auth.role) && parsed.workerId ? parsed.workerId : auth.userId;
   const startAt = new Date(parsed.start);
+  const endAt = parsed.end ? new Date(parsed.end) : null;
 
   if (await isPayrollWeekLocked(auth.orgId, startAt)) {
     throw new Error("Payroll week is locked. Reopen the week to add/edit time.");
+  }
+
+  const overlap = await findOverlappingTimeEntry(auth.orgId, workerId, startAt, endAt);
+  if (overlap) {
+    const other = overlap.end ? format(overlap.end, "h:mm a") : "…";
+    throw new Error(
+      `Conflict — not allowed. This employee already has time on "${overlap.jobName}" (${format(overlap.start, "h:mm a")} – ${other}) for this period. An employee cannot be at two jobs at the same time.`,
+    );
   }
 
   const worker = await prisma.userProfile.findUniqueOrThrow({ where: { id: workerId } });
@@ -768,7 +1113,7 @@ export async function createTimeEntryAction(formData: FormData) {
       workerId,
       date: startAt,
       start: startAt,
-      end: parsed.end ? new Date(parsed.end) : null,
+      end: endAt,
       breakMinutes: parsed.breakMinutes,
       notes: parsed.notes || null,
       hourlyRateLoaded: hourlyRate,
@@ -782,6 +1127,8 @@ export async function createTimeEntryAction(formData: FormData) {
   await logActivity(auth.orgId, parsed.jobId, auth.userId, "time.created", { timeEntryId: entry.id });
   revalidatePath("/time");
   revalidatePath(`/jobs/${parsed.jobId}`);
+  revalidatePath("/attendance");
+  revalidatePath("/today");
 }
 
 export async function startTimerAction(formData: FormData) {
@@ -823,6 +1170,8 @@ export async function startTimerAction(formData: FormData) {
   await logActivity(auth.orgId, jobId, auth.userId, "time.timer.started");
   revalidatePath("/time");
   revalidatePath(`/jobs/${jobId}`);
+  revalidatePath("/attendance");
+  revalidatePath("/today");
 }
 
 export async function stopTimerAction(formData: FormData) {
@@ -850,6 +1199,8 @@ export async function stopTimerAction(formData: FormData) {
   await logActivity(auth.orgId, entry.jobId, auth.userId, "time.timer.stopped", { timeEntryId });
   revalidatePath("/time");
   revalidatePath(`/jobs/${entry.jobId}`);
+  revalidatePath("/attendance");
+  revalidatePath("/today");
 }
 
 export async function createExpenseAction(formData: FormData) {
@@ -1227,6 +1578,52 @@ export async function convertEstimateToInvoiceAction(formData: FormData) {
   revalidatePath(`/jobs/${estimate.jobId}`);
 }
 
+export async function sendInvoiceAction(formData: FormData) {
+  if (isDemoMode()) {
+    const jobId = String(formData.get("jobId") ?? "");
+    if (jobId) revalidatePath(`/jobs/${jobId}`);
+    revalidatePath("/accounting");
+    revalidatePath("/today");
+    return;
+  }
+
+  const auth = await requireAuth();
+  const invoiceId = String(formData.get("invoiceId") ?? "");
+  const dueDateRaw = String(formData.get("dueDate") ?? "").trim();
+  if (!invoiceId) return;
+
+  const invoice = await prisma.invoice.findUniqueOrThrow({
+    where: { id: invoiceId },
+    include: { job: true },
+  });
+
+  const sent = await prisma.invoice.update({
+    where: { id: invoiceId },
+    data: {
+      status: invoice.status === InvoiceStatus.PAID ? InvoiceStatus.PAID : InvoiceStatus.SENT,
+      sentAt: invoice.sentAt ?? new Date(),
+      dueDate: dueDateRaw ? new Date(dueDateRaw) : invoice.dueDate,
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      orgId: auth.orgId,
+      entityType: "INVOICE",
+      entityId: sent.id,
+      actorId: auth.userId,
+      event: "sent",
+      payload: { sentAt: (sent.sentAt ?? new Date()).toISOString(), dueDate: sent.dueDate?.toISOString() ?? null },
+    },
+  });
+
+  await logActivity(auth.orgId, sent.jobId, auth.userId, "invoice.sent", { invoiceId: sent.id });
+  revalidatePath(`/jobs/${sent.jobId}`);
+  revalidatePath("/accounting");
+  revalidatePath("/today");
+  revalidatePath("/dashboard");
+}
+
 export async function addPaymentAction(formData: FormData) {
   if (isDemoMode()) {
     return;
@@ -1263,6 +1660,14 @@ export async function addPaymentAction(formData: FormData) {
       data: {
         status: InvoiceStatus.PAID,
         paidAt: new Date(),
+      },
+    });
+  } else if (payment.invoice.status === InvoiceStatus.DRAFT) {
+    await prisma.invoice.update({
+      where: { id: invoiceId },
+      data: {
+        status: InvoiceStatus.SENT,
+        sentAt: payment.invoice.sentAt ?? new Date(),
       },
     });
   }
@@ -1355,15 +1760,24 @@ export async function updateTimeEntryAction(formData: FormData) {
   }
 
   const startAt = new Date(start);
+  const endAt = end ? new Date(end) : null;
   if (await isPayrollWeekLocked(auth.orgId, startAt)) {
     throw new Error("Payroll week is locked. Reopen the week to edit time.");
+  }
+
+  const overlap = await findOverlappingTimeEntry(auth.orgId, entry.workerId, startAt, endAt, timeEntryId);
+  if (overlap) {
+    const other = overlap.end ? format(overlap.end, "h:mm a") : "…";
+    throw new Error(
+      `Conflict — not allowed. This employee already has time on "${overlap.jobName}" (${format(overlap.start, "h:mm a")} – ${other}) for this period. An employee cannot be at two jobs at the same time.`,
+    );
   }
 
   await prisma.timeEntry.update({
     where: { id: timeEntryId },
     data: {
       start: startAt,
-      end: end ? new Date(end) : null,
+      end: endAt,
       date: startAt,
       breakMinutes,
       notes: notes || null,
@@ -1373,6 +1787,8 @@ export async function updateTimeEntryAction(formData: FormData) {
   await logActivity(auth.orgId, entry.jobId, auth.userId, "time.updated", { timeEntryId });
   revalidatePath("/time");
   revalidatePath(`/jobs/${entry.jobId}`);
+  revalidatePath("/attendance");
+  revalidatePath("/today");
 }
 
 export async function updateOrgSettingsAction(formData: FormData) {
@@ -1513,6 +1929,152 @@ export async function ownerClockOutEmployeeAction(formData: FormData) {
   revalidatePath("/today");
 }
 
+export async function sendMissingClockInsAlertAction() {
+  if (isDemoMode()) {
+    return;
+  }
+
+  const auth = await requireAuth();
+  if (!canManageOrg(auth.role)) {
+    throw new Error("Only owner/admin can send missing clock-in alerts.");
+  }
+
+  const [settings, users, entries] = await Promise.all([
+    prisma.organizationSetting.findUnique({ where: { orgId: auth.orgId } }),
+    prisma.userProfile.findMany({
+      where: { orgId: auth.orgId, isActive: true },
+      select: { id: true, fullName: true },
+    }),
+    prisma.timeEntry.findMany({
+      where: {
+        job: { orgId: auth.orgId },
+        start: { gte: startOfDay(new Date()) },
+      },
+      select: { workerId: true, start: true },
+    }),
+  ]);
+
+  const [hourText, minuteText] = (settings?.defaultClockInTime ?? "07:00").split(":");
+  const scheduled = setSeconds(
+    setMinutes(setHours(startOfDay(new Date()), Number(hourText || 7)), Number(minuteText || 0)),
+    0,
+  );
+  const cutoff = scheduled.getTime() + (settings?.clockGraceMinutes ?? 10) * 60000;
+
+  const workersWithOnTimeEntry = new Set(
+    entries.filter((entry) => entry.start.getTime() <= cutoff).map((entry) => entry.workerId),
+  );
+  const missingWorkers = users.filter((user) => !workersWithOnTimeEntry.has(user.id));
+
+  if (missingWorkers.length === 0) {
+    return;
+  }
+
+  const webhookUrl = process.env.DISCORD_MISSING_CLOCKINS_WEBHOOK_URL?.trim();
+  if (!webhookUrl) {
+    // No webhook configured; quietly return.
+    return;
+  }
+
+  const todayLabel = format(new Date(), "EEE MMM d");
+  const names = missingWorkers.map((u) => u.fullName).join(", ");
+  const content = [
+    `⏰ Missing clock-ins for ${todayLabel}`,
+    ``,
+    `Default clock-in: ${settings?.defaultClockInTime ?? "07:00"} (+${settings?.clockGraceMinutes ?? 10} min grace)`,
+    `Missing (${missingWorkers.length}): ${names}`,
+  ].join("\n");
+
+  await fetch(webhookUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+}
+
+export async function ownerClockInCrewForJobAction(formData: FormData) {
+  const jobId = String(formData.get("jobId") ?? "");
+  if (!jobId) return;
+
+  if (isDemoMode()) {
+    const assignments = demoJobAssignments.filter((a) => a.jobId === jobId);
+    for (const assignment of assignments) {
+      demoClockInWorker({
+        workerId: assignment.userId,
+        jobId,
+        hourlyRateLoaded: demoUsers.find((u) => u.id === assignment.userId)?.hourlyRateDefault ?? 35,
+      });
+    }
+    revalidatePath("/attendance");
+    revalidatePath("/time");
+    revalidatePath("/today");
+    return;
+  }
+
+  const auth = await requireAuth();
+  if (!canManageOrg(auth.role)) {
+    throw new Error("Only owner/admin can clock in employees.");
+  }
+
+  const now = new Date();
+  if (await isPayrollWeekLocked(auth.orgId, now)) {
+    throw new Error("Payroll week is locked. Reopen the week to clock employees in.");
+  }
+
+  // Find crew assigned to this job.
+  const assignments = await prisma.jobAssignment.findMany({
+    where: { orgId: auth.orgId, jobId },
+    select: { userId: true },
+  });
+  const workerIds = assignments.map((a) => a.userId);
+  if (workerIds.length === 0) {
+    throw new Error("No workers are assigned to this job yet. Assign crew first, then clock them in.");
+  }
+
+  // Skip anyone who already has an active timer.
+  const activeEntries = await prisma.timeEntry.findMany({
+    where: {
+      workerId: { in: workerIds },
+      end: null,
+      job: { orgId: auth.orgId },
+    },
+    select: { workerId: true },
+  });
+  const activeWorkerIds = new Set(activeEntries.map((e) => e.workerId));
+  const toClockIn = workerIds.filter((id) => !activeWorkerIds.has(id));
+  if (toClockIn.length === 0) {
+    throw new Error("All assigned workers on this job already have a running timer.");
+  }
+
+  const workers = await prisma.userProfile.findMany({
+    where: { orgId: auth.orgId, id: { in: toClockIn } },
+  });
+  const workerById = new Map(workers.map((w) => [w.id, w]));
+
+  for (const workerId of toClockIn) {
+    const worker = workerById.get(workerId);
+    await prisma.timeEntry.create({
+      data: {
+        jobId,
+        workerId,
+        date: now,
+        start: now,
+        breakMinutes: 0,
+        hourlyRateLoaded: worker ? toNumber(worker.hourlyRateDefault) || 35 : 35,
+        notes: "Owner crew clock-in",
+      },
+    });
+  }
+
+  await logActivity(auth.orgId, jobId, auth.userId, "time.owner.clock_in_crew", {
+    workerIds: toClockIn,
+  });
+
+  revalidatePath("/attendance");
+  revalidatePath("/time");
+  revalidatePath("/today");
+}
+
 export async function sendClockRemindersAction(formData: FormData) {
   if (isDemoMode()) {
     revalidatePath("/attendance");
@@ -1535,6 +2097,17 @@ export async function sendClockRemindersAction(formData: FormData) {
       metadata: { count, reminderType },
     },
   });
+
+  const webhook = (process.env.ATTENDANCE_REMINDER_WEBHOOK_URL ?? "").trim();
+  if (webhook && count > 0) {
+    fetch(webhook, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: `FieldFlow reminders sent: ${count} (${reminderType})`,
+      }),
+    }).catch(() => {});
+  }
 
   revalidatePath("/attendance");
 }
@@ -1759,6 +2332,8 @@ export async function saveJobAssignmentsAction(formData: FormData) {
   revalidatePath("/team");
   revalidatePath("/time");
   revalidatePath(`/jobs/${jobId}`);
+  revalidatePath("/attendance");
+  revalidatePath("/today");
 }
 
 export async function createShareLinkAction(formData: FormData) {
@@ -1793,69 +2368,6 @@ export async function createShareLinkAction(formData: FormData) {
   return link.token;
 }
 
-export async function createPortalLinkAction(formData: FormData) {
-  if (isDemoMode()) {
-    const jobId = String(formData.get("jobId") ?? "");
-    if (jobId) revalidatePath(`/jobs/${jobId}`);
-    return crypto.randomUUID();
-  }
-
-  const auth = await requireAuth();
-  const jobId = String(formData.get("jobId"));
-  const customerId = String(formData.get("customerId"));
-
-  const link = await prisma.portalLink.create({
-    data: {
-      orgId: auth.orgId,
-      jobId,
-      customerId,
-      token: crypto.randomUUID(),
-      createdBy: auth.userId,
-      expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
-    },
-  });
-
-  await logActivity(auth.orgId, jobId, auth.userId, "portal_link.created", { portalLinkId: link.id });
-  revalidatePath(`/jobs/${jobId}`);
-  return link.token;
-}
-
-export async function postPortalMessageAction(formData: FormData) {
-  if (isDemoMode()) {
-    const token = String(formData.get("token") ?? "");
-    if (token) revalidatePath(`/portal/${token}`);
-    return;
-  }
-
-  const token = String(formData.get("token"));
-  const senderName = String(formData.get("senderName"));
-  const senderEmail = String(formData.get("senderEmail") ?? "");
-  const message = String(formData.get("message"));
-
-  const link = await prisma.portalLink.findUniqueOrThrow({ where: { token } });
-
-  await prisma.portalMessage.create({
-    data: {
-      orgId: link.orgId,
-      jobId: link.jobId,
-      senderName,
-      senderEmail: senderEmail || null,
-      message,
-    },
-  });
-
-  await prisma.activityLog.create({
-    data: {
-      orgId: link.orgId,
-      jobId: link.jobId,
-      action: "portal.message",
-      metadata: { senderName, senderEmail },
-    },
-  });
-
-  revalidatePath(`/portal/${token}`);
-}
-
 export async function togglePortfolioAction(formData: FormData) {
   const auth = await requireAuth();
   const assetId = String(formData.get("assetId"));
@@ -1866,16 +2378,33 @@ export async function togglePortfolioAction(formData: FormData) {
 
   const asset = await prisma.fileAsset.findFirst({
     where: { id: assetId, job: { orgId: auth.orgId } },
-    select: { id: true, isPortfolio: true, jobId: true, storageKey: true },
+    select: {
+      id: true,
+      isPortfolio: true,
+      jobId: true,
+      storageKey: true,
+      job: {
+        select: { categoryTags: true },
+      },
+    },
   });
 
   if (!asset) return;
 
   const newValue = !asset.isPortfolio;
+  if (newValue) {
+    const serviceTags = normalizeServiceTags(asset.job.categoryTags);
+    if (serviceTags.length === 0) {
+      throw new Error("Add at least one controlled service tag on the job before portfolio publish.");
+    }
+  }
 
   await prisma.fileAsset.update({
     where: { id: assetId },
-    data: { isPortfolio: newValue },
+    data: {
+      isPortfolio: newValue,
+      ...(newValue ? { isClientVisible: true } : {}),
+    },
   });
 
   await prisma.activityLog.create({

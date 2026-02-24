@@ -1,4 +1,4 @@
-﻿import { endOfMonth, startOfMonth, subMonths } from "date-fns";
+import { endOfMonth, startOfMonth, subMonths } from "date-fns";
 import { isDemoMode } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
 import { toNumber } from "@/lib/utils";
@@ -119,7 +119,7 @@ export async function computeDashboardKpis(orgId: string) {
 
     for (const entry of job.timeEntries) {
       if (!entry.end) continue;
-      const hours = Math.max(0, (entry.end.getTime() - entry.start.getTime()) / 3600000 - entry.breakMinutes / 60);
+      const hours = (entry.end.getTime() - entry.start.getTime()) / 3600000;
       labor += hours * toNumber(entry.hourlyRateLoaded);
     }
 

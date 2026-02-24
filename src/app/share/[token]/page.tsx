@@ -39,7 +39,7 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
 
   return (
     <main className="mx-auto max-w-4xl space-y-4 p-4">
-      <h1 className="text-2xl font-semibold">{link.job.jobName} • Shared {link.type.toLowerCase()}</h1>
+      <h1 className="text-2xl font-semibold">{link.job.jobName} - Shared {link.type.toLowerCase()}</h1>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         {assets.map((asset) => (
           // eslint-disable-next-line @next/next/no-img-element

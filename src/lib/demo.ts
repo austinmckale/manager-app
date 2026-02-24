@@ -1,4 +1,4 @@
-﻿import { JobStatus, Role, TaskStatus } from "@prisma/client";
+import { JobStatus, Role, TaskStatus } from "@prisma/client";
 import { addDays, addHours, startOfDay, subDays } from "date-fns";
 
 export function isDemoMode() {
@@ -83,7 +83,7 @@ export const demoJobs = [
     jobName: "Kitchen Water Damage Rebuild",
     address: "1024 River St, Austin, TX",
     status: JobStatus.IN_PROGRESS,
-    categoryTags: ["kitchen", "water damage", "insurance"],
+    categoryTags: ["kitchen-remodeling", "water-damage", "insurance-restoration"],
     createdAt: now,
     updatedAt: now,
     startDate: subDays(now, 3),
@@ -99,7 +99,7 @@ export const demoJobs = [
     jobName: "Bathroom Remodel Phase 1",
     address: "88 Cedar Ln, Austin, TX",
     status: JobStatus.SCHEDULED,
-    categoryTags: ["bath"],
+    categoryTags: ["bathroom-remodeling"],
     createdAt: now,
     updatedAt: now,
     startDate: addDays(now, 1),
@@ -407,6 +407,36 @@ export function demoAddScheduleEvents(
   }
 }
 
+const demoDeletedScheduleEventIds: string[] = [];
+export function getDemoDeletedScheduleEventIds() {
+  return [...demoDeletedScheduleEventIds];
+}
+
+export function demoUpdateScheduleEvent(
+  eventId: string,
+  params: { orgId: string; jobId: string; startAt: Date; endAt: Date; notes?: string | null },
+) {
+  const store = getDemoScheduleEventsStore();
+  const i = store.findIndex((e) => e.id === eventId);
+  if (i !== -1) {
+    const now = new Date();
+    store[i] = { ...store[i], startAt: params.startAt, endAt: params.endAt, notes: params.notes ?? null, updatedAt: now };
+  } else {
+    demoDeleteScheduleEvent(eventId);
+    demoAddScheduleEvents([{ orgId: params.orgId, jobId: params.jobId, startAt: params.startAt, endAt: params.endAt, notes: params.notes }]);
+  }
+}
+
+export function demoDeleteScheduleEvent(eventId: string) {
+  const store = getDemoScheduleEventsStore();
+  const i = store.findIndex((e) => e.id === eventId);
+  if (i !== -1) {
+    store.splice(i, 1);
+  } else {
+    if (!demoDeletedScheduleEventIds.includes(eventId)) demoDeletedScheduleEventIds.push(eventId);
+  }
+}
+
 export function listDemoRuntimeTimeEntries() {
   return [...getDemoTimeEntriesStore()];
 }
@@ -440,4 +470,11 @@ export function demoClockOutWorker(workerId: string) {
 
   if (!active) return;
   active.end = new Date();
+}
+
+export function demoUpdateJobServiceTags(params: { jobId: string; categoryTags: string[] }) {
+  const job = demoJobs.find((item) => item.id === params.jobId);
+  if (!job) return;
+  job.categoryTags = [...params.categoryTags];
+  job.updatedAt = new Date();
 }

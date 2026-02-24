@@ -1,13 +1,7 @@
-﻿import {
-  createTargetAction,
-  createWorkerAction,
-  setWorkerActiveAction,
-  updateOrgSettingsAction,
-  updateWorkerAction,
-} from "@/app/(app)/actions";
+import { createTargetAction, createWorkerAction, updateOrgSettingsAction } from "@/app/(app)/actions";
+import { format } from "date-fns";
 import Link from "next/link";
 import { requireAuth } from "@/lib/auth";
-import { getOrgUsers } from "@/lib/data";
 import { isDemoMode } from "@/lib/demo";
 import { KPI_KEYS, ensureDefaultKpis } from "@/lib/kpis";
 import { canManageOrg } from "@/lib/permissions";
@@ -24,12 +18,11 @@ export default async function TargetSettingsPage() {
   const auth = await requireAuth();
   await ensureDefaultKpis();
 
-  const [targets, settings, workers] = isDemoMode()
-    ? [[], null, await getOrgUsers(auth.orgId)]
+  const [targets, settings] = isDemoMode()
+    ? [[], null]
     : await Promise.all([
         prisma.kpiTarget.findMany({ where: { orgId: auth.orgId }, orderBy: { effectiveDate: "desc" } }),
         prisma.organizationSetting.findUnique({ where: { orgId: auth.orgId } }),
-        getOrgUsers(auth.orgId),
       ]);
 
   const manage = canManageOrg(auth.role);
@@ -63,42 +56,32 @@ export default async function TargetSettingsPage() {
         </section>
       ) : null}
 
-      {manage ? (
-        <section className="rounded-2xl border border-slate-200 bg-white p-4">
-          <h2 className="text-sm font-semibold text-slate-900">Current Workers</h2>
-          <div className="mt-3 space-y-2 text-sm">
-            {workers.map((worker) => (
-              <article key={worker.id} className="rounded-xl border border-slate-200 p-2">
-                <form action={updateWorkerAction} className="grid gap-2 sm:grid-cols-5">
-                  <input type="hidden" name="workerId" value={worker.id} />
-                  <input name="fullName" defaultValue={worker.fullName} className="rounded-lg border border-slate-300 px-2 py-1 text-xs sm:col-span-2" />
-                  <input name="phone" defaultValue={worker.phone ?? ""} className="rounded-lg border border-slate-300 px-2 py-1 text-xs" />
-                  <select name="role" defaultValue={worker.role} className="rounded-lg border border-slate-300 px-2 py-1 text-xs">
-                    <option value="WORKER">Worker</option>
-                    <option value="ADMIN">Admin</option>
-                    <option value="OWNER">Owner</option>
-                  </select>
-                  <input name="hourlyRateDefault" type="number" step="0.01" defaultValue={toNumber(worker.hourlyRateDefault) || ""} className="rounded-lg border border-slate-300 px-2 py-1 text-xs" />
-                  <button type="submit" className="rounded-lg border border-slate-300 px-2 py-1 text-xs sm:col-span-2">Save</button>
-                </form>
-
-                <form action={setWorkerActiveAction} className="mt-2">
-                  <input type="hidden" name="workerId" value={worker.id} />
-                  <input type="hidden" name="isActive" value={worker.isActive ? "false" : "true"} />
-                  <button type="submit" className="rounded-lg border border-slate-300 px-2 py-1 text-xs">
-                    {worker.isActive ? "Deactivate" : "Activate"}
-                  </button>
-                </form>
-              </article>
-            ))}
-          </div>
-        </section>
-      ) : null}
+      {/* Worker list/edit lives on Attendance (Team). Keep this page focused on setup + rules. */}
 
       {manage ? (
         <section className="rounded-2xl border border-slate-200 bg-white p-4">
           <h2 className="text-sm font-semibold text-slate-900">Time Tracking Rules</h2>
-          <form action={updateOrgSettingsAction} className="mt-3 space-y-2 text-sm">
+          <p className="mt-1 text-xs text-slate-500">Used for attendance: when someone is marked late vs missing, and who can edit time.</p>
+          <form action={updateOrgSettingsAction} className="mt-3 grid gap-3 text-sm">
+            <div className="grid gap-1 sm:grid-cols-2">
+              <label className="block text-xs text-slate-600">Default clock-in time</label>
+              <input
+                type="time"
+                name="defaultClockInTime"
+                defaultValue={settings?.defaultClockInTime ?? "07:00"}
+                className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
+              />
+            </div>
+            <div className="grid gap-1 sm:grid-cols-2">
+              <label className="block text-xs text-slate-600">Grace minutes (before marked late)</label>
+              <input
+                type="number"
+                min={0}
+                name="clockGraceMinutes"
+                defaultValue={settings?.clockGraceMinutes ?? 10}
+                className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
+              />
+            </div>
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"
@@ -147,7 +130,7 @@ export default async function TargetSettingsPage() {
             <article key={target.id} className="rounded-xl border border-slate-200 p-2">
               <p className="font-medium text-slate-900">{target.kpiKey}</p>
               <p className="text-xs text-slate-500">
-                {toNumber(target.targetValue)} ({target.period}) effective {target.effectiveDate.toISOString().slice(0, 10)}
+                {toNumber(target.targetValue)} ({target.period}) effective {format(target.effectiveDate, "MMM d, yyyy")}
               </p>
             </article>
           ))}

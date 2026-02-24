@@ -1,4 +1,5 @@
-﻿import { Buffer } from "node:buffer";
+import { Buffer } from "node:buffer";
+import { ExpenseCategory } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { isDemoMode } from "@/lib/demo";
@@ -27,10 +28,24 @@ export async function POST(request: Request) {
     isPortfolio?: boolean;
     isClientVisible?: boolean;
     expenseId?: string;
+    expenseVendor?: string;
+    expenseAmount?: number;
+    expenseCategory?: "MATERIALS" | "SUBCONTRACTOR" | "PERMIT" | "EQUIPMENT" | "MISC";
+    expenseDate?: string;
+    expenseNotes?: string;
   };
 
   if (isDemoMode()) {
     return NextResponse.json({ ok: true, mode: "demo" });
+  }
+
+  const job = await prisma.job.findFirst({
+    where: { id: body.jobId, orgId: auth.orgId },
+    select: { id: true },
+  });
+
+  if (!job) {
+    return NextResponse.json({ error: "Job not found." }, { status: 404 });
   }
 
   const ext = body.fileName.split(".").pop() || "jpg";
@@ -47,10 +62,58 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: upload.error.message }, { status: 500 });
   }
 
+  let linkedExpenseId = body.expenseId || null;
+  const numericAmount = Number(body.expenseAmount);
+  const normalizedVendor = body.expenseVendor?.trim() || "";
+  const shouldCreateExpense =
+    body.fileType === "RECEIPT" &&
+    !linkedExpenseId &&
+    Boolean(normalizedVendor) &&
+    Number.isFinite(numericAmount) &&
+    numericAmount > 0;
+
+  if (body.fileType === "RECEIPT" && !linkedExpenseId && !shouldCreateExpense) {
+    return NextResponse.json(
+      { error: "Receipt capture requires vendor and amount, or an existing expense link." },
+      { status: 400 },
+    );
+  }
+  if (shouldCreateExpense) {
+    const expenseCategory = Object.values(ExpenseCategory).includes(body.expenseCategory as ExpenseCategory)
+      ? (body.expenseCategory as ExpenseCategory)
+      : ExpenseCategory.MISC;
+
+    const expense = await prisma.expense.create({
+      data: {
+        jobId: body.jobId,
+        vendor: normalizedVendor,
+        amount: numericAmount,
+        category: expenseCategory,
+        date: body.expenseDate ? new Date(body.expenseDate) : new Date(),
+        notes: body.expenseNotes?.trim() || body.description?.trim() || null,
+      },
+    });
+
+    linkedExpenseId = expense.id;
+
+    await prisma.activityLog.create({
+      data: {
+        orgId: auth.orgId,
+        jobId: body.jobId,
+        actorId: auth.userId,
+        action: "expense.created",
+        metadata: {
+          expenseId: expense.id,
+          source: "receipt_capture",
+        },
+      },
+    });
+  }
+
   const created = await prisma.fileAsset.create({
     data: {
       jobId: body.jobId,
-      expenseId: body.expenseId || null,
+      expenseId: linkedExpenseId,
       type: body.fileType,
       storageKey,
       fileName: body.fileName,
@@ -61,7 +124,7 @@ export async function POST(request: Request) {
       area: body.area,
       tags: body.tags ?? [],
       description: body.description || null,
-      isPortfolio: Boolean(body.isPortfolio),
+      isPortfolio: body.fileType === "PHOTO" ? Boolean(body.isPortfolio) : false,
       isClientVisible: Boolean(body.isClientVisible),
     },
   });
@@ -78,6 +141,11 @@ export async function POST(request: Request) {
       },
     },
   });
+
+  if (created.isPortfolio) {
+    const { onPortfolioPublish } = await import("@/lib/portfolio-publish");
+    onPortfolioPublish(created.id, storageKey).catch(() => {});
+  }
 
   return NextResponse.json({ ok: true, id: created.id });
 }

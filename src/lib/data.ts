@@ -1,12 +1,14 @@
-﻿import { endOfDay, endOfWeek, isAfter, isBefore, isSameDay, startOfDay, startOfWeek } from "date-fns";
+import { endOfDay, endOfWeek, isAfter, isBefore, isSameDay, startOfDay, startOfWeek } from "date-fns";
 import { notFound } from "next/navigation";
-import { Role } from "@prisma/client";
+import { JobStatus, LeadStage, Role } from "@prisma/client";
 import {
   demoCustomers,
   demoJobAssignments,
   demoJobs,
   demoScheduleEvents,
   demoTasks,
+  demoUsers,
+  getDemoDeletedScheduleEventIds,
   listDemoRuntimeAssignments,
   listDemoRuntimeUsers,
   listDemoRuntimeScheduleEvents,
@@ -29,9 +31,10 @@ function getMergedDemoAssignments() {
 }
 
 function getMergedDemoScheduleEvents() {
-  return [...demoScheduleEvents, ...listDemoRuntimeScheduleEvents()].sort(
-    (a, b) => a.startAt.getTime() - b.startAt.getTime(),
-  );
+  const deleted = new Set(getDemoDeletedScheduleEventIds());
+  return [...demoScheduleEvents, ...listDemoRuntimeScheduleEvents()]
+    .filter((e) => !deleted.has(e.id))
+    .sort((a, b) => a.startAt.getTime() - b.startAt.getTime());
 }
 
 export async function getOrgUsers(orgId: string) {
@@ -80,16 +83,20 @@ export async function getJobs(params: {
       const assignmentOk = params.role !== Role.WORKER || assignedJobIds.includes(job.id);
 
       const jobEvents = scheduleEvents.filter((event) => event.jobId === job.id);
+      const ongoingStatuses: JobStatus[] = [JobStatus.SCHEDULED, JobStatus.IN_PROGRESS, JobStatus.ON_HOLD];
+      const isOngoing = ongoingStatuses.includes(job.status);
       const dateOk =
         view === "all"
           ? true
-          : view === "today"
-            ? jobEvents.some((event) => isSameDay(event.startAt, new Date()))
-            : jobEvents.some(
-                (event) =>
-                  (isAfter(event.startAt, weekStart) || isSameDay(event.startAt, weekStart)) &&
-                  (isBefore(event.startAt, weekEnd) || isSameDay(event.startAt, weekEnd)),
-              );
+          : isOngoing
+            ? true
+            : view === "today"
+              ? jobEvents.some((event) => isSameDay(event.startAt, new Date()))
+              : jobEvents.some(
+                  (event) =>
+                    (isAfter(event.startAt, weekStart) || isSameDay(event.startAt, weekStart)) &&
+                    (isBefore(event.startAt, weekEnd) || isSameDay(event.startAt, weekEnd)),
+                );
 
       return statusOk && textOk && assignmentOk && dateOk;
     });
@@ -131,6 +138,7 @@ export async function getJobs(params: {
           OR: [
             { scheduleEvents: { some: { startAt: { gte: todayStart, lte: todayEnd } } } },
             { startDate: { gte: todayStart, lte: todayEnd } },
+            { status: { in: [JobStatus.SCHEDULED, JobStatus.IN_PROGRESS, JobStatus.ON_HOLD] } },
           ],
         }
       : {}),
@@ -139,6 +147,7 @@ export async function getJobs(params: {
           OR: [
             { scheduleEvents: { some: { startAt: { gte: weekStart, lte: weekEnd } } } },
             { startDate: { gte: weekStart, lte: weekEnd } },
+            { status: { in: [JobStatus.SCHEDULED, JobStatus.IN_PROGRESS, JobStatus.ON_HOLD] } },
           ],
         }
       : {}),
@@ -151,7 +160,7 @@ export async function getJobs(params: {
       customer: true,
       invoices: true,
       expenses: true,
-      timeEntries: true,
+      timeEntries: { include: { worker: true } },
       assignments: true,
       scheduleEvents: {
         where:
@@ -164,6 +173,58 @@ export async function getJobs(params: {
       },
     },
   });
+}
+
+export async function getJobsPageAlerts(params: { orgId: string; role: Role; userId: string }) {
+  const todayStart = startOfDay(new Date());
+  const assignmentFilter = params.role === Role.WORKER ? { assignments: { some: { userId: params.userId } } } : {};
+
+  if (isDemoMode()) {
+    const assignedJobIds = [
+      ...new Set([
+        ...demoJobAssignments.map((a) => a.jobId),
+        ...listDemoRuntimeAssignments().map((a) => a.jobId),
+      ]),
+    ];
+    const overdueTasks = demoTasks
+      .filter(
+        (t) => assignedJobIds.includes(t.jobId) && t.dueDate && isBefore(t.dueDate, todayStart),
+      )
+      .map((t) => {
+        const job = demoJobs.find((j) => j.id === t.jobId) ?? demoJobs[0];
+        const assignee = demoUsers.find((u) => u.id === t.assignedTo);
+        return {
+          id: t.id,
+          title: t.title,
+          dueDate: t.dueDate,
+          status: t.status,
+          job: { id: job.id, jobName: job.jobName },
+          assignee: assignee ? { id: assignee.id, fullName: assignee.fullName } : null,
+        };
+      });
+    return {
+      overdueTasks,
+      jobIdsWithMissingReceipts: [demoJobs[0].id],
+    };
+  }
+
+  const [overdueTasks, expensesNoReceipt] = await Promise.all([
+    prisma.task.findMany({
+      where: {
+        job: { orgId: params.orgId, ...assignmentFilter },
+        dueDate: { lt: todayStart },
+        status: { in: ["TODO", "IN_PROGRESS", "BLOCKED"] },
+      },
+      include: { job: { select: { id: true, jobName: true } }, assignee: { select: { id: true, fullName: true } } },
+      orderBy: { dueDate: "asc" },
+    }),
+    prisma.expense.findMany({
+      where: { job: { orgId: params.orgId, ...assignmentFilter }, receipt: null },
+      select: { jobId: true },
+    }),
+  ]);
+  const jobIdsWithMissingReceipts = [...new Set(expensesNoReceipt.map((e) => e.jobId))];
+  return { overdueTasks, jobIdsWithMissingReceipts };
 }
 
 export async function getTodayOpsSummary(params: { orgId: string; userId: string; role: Role }) {
@@ -205,12 +266,29 @@ export async function getTodayOpsSummary(params: { orgId: string; userId: string
       unsentEstimates: 1,
       unpaidInvoices: 2,
       missingReceipts: 1,
+      newLeadsAwaitingContact: 2,
+      newLeadList: [
+        {
+          id: "demo-lead-today-1",
+          contactName: "Samantha Reed",
+          serviceType: "Water Damage",
+          source: "WEBSITE_FORM",
+          createdAt: new Date(Date.now() - 1000 * 60 * 45),
+        },
+        {
+          id: "demo-lead-today-2",
+          contactName: "John Ortiz",
+          serviceType: "Bathroom Remodel",
+          source: "PHONE_CALL",
+          createdAt: new Date(Date.now() - 1000 * 60 * 90),
+        },
+      ],
     };
   }
 
   const assignmentFilter = params.role === Role.WORKER ? { assignments: { some: { userId: params.userId } } } : {};
 
-  const [assignedJobs, todayEvents, weekEvents, overdueTasks, unsentEstimates, unpaidInvoices, missingReceipts] =
+  const [assignedJobs, todayEvents, weekEvents, overdueTasks, unsentEstimates, unpaidInvoices, missingReceipts, newLeadsAwaitingContact, newLeadList] =
     await Promise.all([
       prisma.job.findMany({
         where: { orgId: params.orgId, ...assignmentFilter },
@@ -247,6 +325,27 @@ export async function getTodayOpsSummary(params: { orgId: string; userId: string
       prisma.estimate.count({ where: { job: { orgId: params.orgId, ...assignmentFilter }, status: "DRAFT" } }),
       prisma.invoice.count({ where: { job: { orgId: params.orgId, ...assignmentFilter }, status: { in: ["SENT", "OVERDUE"] } } }),
       prisma.expense.count({ where: { job: { orgId: params.orgId, ...assignmentFilter }, receipt: null } }),
+      prisma.lead.count({
+        where: {
+          orgId: params.orgId,
+          stage: LeadStage.NEW,
+        },
+      }),
+      prisma.lead.findMany({
+        where: {
+          orgId: params.orgId,
+          stage: LeadStage.NEW,
+        },
+        orderBy: { createdAt: "asc" },
+        take: 8,
+        select: {
+          id: true,
+          contactName: true,
+          serviceType: true,
+          source: true,
+          createdAt: true,
+        },
+      }),
     ]);
 
   return {
@@ -257,6 +356,8 @@ export async function getTodayOpsSummary(params: { orgId: string; userId: string
     unsentEstimates,
     unpaidInvoices,
     missingReceipts,
+    newLeadsAwaitingContact,
+    newLeadList,
   };
 }
 

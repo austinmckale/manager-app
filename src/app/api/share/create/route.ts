@@ -8,6 +8,10 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const jobId = url.searchParams.get("jobId");
   const type = (url.searchParams.get("type") ?? "TIMELINE") as "TIMELINE" | "GALLERY";
+  const selectedAssetIds = (url.searchParams.get("selectedAssetIds") ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
 
   if (!jobId) {
     return NextResponse.redirect(new URL("/jobs", url.origin));
@@ -22,11 +26,12 @@ export async function GET(request: Request) {
         jobId,
         type,
         token,
-        selectedAssetIds: [],
+        selectedAssetIds,
         createdBy: auth.userId,
+        expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
       },
     });
   }
 
-  return NextResponse.redirect(new URL(`/jobs/${jobId}?tab=overview&shareToken=${token}`, url.origin));
+  return NextResponse.redirect(new URL(`/jobs/${jobId}?shareToken=${token}`, url.origin));
 }

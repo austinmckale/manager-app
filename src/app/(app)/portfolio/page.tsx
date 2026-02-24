@@ -1,4 +1,4 @@
-﻿import Link from "next/link";
+import Link from "next/link";
 import { BeforeAfterTool } from "@/components/before-after-tool";
 import { CaptionTemplate } from "@/components/caption-template";
 import { requireAuth } from "@/lib/auth";
@@ -38,7 +38,7 @@ export default async function PortfolioPage() {
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2">
         <a href="/api/portfolio/zip" className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm">
-          Download selected photos (ZIP)
+          Download portfolio photos (ZIP)
         </a>
         <Link href="/jobs" className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm">
           Manage portfolio toggles in Jobs

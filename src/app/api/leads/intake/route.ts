@@ -13,9 +13,20 @@ const inputSchema = z.object({
   email: z.string().email().optional().or(z.literal("")),
   address: z.string().optional(),
   serviceType: z.string().optional(),
+  service: z.string().optional(),
   source: z.string().optional(),
   notes: z.string().optional(),
   message: z.string().optional(),
+  city: z.string().optional(),
+  zip: z.string().optional(),
+  timeline: z.string().optional(),
+  details: z.string().optional(),
+  utm_source: z.string().optional(),
+  utm_medium: z.string().optional(),
+  utm_campaign: z.string().optional(),
+  utm_content: z.string().optional(),
+  utm_term: z.string().optional(),
+  landing_path: z.string().optional(),
 });
 
 function resolveSource(source?: string): LeadSource {
@@ -25,6 +36,12 @@ function resolveSource(source?: string): LeadSource {
   if (["text", "sms"].includes(value)) return LeadSource.TEXT;
   if (["referral", "refer"].includes(value)) return LeadSource.REFERRAL;
   return LeadSource.OTHER;
+}
+
+function normalizePhone(value?: string) {
+  if (!value) return "";
+  const digits = value.replace(/\D/g, "");
+  return digits.length >= 7 ? digits : value.trim();
 }
 
 function getIntakeKey(request: Request) {
@@ -106,8 +123,14 @@ export async function POST(request: Request) {
   }
 
   const contactName = (data.contactName || data.name || data.phone || data.email || "Unknown Lead").trim();
+  const normalizedPhone = normalizePhone(data.phone);
+  const normalizedEmail = (data.email ?? "").trim().toLowerCase();
   const source = resolveSource(data.source);
-  const notes = data.notes || data.message || null;
+  const notesParts = [data.notes, data.message, data.details].filter(Boolean);
+  if (data.timeline) notesParts.push(`Timeline: ${data.timeline}`);
+  if (data.city) notesParts.push(`City: ${data.city}`);
+  if (data.zip) notesParts.push(`ZIP: ${data.zip}`);
+  const notes = notesParts.length > 0 ? notesParts.join("\n") : null;
 
   if (data.externalRef) {
     const existingByRef = await prisma.lead.findFirst({
@@ -125,8 +148,8 @@ export async function POST(request: Request) {
     createdAt: { gte: subHours(new Date(), 12) },
     stage: { in: [LeadStage.NEW, LeadStage.CONTACTED, LeadStage.SITE_VISIT_SET, LeadStage.ESTIMATE_SENT] },
     OR: [
-      ...(data.phone ? [{ phone: data.phone }] : []),
-      ...(data.email ? [{ email: data.email }] : []),
+      ...(normalizedPhone ? [{ phone: normalizedPhone }] : []),
+      ...(normalizedEmail ? [{ email: normalizedEmail }] : []),
     ],
   };
 
@@ -147,14 +170,20 @@ export async function POST(request: Request) {
       orgId,
       externalRef: data.externalRef || null,
       contactName,
-      phone: data.phone || null,
-      email: data.email || null,
+      phone: normalizedPhone || null,
+      email: normalizedEmail || null,
       address: data.address || null,
-      serviceType: data.serviceType || null,
+      serviceType: data.serviceType || data.service || null,
       source,
       stage: LeadStage.NEW,
       notes,
       rawPayload: body,
+      utmSource: data.utm_source || null,
+      utmMedium: data.utm_medium || null,
+      utmCampaign: data.utm_campaign || null,
+      utmContent: data.utm_content || null,
+      utmTerm: data.utm_term || null,
+      landingPath: data.landing_path || null,
     },
   });
 

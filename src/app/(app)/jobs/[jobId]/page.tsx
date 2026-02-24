@@ -1,5 +1,5 @@
 import { TaskStatus } from "@prisma/client";
-import { addDays, endOfWeek, format, startOfWeek } from "date-fns";
+import { addDays, endOfWeek, format, startOfDay, startOfWeek } from "date-fns";
 import {
   addPaymentAction,
   approveChangeOrderAction,
@@ -9,9 +9,13 @@ import {
   createEstimateAction,
   createExpenseAction,
   createTaskAction,
+  deleteScheduleEventAction,
   quickScheduleCrewAction,
+  sendInvoiceAction,
   togglePortfolioAction,
+  updateJobServiceTagsAction,
   updateJobStatusAction,
+  updateScheduleEventAction,
   updateTaskStatusAction,
 } from "@/app/(app)/actions";
 import { CostHealth } from "@/components/cost-health";
@@ -22,6 +26,7 @@ import { computeJobCosting } from "@/lib/costing";
 import { getJobById, getOrgUsers } from "@/lib/data";
 import { isDemoMode } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
+import { SERVICE_TAG_OPTIONS, normalizeServiceTags } from "@/lib/service-tags";
 import { buildAbsoluteUrl, currency, getStoragePublicUrl, percent, toNumber } from "@/lib/utils";
 
 export default async function JobDetailPage({
@@ -29,11 +34,12 @@ export default async function JobDetailPage({
   searchParams,
 }: {
   params: Promise<{ jobId: string }>;
-  searchParams: Promise<{ shareToken?: string; portalToken?: string }>;
+  searchParams: Promise<{ shareToken?: string; edit?: string }>;
 }) {
   const auth = await requireAuth();
   const { jobId } = await params;
   const query = await searchParams;
+  const editEventId = query.edit ?? null;
 
   const [job, users] = await Promise.all([
     getJobById({ orgId: auth.orgId, role: auth.role, userId: auth.userId, jobId }),
@@ -41,8 +47,20 @@ export default async function JobDetailPage({
   ]);
 
   const costing = computeJobCosting(job);
+  const controlledCategoryTags = normalizeServiceTags(job.categoryTags);
   const assignedUserIds = new Set(job.assignments?.map((assignment) => assignment.userId) ?? []);
-  const quickDates = Array.from({ length: 7 }, (_, index) => addDays(new Date(), index));
+  const assignedCrew = users.filter((user) => assignedUserIds.has(user.id));
+  const editingEvent = editEventId ? job.scheduleEvents?.find((e) => e.id === editEventId) : null;
+  const quickDates = (() => {
+    const out: Date[] = [];
+    let d = startOfDay(new Date());
+    while (out.length < 15) {
+      const day = d.getDay();
+      if (day !== 0 && day !== 6) out.push(new Date(d));
+      d = addDays(d, 1);
+    }
+    return out;
+  })();
   const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
   const weekEnd = endOfWeek(new Date(), { weekStartsOn: 1 });
   const weeklyLaborByWorker = new Map<string, { workerName: string; hours: number; pay: number }>();
@@ -50,7 +68,7 @@ export default async function JobDetailPage({
   for (const entry of job.timeEntries) {
     if (!entry.end) continue;
     if (entry.start < weekStart || entry.start > weekEnd) continue;
-    const minutes = Math.max(0, (entry.end.getTime() - entry.start.getTime()) / 60000 - entry.breakMinutes);
+    const minutes = (entry.end.getTime() - entry.start.getTime()) / 60000;
     const hours = minutes / 60;
     const pay = hours * toNumber(entry.hourlyRateLoaded);
     const row = weeklyLaborByWorker.get(entry.workerId) ?? {
@@ -72,10 +90,26 @@ export default async function JobDetailPage({
     { hours: 0, pay: 0 },
   );
   const scheduleReady = (job.scheduleEvents?.length ?? 0) > 0;
-  const photosCaptured = job.fileAssets.filter((asset) => asset.type === "PHOTO").length;
-  const receiptsCaptured = job.fileAssets.filter((asset) => asset.type === "RECEIPT").length;
+  const photoAssets = job.fileAssets.filter((asset) => asset.type === "PHOTO");
+  const receiptAssets = job.fileAssets.filter((asset) => asset.type === "RECEIPT");
+  const documentAssets = job.fileAssets.filter((asset) => asset.type === "DOCUMENT");
+  const galleryAssetIds = photoAssets
+    .filter((asset) => asset.isPortfolio || asset.isClientVisible)
+    .slice(0, 20)
+    .map((asset) => asset.id)
+    .join(",");
+  const photosCaptured = photoAssets.length;
+  const receiptsCaptured = receiptAssets.length;
   const openTasks = job.tasks.filter((task) => task.status !== TaskStatus.DONE).length;
   const sentInvoices = job.invoices.filter((invoice) => ["SENT", "PAID", "OVERDUE"].includes(invoice.status)).length;
+  const expenseRows = [...job.expenses].sort((a, b) => b.date.getTime() - a.date.getTime());
+  const expenseCategoryRows = [
+    { key: "MATERIALS", label: "Materials", value: costing.expensesByCategory.MATERIALS },
+    { key: "SUBCONTRACTOR", label: "Subcontractor", value: costing.expensesByCategory.SUBCONTRACTOR },
+    { key: "PERMIT", label: "Permit", value: costing.expensesByCategory.PERMIT },
+    { key: "EQUIPMENT", label: "Equipment", value: costing.expensesByCategory.EQUIPMENT },
+    { key: "MISC", label: "Misc", value: costing.expensesByCategory.MISC },
+  ];
   const executionChecklist = [
     { label: "Crew scheduled", done: scheduleReady, href: "#schedule" },
     { label: "Photos captured", done: photosCaptured > 0, href: "#capture" },
@@ -84,12 +118,47 @@ export default async function JobDetailPage({
     { label: "Invoice sent", done: sentInvoices > 0, href: "#finance" },
   ];
   const executionDone = executionChecklist.filter((item) => item.done).length;
-  const [shareLinks, portalLinks] = isDemoMode()
-    ? [[], []]
-    : await Promise.all([
-        prisma.shareLink.findMany({ where: { jobId: job.id }, orderBy: { createdAt: "desc" }, take: 5 }),
-        prisma.portalLink.findMany({ where: { jobId: job.id }, orderBy: { createdAt: "desc" }, take: 5 }),
-      ]);
+  const shareLinks = isDemoMode()
+    ? []
+    : await prisma.shareLink.findMany({ where: { jobId: job.id }, orderBy: { createdAt: "desc" }, take: 5 });
+
+  const weeklyVisitSummaries = (() => {
+    const events = job.scheduleEvents ?? [];
+    const inWeek = events.filter((event) => {
+      const start = new Date(event.startAt);
+      return start >= weekStart && start <= weekEnd;
+    });
+    const bySlot = new Map<
+      string,
+      {
+        count: number;
+        firstDate: Date;
+        lastDate: Date;
+        startTime: Date;
+        endTime: Date;
+      }
+    >();
+    for (const event of inWeek) {
+      const start = new Date(event.startAt);
+      const end = new Date(event.endAt);
+      const key = `${start.getHours()}:${start.getMinutes()}-${end.getHours()}:${end.getMinutes()}`;
+      const existing = bySlot.get(key);
+      if (!existing) {
+        bySlot.set(key, {
+          count: 1,
+          firstDate: start,
+          lastDate: start,
+          startTime: start,
+          endTime: end,
+        });
+      } else {
+        existing.count += 1;
+        if (start < existing.firstDate) existing.firstDate = start;
+        if (start > existing.lastDate) existing.lastDate = start;
+      }
+    }
+    return [...bySlot.values()].sort((a, b) => a.firstDate.getTime() - b.firstDate.getTime());
+  })();
 
   return (
     <div className="space-y-4">
@@ -98,7 +167,7 @@ export default async function JobDetailPage({
           <div>
             <p className="text-xs uppercase tracking-wide text-slate-500">Job Hub</p>
             <h2 className="text-xl font-semibold text-slate-900">{job.jobName}</h2>
-            <p className="text-sm text-slate-600">{job.customer.name} • {job.address}</p>
+            <p className="text-sm text-slate-600">{job.customer.name} - {job.address}</p>
           </div>
           <JobStatusBadge status={job.status} />
         </div>
@@ -108,6 +177,31 @@ export default async function JobDetailPage({
           <p>Cost: {currency(costing.totalCost)}</p>
           <p>Profit: {currency(costing.grossProfit)}</p>
           <p>Margin: {percent(costing.grossMarginPercent)}</p>
+        </div>
+        <p className="mt-1 text-[11px] text-slate-500">Revenue comes from sent/paid invoices (or approved estimates if no invoices yet) in section 4. Budget fields are for cost tracking only (Labor/Materials vs Budget bars).</p>
+
+        <div className="mt-3 rounded-xl border border-slate-200 p-3">
+          <p className="text-xs font-medium text-slate-900">Service Tags (Website Routing)</p>
+          <p className="mt-1 text-[11px] text-slate-500">Starred portfolio photos route by these tags.</p>
+          {controlledCategoryTags.length === 0 ? (
+            <p className="mt-2 rounded-lg bg-amber-50 px-2 py-1 text-[11px] text-amber-700">
+              This job has legacy tags. Select at least one controlled service tag and save.
+            </p>
+          ) : null}
+          <form action={updateJobServiceTagsAction} className="mt-2 space-y-2 text-sm">
+            <input type="hidden" name="jobId" value={job.id} />
+            <div className="grid gap-2 sm:grid-cols-3">
+              {SERVICE_TAG_OPTIONS.map((tag) => (
+                <label key={tag.slug} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                  <input type="checkbox" name="serviceTags" value={tag.slug} defaultChecked={controlledCategoryTags.includes(tag.slug)} />
+                  {tag.label}
+                </label>
+              ))}
+            </div>
+            <button type="submit" className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700">
+              Save Service Tags
+            </button>
+          </form>
         </div>
       </section>
 
@@ -131,7 +225,11 @@ export default async function JobDetailPage({
         <form action={quickScheduleCrewAction} className="mt-3 grid gap-3 rounded-xl border border-slate-200 p-3 text-sm">
           <input type="hidden" name="jobId" value={job.id} />
           <div>
-            <p className="font-medium">Crew (check all working this block)</p>
+            <p className="font-medium">Crew on this job</p>
+            <p className="mt-0.5 text-[11px] text-slate-500">
+              These people are attached to this job&apos;s crew. The visits you schedule below are for the job as a whole; each
+              worker&apos;s actual hours still come from clock-in on Team/Time.
+            </p>
             <div className="mt-2 grid gap-2 sm:grid-cols-2">
               {users.map((user) => (
                 <label key={user.id} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1 text-xs">
@@ -143,8 +241,8 @@ export default async function JobDetailPage({
           </div>
 
           <div>
-            <p className="font-medium">Dates (next 7 days)</p>
-            <div className="mt-2 grid gap-2 sm:grid-cols-4">
+            <p className="font-medium">Dates (M–F, next 3 weeks)</p>
+            <div className="mt-2 grid gap-2 sm:grid-cols-5">
               {quickDates.map((dateValue, index) => (
                 <label key={dateValue.toISOString()} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1 text-xs">
                   <input type="checkbox" name="dates" value={format(dateValue, "yyyy-MM-dd")} defaultChecked={index === 0} />
@@ -152,12 +250,13 @@ export default async function JobDetailPage({
                 </label>
               ))}
             </div>
-            <p className="mt-1 text-[11px] text-slate-500">At least one date is required. Today is preselected.</p>
+            <p className="mt-1 text-[11px] text-slate-500">Weekdays only. Or add another date:</p>
+            <input type="date" name="customDate" className="mt-0.5 rounded-lg border border-slate-300 px-2 py-1 text-xs" />
           </div>
 
           <div>
             <p className="font-medium">Time Block</p>
-            <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+            <div className="mt-2 flex flex-wrap gap-2 text-xs">
               <label className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1">
                 <input type="radio" name="slot" value="AM" />
                 AM (8-12)
@@ -170,6 +269,21 @@ export default async function JobDetailPage({
                 <input type="radio" name="slot" value="FULL" defaultChecked />
                 Full (8-5)
               </label>
+              <label className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1">
+                <input type="radio" name="slot" value="CUSTOM" />
+                Custom
+              </label>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/50 p-2" data-slot-custom>
+              <span className="text-[11px] text-slate-500">Custom times (when Custom is selected):</span>
+              <label className="inline-flex items-center gap-1 text-xs">
+                Start
+                <input type="time" name="startTime" defaultValue="08:00" className="rounded border border-slate-300 px-1.5 py-0.5" />
+              </label>
+              <label className="inline-flex items-center gap-1 text-xs">
+                End
+                <input type="time" name="endTime" defaultValue="17:00" className="rounded border border-slate-300 px-1.5 py-0.5" />
+              </label>
             </div>
           </div>
 
@@ -177,14 +291,123 @@ export default async function JobDetailPage({
           <button type="submit" className="rounded-xl bg-slate-900 px-3 py-2 text-white">Save Crew + Schedule</button>
         </form>
 
-        <div className="mt-3 space-y-2 text-sm">
-          {job.scheduleEvents?.map((event) => (
-            <article key={event.id} className="rounded-xl border border-slate-200 p-2">
-              <p className="font-medium text-slate-900">{new Date(event.startAt).toLocaleString()} - {new Date(event.endAt).toLocaleString()}</p>
-              {event.notes ? <p className="text-xs text-slate-500">{event.notes}</p> : null}
-            </article>
-          ))}
-          {(job.scheduleEvents?.length ?? 0) === 0 ? <p className="text-xs text-slate-500">No schedule events yet.</p> : null}
+        <div className="mt-2 rounded-xl border border-teal-200 bg-teal-50 p-2 text-xs text-teal-900">
+          <p className="font-medium">
+            Job crew this week:{" "}
+            {assignedCrew.length > 0 ? assignedCrew.map((user) => user.fullName).join(", ") : "None selected yet"}
+          </p>
+          <p className="mt-1 text-teal-700">
+            These people show up on Attendance/Today when you clock in crews for this job. Their exact hours still come from
+            clock-in on Team/Time.
+          </p>
+        </div>
+
+        <div className="mt-3">
+          <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-500">Scheduled visits (plan)</p>
+          <p className="mb-2 text-[11px] text-slate-500">
+            These visits are the plan for this job&apos;s crew. They feed the weekly grid on Team and the Today run sheet, but
+            actual hours per worker still come from clock-in on Team/Time.
+          </p>
+          {editingEvent ? (
+            <form action={updateScheduleEventAction} className="mb-3 rounded-xl border border-amber-200 bg-amber-50/50 p-3 text-sm">
+              <input type="hidden" name="eventId" value={editingEvent.id} />
+              <input type="hidden" name="jobId" value={job.id} />
+              <p className="mb-1 font-medium text-slate-900">Edit scheduled visit</p>
+              <p className="mb-2 text-xs text-slate-600">
+                Change the start/end time or notes for this visit. This updates the plan (Team weekly grid and Today run sheet),
+                but does not change any existing time entries or payroll.
+              </p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <label className="flex flex-col gap-0.5 text-xs">
+                  Start
+                  <input
+                    type="datetime-local"
+                    name="startAt"
+                    required
+                    defaultValue={format(new Date(editingEvent.startAt), "yyyy-MM-dd'T'HH:mm")}
+                    className="rounded-lg border border-slate-300 px-2 py-1.5"
+                  />
+                </label>
+                <label className="flex flex-col gap-0.5 text-xs">
+                  End
+                  <input
+                    type="datetime-local"
+                    name="endAt"
+                    required
+                    defaultValue={format(new Date(editingEvent.endAt), "yyyy-MM-dd'T'HH:mm")}
+                    className="rounded-lg border border-slate-300 px-2 py-1.5"
+                  />
+                </label>
+              </div>
+              <input name="notes" placeholder="Notes (optional)" defaultValue={editingEvent.notes ?? ""} className="mt-2 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+              <div className="mt-2 flex gap-2">
+                <button type="submit" className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm text-white">Save</button>
+                <a href={`/jobs/${job.id}#schedule`} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm">Cancel</a>
+              </div>
+            </form>
+          ) : null}
+          {weeklyVisitSummaries.length > 0 ? (
+            <div className="mb-2 space-y-0.5 text-[11px] text-slate-600">
+              {weeklyVisitSummaries.map((summary, index) => (
+                <p key={index}>
+                  This week:{" "}
+                  <span className="font-medium">
+                    {format(summary.firstDate, "EEE MMM d")} – {format(summary.lastDate, "EEE MMM d")}
+                  </span>{" "}
+                  ·{" "}
+                  {`${format(summary.startTime, "h:mm a")} – ${format(summary.endTime, "h:mm a")}`} ·{" "}
+                  {summary.count === 1 ? "1 visit" : `${summary.count} visits`}
+                </p>
+              ))}
+            </div>
+          ) : null}
+          {(job.scheduleEvents?.length ?? 0) === 0 ? (
+            <p className="text-xs text-slate-500">No schedule events yet.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {job.scheduleEvents
+                ?.slice()
+                .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
+                .map((event) => {
+                  const start = new Date(event.startAt);
+                  const end = new Date(event.endAt);
+                  const dateStr = format(start, "EEE, MMM d");
+                  const timeStr = `${format(start, "h:mm a")} – ${format(end, "h:mm a")}`;
+                  return (
+                    <article
+                      key={event.id}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2 text-sm"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-medium text-slate-900">{dateStr}</span>
+                          <span className="text-slate-600">{timeStr}</span>
+                        </div>
+                        {event.notes ? <p className="mt-1 text-xs text-slate-500">{event.notes}</p> : null}
+                      </div>
+                      <div className="flex gap-1">
+                        <a
+                          href={`/jobs/${job.id}?edit=${event.id}#schedule`}
+                          className="rounded border border-slate-300 px-2 py-1 text-xs"
+                        >
+                          Edit
+                        </a>
+                        <form action={deleteScheduleEventAction} className="inline">
+                          <input type="hidden" name="eventId" value={event.id} />
+                          <input type="hidden" name="jobId" value={job.id} />
+                          <button
+                            type="submit"
+                            className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100"
+                          >
+                            Remove
+                          </button>
+                        </form>
+                      </div>
+                    </article>
+                  );
+                })}
+            </div>
+          )}
         </div>
 
         <div className="mt-3 rounded-xl border border-slate-200 p-3 text-sm">
@@ -194,13 +417,45 @@ export default async function JobDetailPage({
             {weeklyLaborRows.map((row) => (
               <div key={row.workerName} className="flex items-center justify-between text-xs text-slate-700">
                 <p>{row.workerName}</p>
-                <p>{row.hours.toFixed(2)}h • {currency(row.pay)}</p>
+                <p>{row.hours.toFixed(2)}h - {currency(row.pay)}</p>
               </div>
             ))}
             {weeklyLaborRows.length === 0 ? <p className="text-xs text-slate-500">No labor logged on this job this week.</p> : null}
           </div>
           <div className="mt-2 border-t border-slate-200 pt-2 text-xs text-slate-700">
-            <p>Week Total: {weeklyLaborTotals.hours.toFixed(2)}h • {currency(weeklyLaborTotals.pay)}</p>
+            <p>Week Total: {weeklyLaborTotals.hours.toFixed(2)}h - {currency(weeklyLaborTotals.pay)}</p>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-4">
+        <h3 className="text-sm font-semibold text-slate-900">Joist / Scope of work</h3>
+        <p className="mt-1 text-xs text-slate-500">Upload your Joist estimate or scope-of-work PDF so price and scope are on file for this job.</p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <FileCapture jobId={job.id} fileType="DOCUMENT" />
+          <div className="space-y-2">
+            <p className="text-xs text-slate-600">Uploaded documents ({documentAssets.length})</p>
+            <div className="rounded-xl border border-slate-200 p-2 text-xs">
+              {documentAssets.length === 0 ? (
+                <p className="text-slate-500">No Joist/scope documents yet. Upload a PDF above.</p>
+              ) : (
+                <ul className="space-y-1">
+                  {documentAssets.map((asset) => (
+                    <li key={asset.id}>
+                      <a
+                        href={getStoragePublicUrl(asset.storageKey)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-teal-700 underline"
+                      >
+                        {asset.fileName}
+                      </a>
+                      {asset.description ? <span className="ml-1 text-slate-500">· {asset.description}</span> : null}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </div>
         </div>
       </section>
@@ -224,7 +479,7 @@ export default async function JobDetailPage({
           {job.tasks.map((task) => (
             <article key={task.id} className="rounded-xl border border-slate-200 p-3 text-sm">
               <p className="font-semibold">{task.title}</p>
-              <p className="text-xs text-slate-500">{task.assignee?.fullName ?? "Unassigned"} • Due {task.dueDate ? task.dueDate.toISOString().slice(0, 10) : "-"}</p>
+              <p className="text-xs text-slate-500">{task.assignee?.fullName ?? "Unassigned"} · Due {task.dueDate ? format(task.dueDate, "MMM d, yyyy") : "—"}</p>
               <form action={updateTaskStatusAction} className="mt-2 flex gap-2">
                 <input type="hidden" name="taskId" value={task.id} />
                 <select name="status" defaultValue={task.status} className="rounded-lg border border-slate-300 px-2 py-1 text-xs">
@@ -244,9 +499,9 @@ export default async function JobDetailPage({
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <FileCapture jobId={job.id} fileType="PHOTO" />
           <div className="space-y-2">
-            <p className="text-xs text-slate-600">Photos ({job.fileAssets.filter((a) => a.type === "PHOTO").length})</p>
+            <p className="text-xs text-slate-600">Photos ({photoAssets.length})</p>
             <div className="grid grid-cols-3 gap-2">
-              {job.fileAssets.filter((a) => a.type === "PHOTO").slice(0, 12).map((asset) => (
+              {photoAssets.slice(0, 12).map((asset) => (
                 <div key={asset.id} className="group relative">
                   <a href={getStoragePublicUrl(asset.storageKey)} target="_blank" rel="noreferrer" className="block">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -263,7 +518,7 @@ export default async function JobDetailPage({
                           : "bg-white/80 text-slate-600 opacity-0 group-hover:opacity-100"
                       }`}
                     >
-                      {asset.isPortfolio ? "★ Portfolio" : "☆ Portfolio"}
+                      {asset.isPortfolio ? "Portfolio On" : "Add Portfolio"}
                     </button>
                   </form>
                   {asset.stage ? (
@@ -273,6 +528,19 @@ export default async function JobDetailPage({
                   ) : null}
                 </div>
               ))}
+            </div>
+            {photoAssets.length === 0 ? <p className="text-xs text-slate-500">No photos uploaded yet.</p> : null}
+
+            <div className="rounded-xl border border-slate-200 p-2 text-xs">
+              <p className="font-medium text-slate-700">Receipts ({receiptAssets.length})</p>
+              <div className="mt-1 space-y-1">
+                {receiptAssets.slice(0, 5).map((asset) => (
+                  <a key={asset.id} href={getStoragePublicUrl(asset.storageKey)} target="_blank" rel="noreferrer" className="block truncate text-teal-700 underline">
+                    {asset.fileName}
+                  </a>
+                ))}
+                {receiptAssets.length === 0 ? <p className="text-slate-500">No receipts uploaded yet.</p> : null}
+              </div>
             </div>
           </div>
         </div>
@@ -287,30 +555,86 @@ export default async function JobDetailPage({
             <p>Labor Cost: {currency(costing.laborCost)}</p>
             {job.timeEntries.map((entry) => (
               <p key={entry.id} className="text-xs text-slate-500">
-                {entry.worker.fullName}: {entry.start.toLocaleString()} {entry.end ? `- ${entry.end.toLocaleString()}` : "(running)"}
+                {entry.worker.fullName}: {format(entry.start, "MMM d, h:mm a")} → {entry.end ? format(entry.end, "h:mm a") : "… running"}
               </p>
             ))}
           </div>
-          <form action={createExpenseAction} className="grid gap-2 rounded-xl border border-slate-200 p-3 text-sm">
-            <input type="hidden" name="jobId" value={job.id} />
-            <input name="vendor" required placeholder="Vendor (required)" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
-            <input name="amount" required type="number" step="0.01" placeholder="Amount (required)" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
-            <select name="category" defaultValue="MISC" className="rounded-xl border border-slate-300 px-3 py-2 text-sm">
-              <option value="MATERIALS">Materials</option>
-              <option value="SUBCONTRACTOR">Subcontractor</option>
-              <option value="PERMIT">Permit</option>
-              <option value="EQUIPMENT">Equipment</option>
-              <option value="MISC">Misc</option>
-            </select>
-            <input name="date" type="date" required className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
-            <button type="submit" className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Add Expense</button>
-          </form>
+          <div className="space-y-2">
+            <form action={createExpenseAction} className="grid gap-2 rounded-xl border border-slate-200 p-3 text-sm">
+              <input type="hidden" name="jobId" value={job.id} />
+              <input name="vendor" required placeholder="Vendor (e.g. Home Depot)" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+              <input name="amount" required type="number" step="0.01" placeholder="Amount" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+              <select name="category" defaultValue="MISC" className="rounded-xl border border-slate-300 px-3 py-2 text-sm">
+                <option value="MATERIALS">Materials</option>
+                <option value="SUBCONTRACTOR">Subcontractor</option>
+                <option value="PERMIT">Permit</option>
+                <option value="EQUIPMENT">Equipment</option>
+                <option value="MISC">Misc</option>
+              </select>
+              <input name="date" type="date" required className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+              <input name="notes" placeholder="Description (optional)" className="rounded-xl border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
+              <p className="text-[11px] text-slate-500 sm:col-span-2">Add a receipt in section 2) Photo + Receipt Capture and link it to this expense after saving.</p>
+              <button type="submit" className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white sm:col-span-2">Add Expense</button>
+            </form>
+
+            <div className="rounded-xl border border-slate-200 p-3 text-xs">
+              <p className="font-medium text-slate-900">Expense Summary (This Job)</p>
+              <div className="mt-2 grid grid-cols-2 gap-1 text-slate-700">
+                {expenseCategoryRows.map((row) => (
+                  <p key={row.key}>{row.label}: {currency(row.value)}</p>
+                ))}
+              </div>
+              <p className="mt-2 border-t border-slate-200 pt-2 font-medium text-slate-900">
+                Total Expenses: {currency(costing.expensesTotal)}
+              </p>
+            </div>
+          </div>
         </div>
 
         <div className="mt-3 grid gap-2 sm:grid-cols-3">
           <CostHealth label="Labor vs Budget" value={costing.costHealth.labor} />
           <CostHealth label="Materials vs Budget" value={costing.costHealth.materials} />
           <CostHealth label="Total vs Budget" value={costing.costHealth.total} />
+        </div>
+
+        <div className="mt-3 rounded-xl border border-slate-200 p-3">
+          <p className="text-sm font-medium text-slate-900">Expense Ledger</p>
+          <p className="mt-0.5 text-[11px] text-slate-500">Each row shows source (receipt or manual). Click to open receipt when available.</p>
+          <div className="mt-2 space-y-2">
+            {expenseRows.map((expense) => (
+              <article
+                key={expense.id}
+                className={`rounded-lg border p-2 text-xs ${expense.receipt ? "cursor-pointer border-teal-200 bg-teal-50/30 hover:bg-teal-50/60" : "border-slate-200 bg-slate-50/30"}`}
+              >
+                {expense.receipt ? (
+                  <a href={getStoragePublicUrl(expense.receipt.storageKey)} target="_blank" rel="noreferrer" className="block">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="font-medium text-slate-900">{expense.vendor}</p>
+                        <p className="text-slate-500">{expense.category} · {format(expense.date, "MMM d, yyyy")}</p>
+                      </div>
+                      <p className="font-semibold text-slate-900">{currency(toNumber(expense.amount))}</p>
+                    </div>
+                    {expense.notes ? <p className="mt-1 text-slate-600">{expense.notes}</p> : null}
+                    <p className="mt-1.5 font-medium text-teal-700">View receipt →</p>
+                  </a>
+                ) : (
+                  <>
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="font-medium text-slate-900">{expense.vendor}</p>
+                        <p className="text-slate-500">{expense.category} · {format(expense.date, "MMM d, yyyy")}</p>
+                      </div>
+                      <p className="font-semibold text-slate-900">{currency(toNumber(expense.amount))}</p>
+                    </div>
+                    {expense.notes ? <p className="mt-1 text-slate-600">{expense.notes}</p> : null}
+                    <p className="mt-1.5 text-slate-500">Source: Manual entry (no receipt attached)</p>
+                  </>
+                )}
+              </article>
+            ))}
+            {expenseRows.length === 0 ? <p className="text-xs text-slate-500">No expenses logged for this job yet.</p> : null}
+          </div>
         </div>
       </section>
 
@@ -328,7 +652,7 @@ export default async function JobDetailPage({
         <div className="mt-3 space-y-2">
           {job.estimates.map((estimate) => (
             <article key={estimate.id} className="rounded-xl border border-slate-200 p-3 text-sm">
-              <p className="font-semibold">Estimate {estimate.version} • {estimate.status}</p>
+              <p className="font-semibold">Estimate {estimate.version} - {estimate.status}</p>
               <p>Total: {currency(toNumber(estimate.total))}</p>
               <div className="mt-2 flex flex-wrap gap-2">
                 {estimate.status !== "APPROVED" ? (
@@ -358,7 +682,7 @@ export default async function JobDetailPage({
         <div className="mt-3 space-y-2">
           {job.changeOrders.map((changeOrder) => (
             <article key={changeOrder.id} className="rounded-xl border border-slate-200 p-3 text-sm">
-              <p className="font-semibold">Change Order • {changeOrder.status}</p>
+              <p className="font-semibold">Change Order - {changeOrder.status}</p>
               <p>{changeOrder.description}</p>
               <p>Total: {currency(toNumber(changeOrder.total))}</p>
               {changeOrder.status !== "APPROVED" ? (
@@ -374,9 +698,26 @@ export default async function JobDetailPage({
         <div className="mt-3 space-y-2">
           {job.invoices.map((invoice) => (
             <article key={invoice.id} className="rounded-xl border border-slate-200 p-3 text-sm">
-              <p className="font-semibold">Invoice • {invoice.status}</p>
+              <p className="font-semibold">Invoice - {invoice.status}</p>
               <p>Total: {currency(toNumber(invoice.total))}</p>
+              <p className="text-xs text-slate-500">
+                {invoice.sentAt ? `Sent ${format(invoice.sentAt, "MMM d, yyyy")}` : "Not sent yet"}
+                {invoice.dueDate ? ` · Due ${format(invoice.dueDate, "MMM d, yyyy")}` : ""}
+              </p>
               <a className="mt-1 inline-block text-xs text-teal-700 underline" href={`/api/pdf/invoice/${invoice.id}`}>Download PDF</a>
+              <form action={sendInvoiceAction} className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto]">
+                <input type="hidden" name="invoiceId" value={invoice.id} />
+                <input type="hidden" name="jobId" value={job.id} />
+                <input
+                  name="dueDate"
+                  type="date"
+                  defaultValue={invoice.dueDate ? invoice.dueDate.toISOString().slice(0, 10) : ""}
+                  className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                />
+                <button type="submit" className="rounded-lg border border-slate-300 px-2 py-1 text-xs">
+                  {invoice.status === "DRAFT" ? "Send Invoice" : "Update Sent Date"}
+                </button>
+              </form>
               <form action={addPaymentAction} className="mt-2 grid gap-2 sm:grid-cols-4">
                 <input type="hidden" name="invoiceId" value={invoice.id} />
                 <input name="amount" type="number" step="0.01" placeholder="Amount" required className="rounded-lg border border-slate-300 px-2 py-1 text-xs" />
@@ -390,33 +731,29 @@ export default async function JobDetailPage({
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
-        <h3 className="text-sm font-semibold text-slate-900">5) Client Visibility / Share Links</h3>
+        <h3 className="text-sm font-semibold text-slate-900">5) Share links</h3>
+        <p className="mt-1 text-xs text-slate-500">Generate a link to share timeline or photos with the client (e.g. by text or email).</p>
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           <form action="/api/share/create" method="get" className="rounded-xl border border-slate-200 p-3 text-sm">
             <input type="hidden" name="jobId" value={job.id} />
             <input type="hidden" name="type" value="TIMELINE" />
             <button className="rounded-lg bg-slate-900 px-3 py-1.5 text-white" type="submit">Generate timeline link</button>
           </form>
-          <form action="/api/portal/create" method="get" className="rounded-xl border border-slate-200 p-3 text-sm">
+          <form action="/api/share/create" method="get" className="rounded-xl border border-slate-200 p-3 text-sm">
             <input type="hidden" name="jobId" value={job.id} />
-            <input type="hidden" name="customerId" value={job.customerId} />
-            <button className="rounded-lg bg-teal-600 px-3 py-1.5 text-white" type="submit">Generate client portal link</button>
+            <input type="hidden" name="type" value="GALLERY" />
+            <input type="hidden" name="selectedAssetIds" value={galleryAssetIds} />
+            <button className="rounded-lg bg-slate-700 px-3 py-1.5 text-white" type="submit">Generate gallery link</button>
           </form>
         </div>
 
         {query.shareToken ? (
           <p className="mt-2 rounded-xl bg-emerald-50 px-3 py-2 text-xs text-emerald-700">Share: {buildAbsoluteUrl(`/share/${query.shareToken}`)}</p>
         ) : null}
-        {query.portalToken ? (
-          <p className="mt-2 rounded-xl bg-emerald-50 px-3 py-2 text-xs text-emerald-700">Portal: {buildAbsoluteUrl(`/portal/${query.portalToken}`)}</p>
-        ) : null}
 
         <div className="mt-2 text-xs text-slate-600">
           {shareLinks.map((link) => (
             <p key={link.id}>Share ({link.type}): {buildAbsoluteUrl(`/share/${link.token}`)}</p>
-          ))}
-          {portalLinks.map((link) => (
-            <p key={link.id}>Portal: {buildAbsoluteUrl(`/portal/${link.token}`)}</p>
           ))}
         </div>
       </section>
@@ -457,7 +794,7 @@ export default async function JobDetailPage({
           {job.activityLogs.map((log) => (
             <article key={log.id} className="rounded-xl border border-slate-200 p-2">
               <p className="font-medium">{log.action}</p>
-              <p className="text-xs text-slate-500">{log.actor?.fullName ?? "System"} • {log.createdAt.toLocaleString()}</p>
+              <p className="text-xs text-slate-500">{log.actor?.fullName ?? "System"} · {format(log.createdAt, "MMM d, h:mm a")}</p>
             </article>
           ))}
         </div>

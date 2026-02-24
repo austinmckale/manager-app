@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 enum Role {
@@ -235,6 +236,12 @@ model Lead {
   rawPayload    Json?
   notes         String?
   lostReason    String?
+  utmSource     String?
+  utmMedium     String?
+  utmCampaign   String?
+  utmContent    String?
+  utmTerm       String?
+  landingPath   String?
   convertedAt   DateTime?
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
@@ -246,6 +253,7 @@ model Lead {
   @@index([stage])
   @@index([source])
   @@index([createdAt])
+  @@index([utmSource])
   @@unique([orgId, externalRef])
 }
 

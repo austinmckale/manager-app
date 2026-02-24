@@ -2,8 +2,8 @@
 
 ## Environment
 - Set `DATABASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
-- Create storage bucket `job-assets`.
-- Set `NEXT_PUBLIC_APP_URL`.
+- Create storage bucket `job-assets` in Supabase Dashboard (Storage → New bucket). Set the bucket to **Public** so job photos and share/portal links can load.
+- Set `NEXT_PUBLIC_APP_URL` to your live app URL (e.g. `https://app.rhipros.com`).
 
 ## Database
 - Run `npm run prisma:generate`.

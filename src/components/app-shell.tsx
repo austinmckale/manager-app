@@ -1,5 +1,14 @@
-﻿import Link from "next/link";
-import { BriefcaseBusiness, CalendarDays, ChartNoAxesCombined, ReceiptText, Settings, PhoneIncoming, ClipboardCheck } from "lucide-react";
+import Link from "next/link";
+import {
+  BriefcaseBusiness,
+  CalendarDays,
+  ChartNoAxesCombined,
+  Clock3,
+  ReceiptText,
+  Settings,
+  PhoneIncoming,
+  Users,
+} from "lucide-react";
 import { QuickActionsFab } from "@/components/quick-actions-fab";
 
 type AppShellProps = {
@@ -12,7 +21,8 @@ const navItems = [
   { href: "/today", label: "Today", icon: CalendarDays },
   { href: "/leads", label: "Leads", icon: PhoneIncoming },
   { href: "/jobs", label: "Jobs", icon: BriefcaseBusiness },
-  { href: "/attendance", label: "Attendance", icon: ClipboardCheck },
+  { href: "/attendance", label: "Team", icon: Users },
+  { href: "/time", label: "Time", icon: Clock3 },
   { href: "/dashboard", label: "Dashboard", icon: ChartNoAxesCombined },
   { href: "/accounting", label: "Accounting", icon: ReceiptText },
   { href: "/settings/targets", label: "Settings", icon: Settings },
@@ -31,7 +41,7 @@ export function AppShell({ title, userName, children }: AppShellProps) {
       <main className="px-4 py-4">{children}</main>
       <QuickActionsFab />
       <nav className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto grid max-w-5xl grid-cols-7 gap-1 px-1 py-1">
+        <div className="mx-auto grid max-w-5xl grid-cols-4 gap-1 px-1 py-1 sm:grid-cols-8">
           {navItems.map((item) => {
             const Icon = item.icon;
             return (

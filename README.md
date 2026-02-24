@@ -118,6 +118,15 @@ npm run lint
 npm run build
 ```
 
+## Backup Commands
+
+```bash
+npm run backup:create
+npm run backup:verify -- backups/YYYYMMDD-HHMMSS
+```
+
+Runbook: `docs/backup-and-restore.md`.
+
 ## Future Roadmap
 
 1. Scheduling + dispatch board
