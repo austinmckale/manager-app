@@ -1,5 +1,4 @@
-﻿import { JobStatus } from "@prisma/client";
-import { addMinutes, setHours, setMinutes, setSeconds, startOfDay } from "date-fns";
+﻿import { addMinutes, setHours, setMinutes, setSeconds, startOfDay } from "date-fns";
 import {
   ownerClockInEmployeeAction,
   ownerClockOutEmployeeAction,
@@ -30,8 +29,6 @@ export default async function AttendancePage() {
   const now = new Date();
   const dayStart = startOfDay(now);
 
-  const activeStatuses = new Set<JobStatus>([JobStatus.SCHEDULED, JobStatus.IN_PROGRESS, JobStatus.ON_HOLD]);
-
   const [settings, users, jobs, todaysEntries] = isDemoMode()
     ? [
         {
@@ -41,7 +38,7 @@ export default async function AttendancePage() {
           gpsTimeTrackingEnabled: false,
         },
         demoUsers,
-        demoJobs.filter((job) => activeStatuses.has(job.status as JobStatus)),
+        demoJobs,
         listDemoRuntimeTimeEntries()
           .filter((entry) => entry.start >= dayStart)
           .map((entry) => ({
@@ -134,6 +131,11 @@ export default async function AttendancePage() {
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-slate-900">Today Roster</h3>
+        {jobs.length === 0 ? (
+          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            No jobs available. Create a job first, then return here to clock employees in.
+          </div>
+        ) : null}
         <div className="mt-3 space-y-2">
           {rows.map((row) => (
             <article key={row.user.id} className="rounded-xl border border-slate-200 p-3 text-sm">
@@ -157,13 +159,20 @@ export default async function AttendancePage() {
               ) : (
                 <form action={ownerClockInEmployeeAction} className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto]">
                   <input type="hidden" name="workerId" value={row.user.id} />
-                  <select name="jobId" required className="rounded-lg border border-slate-300 px-2 py-1 text-xs">
+                  <select
+                    name="jobId"
+                    required
+                    defaultValue={jobs[0]?.id ?? ""}
+                    className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                  >
                     <option value="">Select job</option>
                     {jobs.map((job) => (
                       <option key={job.id} value={job.id}>{job.jobName}</option>
                     ))}
                   </select>
-                  <button type="submit" className="rounded-lg border border-slate-300 px-2 py-1 text-xs">Clock In</button>
+                  <button type="submit" disabled={jobs.length === 0} className="rounded-lg border border-slate-300 px-2 py-1 text-xs disabled:opacity-50">
+                    Clock In
+                  </button>
                 </form>
               )}
             </article>
@@ -173,4 +182,5 @@ export default async function AttendancePage() {
     </div>
   );
 }
+
 
