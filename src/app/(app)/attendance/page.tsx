@@ -7,7 +7,7 @@ import {
   updateOrgSettingsAction,
 } from "@/app/(app)/actions";
 import { requireAuth } from "@/lib/auth";
-import { demoJobs, demoUsers, isDemoMode } from "@/lib/demo";
+import { demoJobs, demoUsers, isDemoMode, listDemoRuntimeTimeEntries } from "@/lib/demo";
 import { canManageOrg } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 
@@ -42,13 +42,19 @@ export default async function AttendancePage() {
         },
         demoUsers,
         demoJobs.filter((job) => activeStatuses.has(job.status as JobStatus)),
-        [],
+        listDemoRuntimeTimeEntries()
+          .filter((entry) => entry.start >= dayStart)
+          .map((entry) => ({
+            ...entry,
+            job: demoJobs.find((job) => job.id === entry.jobId) ?? demoJobs[0],
+            worker: demoUsers.find((user) => user.id === entry.workerId) ?? demoUsers[0],
+          })),
       ]
     : await Promise.all([
         prisma.organizationSetting.findUnique({ where: { orgId: auth.orgId } }),
         prisma.userProfile.findMany({ where: { orgId: auth.orgId, isActive: true }, orderBy: { fullName: "asc" } }),
         prisma.job.findMany({
-          where: { orgId: auth.orgId, status: { in: [JobStatus.SCHEDULED, JobStatus.IN_PROGRESS, JobStatus.ON_HOLD] } },
+          where: { orgId: auth.orgId },
           orderBy: { updatedAt: "desc" },
           take: 150,
         }),

@@ -4,7 +4,7 @@ import { ExpenseCategory, InvoiceStatus, JobStatus, LeadSource, LeadStage, LineI
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
-import { isDemoMode } from "@/lib/demo";
+import { demoClockInWorker, demoClockOutWorker, demoUsers, isDemoMode } from "@/lib/demo";
 import { ensureDefaultKpis } from "@/lib/kpis";
 import { canManageOrg } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
@@ -1300,9 +1300,20 @@ export async function updateOrgSettingsAction(formData: FormData) {
 }
 
 export async function ownerClockInEmployeeAction(formData: FormData) {
+  const workerId = String(formData.get("workerId") ?? "");
+  const jobId = String(formData.get("jobId") ?? "");
+  if (!workerId || !jobId) return;
+
   if (isDemoMode()) {
+    const worker = demoUsers.find((user) => user.id === workerId);
+    demoClockInWorker({
+      workerId,
+      jobId,
+      hourlyRateLoaded: worker?.hourlyRateDefault ?? 35,
+    });
     revalidatePath("/attendance");
     revalidatePath("/time");
+    revalidatePath("/today");
     return;
   }
 
@@ -1310,10 +1321,6 @@ export async function ownerClockInEmployeeAction(formData: FormData) {
   if (!canManageOrg(auth.role)) {
     throw new Error("Only owner/admin can clock in employees.");
   }
-
-  const workerId = String(formData.get("workerId") ?? "");
-  const jobId = String(formData.get("jobId") ?? "");
-  if (!workerId || !jobId) return;
 
   const active = await prisma.timeEntry.findFirst({
     where: { workerId, end: null },
@@ -1350,9 +1357,14 @@ export async function ownerClockInEmployeeAction(formData: FormData) {
 }
 
 export async function ownerClockOutEmployeeAction(formData: FormData) {
+  const workerId = String(formData.get("workerId") ?? "");
+  if (!workerId) return;
+
   if (isDemoMode()) {
+    demoClockOutWorker(workerId);
     revalidatePath("/attendance");
     revalidatePath("/time");
+    revalidatePath("/today");
     return;
   }
 
@@ -1360,9 +1372,6 @@ export async function ownerClockOutEmployeeAction(formData: FormData) {
   if (!canManageOrg(auth.role)) {
     throw new Error("Only owner/admin can clock out employees.");
   }
-
-  const workerId = String(formData.get("workerId") ?? "");
-  if (!workerId) return;
 
   const active = await prisma.timeEntry.findFirst({
     where: {

@@ -189,3 +189,61 @@ export const demoTasks = [
     updatedAt: now,
   },
 ];
+
+type DemoRuntimeTimeEntry = {
+  id: string;
+  jobId: string;
+  workerId: string;
+  date: Date;
+  start: Date;
+  end: Date | null;
+  breakMinutes: number;
+  hourlyRateLoaded: number;
+  notes: string | null;
+};
+
+declare global {
+  var __fieldflowDemoTimeEntries: DemoRuntimeTimeEntry[] | undefined;
+}
+
+function getDemoTimeEntriesStore() {
+  if (!globalThis.__fieldflowDemoTimeEntries) {
+    globalThis.__fieldflowDemoTimeEntries = [];
+  }
+  return globalThis.__fieldflowDemoTimeEntries;
+}
+
+export function listDemoRuntimeTimeEntries() {
+  return [...getDemoTimeEntriesStore()];
+}
+
+export function demoClockInWorker(params: { workerId: string; jobId: string; hourlyRateLoaded?: number }) {
+  const store = getDemoTimeEntriesStore();
+  const hasActive = store.some((entry) => entry.workerId === params.workerId && entry.end === null);
+  if (hasActive) {
+    throw new Error("Employee already has a running timer.");
+  }
+
+  const now = new Date();
+  store.push({
+    id: crypto.randomUUID(),
+    jobId: params.jobId,
+    workerId: params.workerId,
+    date: now,
+    start: now,
+    end: null,
+    breakMinutes: 0,
+    hourlyRateLoaded: params.hourlyRateLoaded ?? 35,
+    notes: "Demo owner clock-in",
+  });
+}
+
+export function demoClockOutWorker(workerId: string) {
+  const store = getDemoTimeEntriesStore();
+  const active = [...store]
+    .reverse()
+    .find((entry) => entry.workerId === workerId && entry.end === null);
+
+  if (!active) return;
+  active.end = new Date();
+}
