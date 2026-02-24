@@ -1,5 +1,5 @@
-﻿import { TaskStatus } from "@prisma/client";
-import { addDays, format } from "date-fns";
+import { TaskStatus } from "@prisma/client";
+import { addDays, endOfWeek, format, startOfWeek } from "date-fns";
 import {
   addPaymentAction,
   approveChangeOrderAction,
@@ -10,6 +10,7 @@ import {
   createExpenseAction,
   createTaskAction,
   quickScheduleCrewAction,
+  togglePortfolioAction,
   updateJobStatusAction,
   updateTaskStatusAction,
 } from "@/app/(app)/actions";
@@ -42,6 +43,34 @@ export default async function JobDetailPage({
   const costing = computeJobCosting(job);
   const assignedUserIds = new Set(job.assignments?.map((assignment) => assignment.userId) ?? []);
   const quickDates = Array.from({ length: 7 }, (_, index) => addDays(new Date(), index));
+  const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
+  const weekEnd = endOfWeek(new Date(), { weekStartsOn: 1 });
+  const weeklyLaborByWorker = new Map<string, { workerName: string; hours: number; pay: number }>();
+
+  for (const entry of job.timeEntries) {
+    if (!entry.end) continue;
+    if (entry.start < weekStart || entry.start > weekEnd) continue;
+    const minutes = Math.max(0, (entry.end.getTime() - entry.start.getTime()) / 60000 - entry.breakMinutes);
+    const hours = minutes / 60;
+    const pay = hours * toNumber(entry.hourlyRateLoaded);
+    const row = weeklyLaborByWorker.get(entry.workerId) ?? {
+      workerName: entry.worker.fullName,
+      hours: 0,
+      pay: 0,
+    };
+    row.hours += hours;
+    row.pay += pay;
+    weeklyLaborByWorker.set(entry.workerId, row);
+  }
+  const weeklyLaborRows = [...weeklyLaborByWorker.values()].sort((a, b) => b.pay - a.pay);
+  const weeklyLaborTotals = weeklyLaborRows.reduce(
+    (acc, row) => {
+      acc.hours += row.hours;
+      acc.pay += row.pay;
+      return acc;
+    },
+    { hours: 0, pay: 0 },
+  );
   const [shareLinks, portalLinks] = isDemoMode()
     ? [[], []]
     : await Promise.all([
@@ -129,6 +158,23 @@ export default async function JobDetailPage({
           ))}
           {(job.scheduleEvents?.length ?? 0) === 0 ? <p className="text-xs text-slate-500">No schedule events yet.</p> : null}
         </div>
+
+        <div className="mt-3 rounded-xl border border-slate-200 p-3 text-sm">
+          <p className="font-medium text-slate-900">This Job Labor (This Week)</p>
+          <p className="mt-1 text-xs text-slate-500">{format(weekStart, "MMM d")} - {format(weekEnd, "MMM d, yyyy")}</p>
+          <div className="mt-2 space-y-1">
+            {weeklyLaborRows.map((row) => (
+              <div key={row.workerName} className="flex items-center justify-between text-xs text-slate-700">
+                <p>{row.workerName}</p>
+                <p>{row.hours.toFixed(2)}h • {currency(row.pay)}</p>
+              </div>
+            ))}
+            {weeklyLaborRows.length === 0 ? <p className="text-xs text-slate-500">No labor logged on this job this week.</p> : null}
+          </div>
+          <div className="mt-2 border-t border-slate-200 pt-2 text-xs text-slate-700">
+            <p>Week Total: {weeklyLaborTotals.hours.toFixed(2)}h • {currency(weeklyLaborTotals.pay)}</p>
+          </div>
+        </div>
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
@@ -170,13 +216,34 @@ export default async function JobDetailPage({
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <FileCapture jobId={job.id} fileType="PHOTO" />
           <div className="space-y-2">
-            <p className="text-xs text-slate-600">Recent client-visible photos</p>
+            <p className="text-xs text-slate-600">Photos ({job.fileAssets.filter((a) => a.type === "PHOTO").length})</p>
             <div className="grid grid-cols-3 gap-2">
-              {job.fileAssets.slice(0, 9).map((asset) => (
-                <a key={asset.id} href={getStoragePublicUrl(asset.storageKey)} target="_blank" rel="noreferrer" className="block">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={getStoragePublicUrl(asset.storageKey)} alt={asset.description ?? "asset"} className="aspect-square w-full rounded-xl object-cover" />
-                </a>
+              {job.fileAssets.filter((a) => a.type === "PHOTO").slice(0, 12).map((asset) => (
+                <div key={asset.id} className="group relative">
+                  <a href={getStoragePublicUrl(asset.storageKey)} target="_blank" rel="noreferrer" className="block">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={getStoragePublicUrl(asset.storageKey)} alt={asset.description ?? "asset"} className="aspect-square w-full rounded-xl object-cover" />
+                  </a>
+                  <form action={togglePortfolioAction} className="absolute right-1 top-1">
+                    <input type="hidden" name="assetId" value={asset.id} />
+                    <button
+                      type="submit"
+                      title={asset.isPortfolio ? "Remove from portfolio" : "Add to portfolio"}
+                      className={`rounded-lg px-1.5 py-0.5 text-[10px] font-semibold shadow-sm backdrop-blur-sm ${
+                        asset.isPortfolio
+                          ? "bg-teal-600/90 text-white"
+                          : "bg-white/80 text-slate-600 opacity-0 group-hover:opacity-100"
+                      }`}
+                    >
+                      {asset.isPortfolio ? "★ Portfolio" : "☆ Portfolio"}
+                    </button>
+                  </form>
+                  {asset.stage ? (
+                    <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
+                      {asset.stage}
+                    </span>
+                  ) : null}
+                </div>
               ))}
             </div>
           </div>

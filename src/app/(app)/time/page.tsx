@@ -5,6 +5,7 @@ import { isDemoMode } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
 import { currency, toNumber } from "@/lib/utils";
 import { createTimeEntryAction, startTimerAction, stopTimerAction } from "@/app/(app)/actions";
+import { endOfWeek, format, startOfWeek } from "date-fns";
 
 export default async function TimePage({
   searchParams,
@@ -26,6 +27,8 @@ export default async function TimePage({
   defaultFrom.setDate(now.getDate() - 14);
   const from = params.from ? new Date(params.from) : defaultFrom;
   const to = params.to ? new Date(params.to) : now;
+  const weekStart = startOfWeek(now, { weekStartsOn: 1 });
+  const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
 
   const entries = isDemoMode()
     ? []
@@ -43,6 +46,22 @@ export default async function TimePage({
         },
         orderBy: { start: "desc" },
         take: 200,
+      });
+
+  const weeklyEntries = isDemoMode()
+    ? []
+    : await prisma.timeEntry.findMany({
+        where: {
+          job: { orgId: auth.orgId },
+          start: { gte: weekStart, lte: weekEnd },
+          ...(auth.role === "WORKER" ? { workerId: auth.userId } : {}),
+        },
+        include: {
+          job: true,
+          worker: true,
+        },
+        orderBy: { start: "asc" },
+        take: 500,
       });
 
   const payrollByWorker = new Map<
@@ -76,6 +95,59 @@ export default async function TimePage({
       return acc;
     },
     { hours: 0, laborCost: 0 },
+  );
+
+  const weeklyPayrollByWorker = new Map<
+    string,
+    {
+      workerName: string;
+      totalHours: number;
+      totalPay: number;
+      latestRate: number;
+      jobs: Map<string, { jobName: string; hours: number; pay: number }>;
+    }
+  >();
+
+  for (const entry of weeklyEntries) {
+    const minutes = entry.end
+      ? Math.max(0, (entry.end.getTime() - entry.start.getTime()) / 60000 - entry.breakMinutes)
+      : 0;
+    const hours = minutes / 60;
+    const loadedRate = toNumber(entry.hourlyRateLoaded);
+    const pay = hours * loadedRate;
+
+    const workerRow = weeklyPayrollByWorker.get(entry.workerId) ?? {
+      workerName: entry.worker.fullName,
+      totalHours: 0,
+      totalPay: 0,
+      latestRate: loadedRate,
+      jobs: new Map<string, { jobName: string; hours: number; pay: number }>(),
+    };
+
+    workerRow.totalHours += hours;
+    workerRow.totalPay += pay;
+    workerRow.latestRate = loadedRate || workerRow.latestRate;
+
+    const jobRow = workerRow.jobs.get(entry.jobId) ?? {
+      jobName: entry.job.jobName,
+      hours: 0,
+      pay: 0,
+    };
+    jobRow.hours += hours;
+    jobRow.pay += pay;
+    workerRow.jobs.set(entry.jobId, jobRow);
+
+    weeklyPayrollByWorker.set(entry.workerId, workerRow);
+  }
+
+  const weeklyPayrollRows = [...weeklyPayrollByWorker.values()].sort((a, b) => b.totalPay - a.totalPay);
+  const weeklyTotals = weeklyPayrollRows.reduce(
+    (acc, row) => {
+      acc.hours += row.totalHours;
+      acc.pay += row.totalPay;
+      return acc;
+    },
+    { hours: 0, pay: 0 },
   );
 
   return (
@@ -139,6 +211,42 @@ export default async function TimePage({
             Save Time Entry
           </button>
         </form>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-4">
+        <h2 className="text-sm font-semibold text-slate-900">Weekly Payroll Board</h2>
+        <p className="mt-1 text-xs text-slate-500">
+          {format(weekStart, "MMM d")} - {format(weekEnd, "MMM d, yyyy")} by employee with job breakdown.
+        </p>
+        <div className="mt-3 space-y-2">
+          {weeklyPayrollRows.map((row) => (
+            <article key={row.workerName} className="rounded-xl border border-slate-200 p-3 text-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-medium text-slate-900">{row.workerName}</p>
+                  <p className="text-xs text-slate-500">Rate snapshot: {currency(row.latestRate)}/hr</p>
+                </div>
+                <div className="text-right">
+                  <p className="font-semibold text-slate-900">{row.totalHours.toFixed(2)}h</p>
+                  <p className="text-xs text-slate-500">Pay: {currency(row.totalPay)}</p>
+                </div>
+              </div>
+              <div className="mt-2 space-y-1">
+                {[...row.jobs.values()].sort((a, b) => b.pay - a.pay).map((job) => (
+                  <div key={job.jobName} className="flex items-center justify-between text-xs text-slate-600">
+                    <p>{job.jobName}</p>
+                    <p>{job.hours.toFixed(2)}h • {currency(job.pay)}</p>
+                  </div>
+                ))}
+              </div>
+            </article>
+          ))}
+          {weeklyPayrollRows.length === 0 ? <p className="text-sm text-slate-500">No payroll hours logged this week.</p> : null}
+        </div>
+        <div className="mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-700">
+          <p>Week Total Hours: {weeklyTotals.hours.toFixed(2)}</p>
+          <p>Week Total Pay: {currency(weeklyTotals.pay)}</p>
+        </div>
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
