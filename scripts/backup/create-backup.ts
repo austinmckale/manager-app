@@ -91,7 +91,7 @@ function getNumberEnv(name: string, defaultValue: number) {
   return Number.isFinite(value) && value > 0 ? value : defaultValue;
 }
 
-async function runCommand(command: string, args: string[], extraEnv?: NodeJS.ProcessEnv) {
+async function runCommand(command: string, args: string[], extraEnv?: EnvMap) {
   await new Promise<void>((resolve, reject) => {
     const child = spawn(command, args, {
       stdio: ["ignore", "pipe", "pipe"],
