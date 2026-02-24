@@ -9,8 +9,30 @@ import {
   demoTasks,
   demoUsers,
   isDemoMode,
+  listDemoRuntimeAssignments,
+  listDemoRuntimeScheduleEvents,
 } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
+
+function getMergedDemoAssignments() {
+  const runtime = listDemoRuntimeAssignments();
+  const merged = [...demoJobAssignments];
+  const keys = new Set(merged.map((item) => `${item.jobId}:${item.userId}`));
+
+  for (const item of runtime) {
+    const key = `${item.jobId}:${item.userId}`;
+    if (keys.has(key)) continue;
+    keys.add(key);
+    merged.push(item);
+  }
+  return merged;
+}
+
+function getMergedDemoScheduleEvents() {
+  return [...demoScheduleEvents, ...listDemoRuntimeScheduleEvents()].sort(
+    (a, b) => a.startAt.getTime() - b.startAt.getTime(),
+  );
+}
 
 export async function getOrgUsers(orgId: string) {
   if (isDemoMode()) return demoUsers as never[];
@@ -45,7 +67,9 @@ export async function getJobs(params: {
   const weekEnd = endOfWeek(new Date(), { weekStartsOn: 1 });
 
   if (isDemoMode()) {
-    const assignedJobIds = demoJobAssignments
+    const assignments = getMergedDemoAssignments();
+    const scheduleEvents = getMergedDemoScheduleEvents();
+    const assignedJobIds = assignments
       .filter((assignment) => params.role !== Role.WORKER || assignment.userId === params.userId)
       .map((assignment) => assignment.jobId);
 
@@ -55,7 +79,7 @@ export async function getJobs(params: {
       const textOk = !q || job.jobName.toLowerCase().includes(q) || job.address.toLowerCase().includes(q);
       const assignmentOk = params.role !== Role.WORKER || assignedJobIds.includes(job.id);
 
-      const jobEvents = demoScheduleEvents.filter((event) => event.jobId === job.id);
+      const jobEvents = scheduleEvents.filter((event) => event.jobId === job.id);
       const dateOk =
         view === "all"
           ? true
@@ -76,8 +100,8 @@ export async function getJobs(params: {
       invoices: [],
       expenses: [],
       timeEntries: [],
-      assignments: demoJobAssignments.filter((assignment) => assignment.jobId === job.id),
-      scheduleEvents: demoScheduleEvents.filter((event) => event.jobId === job.id),
+      assignments: assignments.filter((assignment) => assignment.jobId === job.id),
+      scheduleEvents: scheduleEvents.filter((event) => event.jobId === job.id),
     })) as never[];
   }
 
@@ -147,18 +171,20 @@ export async function getTodayOpsSummary(params: { orgId: string; userId: string
   const todayEnd = endOfDay(new Date());
 
   if (isDemoMode()) {
-    const assignedJobIds = demoJobAssignments
+    const assignments = getMergedDemoAssignments();
+    const scheduleEvents = getMergedDemoScheduleEvents();
+    const assignedJobIds = assignments
       .filter((assignment) => params.role !== Role.WORKER || assignment.userId === params.userId)
       .map((assignment) => assignment.jobId);
 
     const assignedJobs = demoJobs.filter((job) => assignedJobIds.includes(job.id));
-    const todayEvents = demoScheduleEvents
+    const todayEvents = scheduleEvents
       .filter((event) => assignedJobIds.includes(event.jobId) && isSameDay(event.startAt, new Date()))
       .map((event) => ({
         ...event,
         job: demoJobs.find((job) => job.id === event.jobId) ?? demoJobs[0],
       }));
-    const weekEvents = demoScheduleEvents
+    const weekEvents = scheduleEvents
       .filter((event) => assignedJobIds.includes(event.jobId))
       .map((event) => ({
         ...event,
@@ -241,6 +267,8 @@ export async function getJobById(params: {
   jobId: string;
 }) {
   if (isDemoMode()) {
+    const assignments = getMergedDemoAssignments();
+    const scheduleEvents = getMergedDemoScheduleEvents();
     const job = demoJobs.find((item) => item.id === params.jobId) ?? demoJobs[0];
     return {
       ...job,
@@ -256,8 +284,8 @@ export async function getJobById(params: {
       })),
       invoices: [],
       activityLogs: [],
-      assignments: demoJobAssignments.filter((assignment) => assignment.jobId === job.id),
-      scheduleEvents: demoScheduleEvents.filter((event) => event.jobId === job.id),
+      assignments: assignments.filter((assignment) => assignment.jobId === job.id),
+      scheduleEvents: scheduleEvents.filter((event) => event.jobId === job.id),
     } as never;
   }
 

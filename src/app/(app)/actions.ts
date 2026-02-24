@@ -4,7 +4,14 @@ import { ExpenseCategory, InvoiceStatus, JobStatus, LeadSource, LeadStage, LineI
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
-import { demoClockInWorker, demoClockOutWorker, demoUsers, isDemoMode } from "@/lib/demo";
+import {
+  demoAddScheduleEvents,
+  demoAssignWorkersToJob,
+  demoClockInWorker,
+  demoClockOutWorker,
+  demoUsers,
+  isDemoMode,
+} from "@/lib/demo";
 import { ensureDefaultKpis } from "@/lib/kpis";
 import { canManageOrg } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
@@ -475,9 +482,19 @@ export async function createJobAction(formData: FormData) {
 
 export async function assignWorkerToJobAction(formData: FormData) {
   const jobId = String(formData.get("jobId") ?? "");
+  const userId = String(formData.get("userId") ?? "");
   if (isDemoMode()) {
+    if (jobId && userId) {
+      demoAssignWorkersToJob({
+        orgId: demoUsers[0]?.orgId ?? "00000000-0000-0000-0000-000000000001",
+        jobId,
+        workerIds: [userId],
+      });
+    }
     if (jobId) revalidatePath(`/jobs/${jobId}`);
     revalidatePath("/today");
+    revalidatePath("/team");
+    revalidatePath("/attendance");
     return;
   }
 
@@ -486,7 +503,6 @@ export async function assignWorkerToJobAction(formData: FormData) {
     throw new Error("Only owner/admin can assign workers.");
   }
 
-  const userId = String(formData.get("userId") ?? "");
   if (!jobId || !userId) return;
 
   await prisma.jobAssignment.upsert({
@@ -508,17 +524,29 @@ export async function assignWorkerToJobAction(formData: FormData) {
 
 export async function createScheduleEventAction(formData: FormData) {
   const jobId = String(formData.get("jobId") ?? "");
+  const startAt = String(formData.get("startAt") ?? "");
+  const endAt = String(formData.get("endAt") ?? "");
+  const notes = String(formData.get("notes") ?? "");
   if (isDemoMode()) {
+    if (jobId && startAt && endAt) {
+      demoAddScheduleEvents([
+        {
+          orgId: demoUsers[0]?.orgId ?? "00000000-0000-0000-0000-000000000001",
+          jobId,
+          startAt: new Date(startAt),
+          endAt: new Date(endAt),
+          notes: notes || null,
+        },
+      ]);
+    }
     if (jobId) revalidatePath(`/jobs/${jobId}`);
     revalidatePath("/today");
     revalidatePath("/jobs");
+    revalidatePath("/attendance");
     return;
   }
 
   const auth = await requireAuth();
-  const startAt = String(formData.get("startAt") ?? "");
-  const endAt = String(formData.get("endAt") ?? "");
-  const notes = String(formData.get("notes") ?? "");
 
   if (!jobId || !startAt || !endAt) return;
 
@@ -557,6 +585,34 @@ export async function quickScheduleCrewAction(formData: FormData) {
   if (!jobId || dates.length === 0) return;
 
   if (isDemoMode()) {
+    if (workerIds.length > 0) {
+      demoAssignWorkersToJob({
+        orgId: demoUsers[0]?.orgId ?? "00000000-0000-0000-0000-000000000001",
+        jobId,
+        workerIds,
+      });
+    }
+    const slotHours =
+      slot === "AM"
+        ? { startHour: 8, endHour: 12 }
+        : slot === "PM"
+          ? { startHour: 13, endHour: 17 }
+          : { startHour: 8, endHour: 17 };
+    const demoEvents = dates.map((dateText) => {
+      const base = new Date(`${dateText}T00:00:00`);
+      const startAt = new Date(base);
+      startAt.setHours(slotHours.startHour, 0, 0, 0);
+      const endAt = new Date(base);
+      endAt.setHours(slotHours.endHour, 0, 0, 0);
+      return {
+        orgId: demoUsers[0]?.orgId ?? "00000000-0000-0000-0000-000000000001",
+        jobId,
+        startAt,
+        endAt,
+        notes: notes || null,
+      };
+    });
+    demoAddScheduleEvents(demoEvents);
     revalidatePath(`/jobs/${jobId}`);
     revalidatePath("/jobs");
     revalidatePath("/today");

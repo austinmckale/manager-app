@@ -190,6 +190,26 @@ export const demoTasks = [
   },
 ];
 
+type DemoRuntimeAssignment = {
+  id: string;
+  orgId: string;
+  jobId: string;
+  userId: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+type DemoRuntimeScheduleEvent = {
+  id: string;
+  orgId: string;
+  jobId: string;
+  startAt: Date;
+  endAt: Date;
+  notes: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 type DemoRuntimeTimeEntry = {
   id: string;
   jobId: string;
@@ -203,7 +223,23 @@ type DemoRuntimeTimeEntry = {
 };
 
 declare global {
+  var __fieldflowDemoAssignments: DemoRuntimeAssignment[] | undefined;
+  var __fieldflowDemoScheduleEvents: DemoRuntimeScheduleEvent[] | undefined;
   var __fieldflowDemoTimeEntries: DemoRuntimeTimeEntry[] | undefined;
+}
+
+function getDemoAssignmentsStore() {
+  if (!globalThis.__fieldflowDemoAssignments) {
+    globalThis.__fieldflowDemoAssignments = [];
+  }
+  return globalThis.__fieldflowDemoAssignments;
+}
+
+function getDemoScheduleEventsStore() {
+  if (!globalThis.__fieldflowDemoScheduleEvents) {
+    globalThis.__fieldflowDemoScheduleEvents = [];
+  }
+  return globalThis.__fieldflowDemoScheduleEvents;
 }
 
 function getDemoTimeEntriesStore() {
@@ -211,6 +247,56 @@ function getDemoTimeEntriesStore() {
     globalThis.__fieldflowDemoTimeEntries = [];
   }
   return globalThis.__fieldflowDemoTimeEntries;
+}
+
+export function listDemoRuntimeAssignments() {
+  return [...getDemoAssignmentsStore()];
+}
+
+export function listDemoRuntimeScheduleEvents() {
+  return [...getDemoScheduleEventsStore()];
+}
+
+export function demoAssignWorkersToJob(params: { orgId: string; jobId: string; workerIds: string[] }) {
+  const store = getDemoAssignmentsStore();
+  const keys = new Set([
+    ...demoJobAssignments.map((item) => `${item.jobId}:${item.userId}`),
+    ...store.map((item) => `${item.jobId}:${item.userId}`),
+  ]);
+
+  const now = new Date();
+  for (const workerId of params.workerIds) {
+    const key = `${params.jobId}:${workerId}`;
+    if (keys.has(key)) continue;
+    keys.add(key);
+    store.push({
+      id: crypto.randomUUID(),
+      orgId: params.orgId,
+      jobId: params.jobId,
+      userId: workerId,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+}
+
+export function demoAddScheduleEvents(
+  events: Array<{ orgId: string; jobId: string; startAt: Date; endAt: Date; notes?: string | null }>,
+) {
+  const store = getDemoScheduleEventsStore();
+  const now = new Date();
+  for (const event of events) {
+    store.push({
+      id: crypto.randomUUID(),
+      orgId: event.orgId,
+      jobId: event.jobId,
+      startAt: event.startAt,
+      endAt: event.endAt,
+      notes: event.notes ?? null,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
 }
 
 export function listDemoRuntimeTimeEntries() {
