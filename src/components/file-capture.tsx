@@ -1,7 +1,13 @@
 ﻿"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { enqueueUpload, getUploadQueue, removeQueuedUpload, type UploadQueueItem } from "@/lib/client/offline-upload";
+import {
+  enqueueUpload,
+  getUploadQueue,
+  removeQueuedUpload,
+  updateQueuedUpload,
+  type UploadQueueItem,
+} from "@/lib/client/offline-upload";
 
 type FileCaptureProps = {
   jobId: string;
@@ -27,23 +33,32 @@ export function FileCapture({ jobId, fileType = "PHOTO", expenseId, onUploaded }
   const [isClientVisible, setIsClientVisible] = useState(false);
   const [isPortfolio, setIsPortfolio] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [queueCount, setQueueCount] = useState(0);
+  const [queueItems, setQueueItems] = useState<UploadQueueItem[]>([]);
+  const [isOnline, setIsOnline] = useState(true);
 
   const refreshQueue = useCallback(async () => {
     const queue = await getUploadQueue();
-    setQueueCount(queue.length);
+    setQueueItems(queue);
   }, []);
 
   const tryUpload = useCallback(
     async (item: UploadQueueItem) => {
+      await updateQueuedUpload(item.id, (current) => ({
+        ...current,
+        lastAttemptAt: new Date().toISOString(),
+      }));
+
       const response = await fetch("/api/uploads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(item),
       });
+
       if (!response.ok) {
-        throw new Error("Upload failed");
+        const message = await response.text();
+        throw new Error(message || "Upload failed");
       }
+
       await removeQueuedUpload(item.id);
       await refreshQueue();
       onUploaded?.();
@@ -53,21 +68,41 @@ export function FileCapture({ jobId, fileType = "PHOTO", expenseId, onUploaded }
 
   const flushQueue = useCallback(async () => {
     if (!navigator.onLine) return;
+
     const queue = await getUploadQueue();
     for (const item of queue) {
       try {
         await tryUpload(item);
-      } catch {
-        break;
+      } catch (error) {
+        await updateQueuedUpload(item.id, (current) => ({
+          ...current,
+          retryCount: (current.retryCount ?? 0) + 1,
+          lastError: error instanceof Error ? error.message : "Upload failed",
+          lastAttemptAt: new Date().toISOString(),
+        }));
       }
     }
-  }, [tryUpload]);
+
+    await refreshQueue();
+  }, [refreshQueue, tryUpload]);
 
   useEffect(() => {
-    refreshQueue();
-    flushQueue();
-    window.addEventListener("online", flushQueue);
-    return () => window.removeEventListener("online", flushQueue);
+    setIsOnline(navigator.onLine);
+    void refreshQueue();
+    void flushQueue();
+
+    const handleOnline = () => {
+      setIsOnline(true);
+      void flushQueue();
+    };
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
   }, [flushQueue, refreshQueue]);
 
   const parsedTags = useMemo(
@@ -110,7 +145,10 @@ export function FileCapture({ jobId, fileType = "PHOTO", expenseId, onUploaded }
           if (!navigator.onLine) throw new Error("offline");
           await tryUpload(payload);
         } catch {
-          await enqueueUpload(payload);
+          await enqueueUpload({
+            ...payload,
+            retryCount: 0,
+          });
           await refreshQueue();
         }
       }
@@ -121,9 +159,17 @@ export function FileCapture({ jobId, fileType = "PHOTO", expenseId, onUploaded }
     }
   };
 
+  const queuedErrors = queueItems.filter((item) => (item.retryCount ?? 0) > 0).length;
+
   return (
     <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-3">
       <p className="text-sm font-medium text-slate-900">Capture / Upload</p>
+
+      <div className={`rounded-xl px-3 py-2 text-xs ${isOnline ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+        {isOnline ? "Online" : "Offline"} • Pending {queueItems.length}
+        {queuedErrors > 0 ? ` • Failed ${queuedErrors}` : ""}
+      </div>
+
       {fileType === "PHOTO" ? (
         <>
           <label className="block text-xs text-slate-600">
@@ -150,6 +196,7 @@ export function FileCapture({ jobId, fileType = "PHOTO", expenseId, onUploaded }
           </label>
         </>
       ) : null}
+
       <label className="block text-xs text-slate-600">
         Tags
         <input
@@ -159,6 +206,7 @@ export function FileCapture({ jobId, fileType = "PHOTO", expenseId, onUploaded }
           placeholder="insurance, drywall, tear-out"
         />
       </label>
+
       <label className="block text-xs text-slate-600">
         Description
         <textarea
@@ -168,6 +216,7 @@ export function FileCapture({ jobId, fileType = "PHOTO", expenseId, onUploaded }
           rows={2}
         />
       </label>
+
       <div className="grid grid-cols-2 gap-2 text-xs text-slate-700">
         <label className="inline-flex items-center gap-2">
           <input
@@ -186,6 +235,7 @@ export function FileCapture({ jobId, fileType = "PHOTO", expenseId, onUploaded }
           Add to portfolio
         </label>
       </div>
+
       <div className="grid grid-cols-2 gap-2">
         <label className="rounded-xl border border-teal-200 bg-teal-50 px-3 py-2 text-center text-sm font-medium text-teal-700">
           Camera
@@ -198,6 +248,7 @@ export function FileCapture({ jobId, fileType = "PHOTO", expenseId, onUploaded }
             onChange={(event) => onFilesSelected(event.target.files)}
           />
         </label>
+
         <label className="rounded-xl border border-slate-300 px-3 py-2 text-center text-sm font-medium text-slate-700">
           Files
           <input
@@ -209,9 +260,30 @@ export function FileCapture({ jobId, fileType = "PHOTO", expenseId, onUploaded }
           />
         </label>
       </div>
-      <div className="text-xs text-slate-500">
-        {uploading ? "Uploading..." : "Ready"} {queueCount > 0 ? `• ${queueCount} queued offline` : ""}
-      </div>
+
+      <div className="text-xs text-slate-500">{uploading ? "Uploading..." : "Ready"}</div>
+
+      <button
+        type="button"
+        onClick={() => void flushQueue()}
+        disabled={!isOnline || queueItems.length === 0}
+        className="w-full rounded-xl border border-slate-300 px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        Retry Pending Uploads
+      </button>
+
+      {queueItems.length > 0 ? (
+        <div className="space-y-1 rounded-xl bg-slate-50 p-2 text-[11px] text-slate-600">
+          {queueItems.slice(0, 4).map((item) => (
+            <p key={item.id}>
+              {item.fileName} • tries {item.retryCount ?? 0}
+              {item.lastError ? ` • ${item.lastError}` : ""}
+            </p>
+          ))}
+          {queueItems.length > 4 ? <p>+ {queueItems.length - 4} more queued</p> : null}
+        </div>
+      ) : null}
     </div>
   );
 }
+

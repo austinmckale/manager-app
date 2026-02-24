@@ -7,7 +7,7 @@ export const KPI_KEYS = {
   grossMarginPercent: "gross_margin_percent",
   laborPercentRevenue: "labor_percent_revenue",
   materialsPercentRevenue: "materials_percent_revenue",
-  estimateToWinRate: "estimate_to_win_rate",
+  leadToWinRate: "lead_to_win_rate",
 } as const;
 
 export async function ensureDefaultKpis() {
@@ -33,9 +33,9 @@ export async function ensureDefaultKpis() {
       unit: "%",
     },
     {
-      kpiKey: KPI_KEYS.estimateToWinRate,
-      name: "Estimate-to-win rate",
-      description: "Approved estimates divided by sent estimates.",
+      kpiKey: KPI_KEYS.leadToWinRate,
+      name: "Lead-to-win rate",
+      description: "Won leads divided by won + lost leads.",
       unit: "%",
     },
   ];
@@ -55,7 +55,8 @@ export async function computeDashboardKpis(orgId: string) {
       grossMarginPercent: 32.4,
       laborPercentRevenue: 24.2,
       materialsPercentRevenue: 28.7,
-      estimateToWinRate: 61.5,
+      leadToWinRate: 61.5,
+      leadsContactedWithin24hPercent: 72.4,
       outstandingInvoicesTotal: 12450,
       outstandingInvoicesCount: 3,
       averageDaysToPayment: 19.4,
@@ -63,7 +64,7 @@ export async function computeDashboardKpis(orgId: string) {
         grossMarginPercent: null,
         laborPercentRevenue: null,
         materialsPercentRevenue: null,
-        estimateToWinRate: null,
+        leadToWinRate: null,
       },
     };
   }
@@ -72,7 +73,7 @@ export async function computeDashboardKpis(orgId: string) {
   const periodStart = startOfMonth(subMonths(now, 2));
   const periodEnd = endOfMonth(now);
 
-  const [jobs, estimates, invoices, payments, targets] = await Promise.all([
+  const [jobs, leads, invoices, payments, targets] = await Promise.all([
     prisma.job.findMany({
       where: {
         orgId,
@@ -87,9 +88,9 @@ export async function computeDashboardKpis(orgId: string) {
         estimates: true,
       },
     }),
-    prisma.estimate.findMany({
-      where: { job: { orgId }, createdAt: { gte: periodStart, lte: periodEnd } },
-      select: { status: true },
+    prisma.lead.findMany({
+      where: { orgId, createdAt: { gte: periodStart, lte: periodEnd } },
+      select: { stage: true, createdAt: true, updatedAt: true },
     }),
     prisma.invoice.findMany({
       where: { job: { orgId } },
@@ -134,9 +135,19 @@ export async function computeDashboardKpis(orgId: string) {
   const laborPercentRevenue = revenue > 0 ? (labor / revenue) * 100 : 0;
   const materialsPercentRevenue = revenue > 0 ? (materials / revenue) * 100 : 0;
 
-  const sentEstimates = estimates.filter((estimate) => ["SENT", "APPROVED", "DECLINED"].includes(estimate.status)).length;
-  const approvedEstimates = estimates.filter((estimate) => estimate.status === "APPROVED").length;
-  const estimateToWinRate = sentEstimates > 0 ? (approvedEstimates / sentEstimates) * 100 : 0;
+  const wonLeads = leads.filter((lead) => lead.stage === "WON").length;
+  const lostLeads = leads.filter((lead) => lead.stage === "LOST").length;
+  const leadToWinRate = wonLeads + lostLeads > 0 ? (wonLeads / (wonLeads + lostLeads)) * 100 : 0;
+  const leadsContactedWithin24hPercent =
+    leads.length > 0
+      ? (leads.filter((lead) => {
+          if (lead.stage === "NEW") return false;
+          const hours = (lead.updatedAt.getTime() - lead.createdAt.getTime()) / 3600000;
+          return hours <= 24;
+        }).length /
+          leads.length) *
+        100
+      : 0;
 
   const outstandingInvoices = invoices.filter((invoice) => invoice.status === "SENT" || invoice.status === "OVERDUE");
   const outstandingTotal = outstandingInvoices.reduce((acc, invoice) => acc + toNumber(invoice.total), 0);
@@ -161,7 +172,8 @@ export async function computeDashboardKpis(orgId: string) {
     grossMarginPercent,
     laborPercentRevenue,
     materialsPercentRevenue,
-    estimateToWinRate,
+    leadToWinRate,
+    leadsContactedWithin24hPercent,
     outstandingInvoicesTotal: outstandingTotal,
     outstandingInvoicesCount: outstandingInvoices.length,
     averageDaysToPayment,
@@ -169,7 +181,7 @@ export async function computeDashboardKpis(orgId: string) {
       grossMarginPercent: getTarget(KPI_KEYS.grossMarginPercent),
       laborPercentRevenue: getTarget(KPI_KEYS.laborPercentRevenue),
       materialsPercentRevenue: getTarget(KPI_KEYS.materialsPercentRevenue),
-      estimateToWinRate: getTarget(KPI_KEYS.estimateToWinRate),
+      leadToWinRate: getTarget(KPI_KEYS.leadToWinRate),
     },
   };
 }

@@ -32,8 +32,8 @@ export default async function DashboardPage() {
   const auth = await requireAuth();
   const kpis = await computeDashboardKpis(auth.orgId);
 
-  const [unbilledJobsCount, unpaidInvoicesTotal, laborHours7d] = isDemoMode()
-    ? [2, 12450, 86.5]
+  const [unbilledJobsCount, unpaidInvoicesTotal, laborHours7d, newLeads7d] = isDemoMode()
+    ? [2, 12450, 86.5, 7]
     : await Promise.all([
         prisma.job.count({
           where: {
@@ -62,10 +62,16 @@ export default async function DashboardPage() {
             return acc + minutes / 60;
           }, 0),
         ),
+        prisma.lead.count({
+          where: {
+            orgId: auth.orgId,
+            createdAt: { gte: startOfDay(subDays(new Date(), 7)), lte: endOfDay(new Date()) },
+          },
+        }),
       ]);
 
   const gmTarget = kpis.targets.grossMarginPercent ? toNumber(kpis.targets.grossMarginPercent.targetValue) : undefined;
-  const winTarget = kpis.targets.estimateToWinRate ? toNumber(kpis.targets.estimateToWinRate.targetValue) : undefined;
+  const winTarget = kpis.targets.leadToWinRate ? toNumber(kpis.targets.leadToWinRate.targetValue) : undefined;
 
   return (
     <div className="space-y-4">
@@ -76,7 +82,7 @@ export default async function DashboardPage() {
 
       <section className="grid gap-2 sm:grid-cols-2">
         <KpiRow label="Gross Margin % (30d)" value={kpis.grossMarginPercent} target={gmTarget} />
-        <KpiRow label="Estimate Win Rate %" value={kpis.estimateToWinRate} target={winTarget} />
+        <KpiRow label="Lead Win Rate %" value={kpis.leadToWinRate} target={winTarget} />
         <article className="rounded-2xl border border-slate-200 bg-white p-3">
           <p className="text-sm font-medium text-slate-900">Unbilled Jobs</p>
           <p className="mt-2 text-2xl font-semibold text-slate-900">{unbilledJobsCount}</p>
@@ -84,6 +90,14 @@ export default async function DashboardPage() {
         <article className="rounded-2xl border border-slate-200 bg-white p-3">
           <p className="text-sm font-medium text-slate-900">Unpaid Invoices</p>
           <p className="mt-2 text-2xl font-semibold text-slate-900">{currency(unpaidInvoicesTotal)}</p>
+        </article>
+        <article className="rounded-2xl border border-slate-200 bg-white p-3">
+          <p className="text-sm font-medium text-slate-900">New Leads (7d)</p>
+          <p className="mt-2 text-2xl font-semibold text-slate-900">{newLeads7d}</p>
+        </article>
+        <article className="rounded-2xl border border-slate-200 bg-white p-3">
+          <p className="text-sm font-medium text-slate-900">Leads Contacted in 24h</p>
+          <p className="mt-2 text-2xl font-semibold text-slate-900">{percent(kpis.leadsContactedWithin24hPercent)}</p>
         </article>
         <article className="rounded-2xl border border-slate-200 bg-white p-3 sm:col-span-2">
           <p className="text-sm font-medium text-slate-900">Labor Hours (Last 7 Days)</p>

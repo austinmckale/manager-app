@@ -88,6 +88,23 @@ enum KpiPeriod {
   YEARLY
 }
 
+enum LeadSource {
+  WEBSITE_FORM
+  PHONE_CALL
+  TEXT
+  REFERRAL
+  OTHER
+}
+
+enum LeadStage {
+  NEW
+  CONTACTED
+  SITE_VISIT_SET
+  ESTIMATE_SENT
+  WON
+  LOST
+}
+
 enum LineItemType {
   LABOR
   MATERIAL
@@ -104,6 +121,7 @@ model Organization {
   users          UserProfile[]
   customers      Customer[]
   jobs           Job[]
+  leads          Lead[]
   kpiTargets     KpiTarget[]
   settings       OrganizationSetting?
 }
@@ -113,6 +131,8 @@ model OrganizationSetting {
   orgId                         String       @unique @db.Uuid
   workerCanEditOwnTimeSameDay   Boolean      @default(true)
   gpsTimeTrackingEnabled        Boolean      @default(false)
+  defaultClockInTime            String       @default("07:00")
+  clockGraceMinutes             Int          @default(10)
   createdAt                     DateTime     @default(now())
   updatedAt                     DateTime     @updatedAt
   organization                  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
@@ -155,6 +175,7 @@ model Customer {
   updatedAt   DateTime  @updatedAt
   organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   jobs        Job[]
+  leads       Lead[]
   portalLinks PortalLink[]
 
   @@index([orgId])
@@ -189,12 +210,43 @@ model Job {
   shareLinks        ShareLink[]
   portalLinks       PortalLink[]
   portalMessages    PortalMessage[]
+  leads             Lead[]
   assignments       JobAssignment[]
   scheduleEvents    JobScheduleEvent[]
 
   @@index([orgId])
   @@index([status])
   @@index([customerId])
+}
+
+model Lead {
+  id            String       @id @default(uuid()) @db.Uuid
+  orgId         String       @db.Uuid
+  customerId    String?      @db.Uuid
+  jobId         String?      @db.Uuid
+  contactName   String
+  phone         String?
+  email         String?
+  address       String?
+  serviceType   String?
+  source        LeadSource   @default(OTHER)
+  stage         LeadStage    @default(NEW)
+  externalRef   String?
+  rawPayload    Json?
+  notes         String?
+  lostReason    String?
+  convertedAt   DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  organization  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  customer      Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  job           Job?         @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  @@index([orgId])
+  @@index([stage])
+  @@index([source])
+  @@index([createdAt])
+  @@unique([orgId, externalRef])
 }
 
 model JobAssignment {

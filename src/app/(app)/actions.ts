@@ -1,6 +1,6 @@
 ﻿"use server";
 
-import { ExpenseCategory, InvoiceStatus, JobStatus, LineItemType, Prisma, Role } from "@prisma/client";
+import { ExpenseCategory, InvoiceStatus, JobStatus, LeadSource, LeadStage, LineItemType, Prisma, Role } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
@@ -12,6 +12,82 @@ import { toNumber } from "@/lib/utils";
 
 function parseMoney(value: FormDataEntryValue | null) {
   return Number(value ?? 0);
+}
+
+function parseCsv(text: string) {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    const next = text[i + 1];
+
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        field += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (!inQuotes && char === ",") {
+      row.push(field);
+      field = "";
+      continue;
+    }
+
+    if (!inQuotes && (char === "\n" || char === "\r")) {
+      if (char === "\r" && next === "\n") i += 1;
+      row.push(field);
+      if (row.some((value) => value.trim().length > 0)) {
+        rows.push(row);
+      }
+      row = [];
+      field = "";
+      continue;
+    }
+
+    field += char;
+  }
+
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    if (row.some((value) => value.trim().length > 0)) {
+      rows.push(row);
+    }
+  }
+
+  if (rows.length < 2) return [];
+
+  const headers = rows[0].map((value) => value.trim().toLowerCase());
+  return rows.slice(1).map((values) => {
+    const record: Record<string, string> = {};
+    headers.forEach((header, index) => {
+      record[header] = values[index]?.trim() ?? "";
+    });
+    return record;
+  });
+}
+
+function pickCsvValue(row: Record<string, string>, keys: string[]) {
+  for (const key of keys) {
+    const value = row[key.toLowerCase()];
+    if (value) return value.trim();
+  }
+  return "";
+}
+
+function mapJoistStatusToLeadStage(statusRaw: string): LeadStage {
+  const status = statusRaw.trim().toLowerCase();
+  if (!status) return LeadStage.ESTIMATE_SENT;
+  if (["approved", "accepted", "won", "paid", "complete", "completed"].includes(status)) return LeadStage.WON;
+  if (["declined", "lost", "rejected", "cancelled", "canceled"].includes(status)) return LeadStage.LOST;
+  if (["sent", "viewed", "pending", "open", "draft"].includes(status)) return LeadStage.ESTIMATE_SENT;
+  return LeadStage.CONTACTED;
 }
 
 async function logActivity(
@@ -74,6 +150,265 @@ export async function createCustomerAction(formData: FormData) {
   await logActivity(auth.orgId, null, auth.userId, "customer.created", { name: parsed.name });
   revalidatePath("/customers");
   revalidatePath("/jobs");
+}
+
+export async function createLeadAction(formData: FormData) {
+  if (isDemoMode()) {
+    revalidatePath("/leads");
+    revalidatePath("/dashboard");
+    return;
+  }
+
+  const auth = await requireAuth();
+
+  const schema = z.object({
+    contactName: z.string().min(1),
+    phone: z.string().optional(),
+    email: z.string().email().optional().or(z.literal("")),
+    address: z.string().optional(),
+    serviceType: z.string().optional(),
+    source: z.nativeEnum(LeadSource),
+    notes: z.string().optional(),
+  });
+
+  const parsed = schema.parse({
+    contactName: formData.get("contactName"),
+    phone: formData.get("phone") ?? undefined,
+    email: formData.get("email") ?? undefined,
+    address: formData.get("address") ?? undefined,
+    serviceType: formData.get("serviceType") ?? undefined,
+    source: formData.get("source") ?? LeadSource.OTHER,
+    notes: formData.get("notes") ?? undefined,
+  });
+
+  const lead = await prisma.lead.create({
+    data: {
+      orgId: auth.orgId,
+      contactName: parsed.contactName,
+      phone: parsed.phone || null,
+      email: parsed.email || null,
+      address: parsed.address || null,
+      serviceType: parsed.serviceType || null,
+      source: parsed.source,
+      notes: parsed.notes || null,
+      stage: LeadStage.NEW,
+    },
+  });
+
+  await logActivity(auth.orgId, null, auth.userId, "lead.created", {
+    leadId: lead.id,
+    source: parsed.source,
+  });
+  revalidatePath("/leads");
+  revalidatePath("/dashboard");
+}
+
+export async function updateLeadStageAction(formData: FormData) {
+  if (isDemoMode()) {
+    revalidatePath("/leads");
+    revalidatePath("/dashboard");
+    return;
+  }
+
+  const auth = await requireAuth();
+  const leadId = String(formData.get("leadId") ?? "");
+  const stage = String(formData.get("stage") ?? "") as LeadStage;
+  const lostReason = String(formData.get("lostReason") ?? "").trim();
+
+  if (!leadId || !stage) return;
+
+  const existing = await prisma.lead.findFirstOrThrow({
+    where: { id: leadId, orgId: auth.orgId },
+  });
+
+  const lead = await prisma.lead.update({
+    where: { id: existing.id },
+    data: {
+      stage,
+      lostReason: stage === LeadStage.LOST ? lostReason || "unspecified" : null,
+    },
+  });
+
+  await logActivity(auth.orgId, lead.jobId ?? null, auth.userId, "lead.stage.updated", {
+    leadId: lead.id,
+    stage,
+  });
+  revalidatePath("/leads");
+  revalidatePath("/dashboard");
+}
+
+export async function convertLeadToJobAction(formData: FormData) {
+  if (isDemoMode()) {
+    revalidatePath("/leads");
+    revalidatePath("/jobs");
+    revalidatePath("/dashboard");
+    return;
+  }
+
+  const auth = await requireAuth();
+  const leadId = String(formData.get("leadId") ?? "");
+  const jobNameInput = String(formData.get("jobName") ?? "").trim();
+
+  if (!leadId) return;
+
+  const lead = await prisma.lead.findFirstOrThrow({
+    where: { id: leadId, orgId: auth.orgId },
+  });
+
+  const customer = await prisma.customer.create({
+    data: {
+      orgId: auth.orgId,
+      name: lead.contactName,
+      phone: lead.phone,
+      email: lead.email,
+      addresses: lead.address ? [{ label: "primary", value: lead.address }] : undefined,
+      leadSource: lead.source,
+      notes: lead.notes,
+    },
+  });
+
+  const job = await prisma.job.create({
+    data: {
+      orgId: auth.orgId,
+      customerId: customer.id,
+      jobName: jobNameInput || `${lead.serviceType || "New"} - ${lead.contactName}`,
+      address: lead.address || "Address pending",
+      status: JobStatus.ESTIMATE,
+      categoryTags: [lead.serviceType || "general", "lead-converted"],
+    },
+  });
+
+  await prisma.lead.update({
+    where: { id: lead.id },
+    data: {
+      stage: LeadStage.WON,
+      customerId: customer.id,
+      jobId: job.id,
+      convertedAt: new Date(),
+      lostReason: null,
+    },
+  });
+
+  await logActivity(auth.orgId, job.id, auth.userId, "lead.converted_to_job", {
+    leadId: lead.id,
+    customerId: customer.id,
+  });
+  revalidatePath("/leads");
+  revalidatePath("/jobs");
+  revalidatePath("/dashboard");
+}
+
+export async function importJoistCsvAction(formData: FormData) {
+  if (isDemoMode()) {
+    revalidatePath("/leads");
+    return;
+  }
+
+  const auth = await requireAuth();
+  if (!canManageOrg(auth.role)) {
+    throw new Error("Only owner/admin can import Joist data.");
+  }
+
+  const file = formData.get("csvFile");
+  if (!(file instanceof File) || file.size === 0) {
+    throw new Error("CSV file is required.");
+  }
+
+  const text = await file.text();
+  const rows = parseCsv(text);
+  if (rows.length === 0) {
+    throw new Error("No rows found. Export Joist data as CSV and upload it here.");
+  }
+
+  let imported = 0;
+  let updated = 0;
+  let skipped = 0;
+
+  for (const row of rows) {
+    const contactName = pickCsvValue(row, ["client name", "customer name", "name", "client"]);
+    const phone = pickCsvValue(row, ["phone", "phone number", "client phone"]);
+    const email = pickCsvValue(row, ["email", "client email"]);
+    const address = pickCsvValue(row, ["address", "job address", "client address"]);
+    const serviceType = pickCsvValue(row, ["title", "project", "description", "service"]);
+    const statusRaw = pickCsvValue(row, ["status", "estimate status", "invoice status"]);
+    const estimateNumber = pickCsvValue(row, ["estimate number", "estimate #", "estimate id", "id"]);
+    const invoiceNumber = pickCsvValue(row, ["invoice number", "invoice #"]);
+    const externalRefBase = estimateNumber || invoiceNumber;
+    const stage = mapJoistStatusToLeadStage(statusRaw);
+
+    if (!contactName && !phone && !email) {
+      skipped += 1;
+      continue;
+    }
+
+    const externalRef = externalRefBase ? `joist:${externalRefBase}`.slice(0, 191) : "";
+    const notes = `Imported from Joist CSV${statusRaw ? ` • status: ${statusRaw}` : ""}`;
+
+    if (externalRef) {
+      const result = await prisma.lead.upsert({
+        where: {
+          orgId_externalRef: {
+            orgId: auth.orgId,
+            externalRef,
+          },
+        },
+        update: {
+          contactName: contactName || undefined,
+          phone: phone || null,
+          email: email || null,
+          address: address || null,
+          serviceType: serviceType || null,
+          source: LeadSource.OTHER,
+          stage,
+          notes,
+          rawPayload: row,
+        },
+        create: {
+          orgId: auth.orgId,
+          externalRef,
+          contactName: contactName || phone || email || "Imported Lead",
+          phone: phone || null,
+          email: email || null,
+          address: address || null,
+          serviceType: serviceType || null,
+          source: LeadSource.OTHER,
+          stage,
+          notes,
+          rawPayload: row,
+        },
+      });
+
+      if (result.createdAt.getTime() === result.updatedAt.getTime()) imported += 1;
+      else updated += 1;
+      continue;
+    }
+
+    await prisma.lead.create({
+      data: {
+        orgId: auth.orgId,
+        contactName: contactName || phone || email || "Imported Lead",
+        phone: phone || null,
+        email: email || null,
+        address: address || null,
+        serviceType: serviceType || null,
+        source: LeadSource.OTHER,
+        stage,
+        notes,
+        rawPayload: row,
+      },
+    });
+    imported += 1;
+  }
+
+  await logActivity(auth.orgId, null, auth.userId, "lead.import.joist", {
+    fileName: file.name,
+    imported,
+    updated,
+    skipped,
+  });
+
+  revalidatePath("/leads");
+  revalidatePath("/dashboard");
 }
 
 export async function createJobAction(formData: FormData) {
@@ -428,6 +763,39 @@ export async function updateJobStatusAction(formData: FormData) {
 
     if (!confirmFinalPhotos || !confirmPunchList || !confirmReceipts || !confirmInvoiceSent) {
       throw new Error("Closeout checklist must be fully confirmed before completion.");
+    }
+
+    const [afterPhotoCount, openTaskCount, invoiceCount, nonDraftInvoiceCount] = await Promise.all([
+      prisma.fileAsset.count({
+        where: {
+          jobId,
+          type: "PHOTO",
+          stage: "AFTER",
+        },
+      }),
+      prisma.task.count({
+        where: {
+          jobId,
+          status: { in: ["TODO", "IN_PROGRESS", "BLOCKED"] },
+        },
+      }),
+      prisma.invoice.count({ where: { jobId } }),
+      prisma.invoice.count({
+        where: {
+          jobId,
+          status: { in: [InvoiceStatus.SENT, InvoiceStatus.PAID, InvoiceStatus.OVERDUE] },
+        },
+      }),
+    ]);
+
+    if (afterPhotoCount < 1) {
+      throw new Error("Cannot complete job: add at least one AFTER photo.");
+    }
+    if (openTaskCount > 0) {
+      throw new Error("Cannot complete job: punch list still has open items.");
+    }
+    if (invoiceCount < 1 || nonDraftInvoiceCount < 1) {
+      throw new Error("Cannot complete job: send at least one invoice before closeout.");
     }
   }
 
@@ -828,25 +1196,150 @@ export async function updateOrgSettingsAction(formData: FormData) {
     throw new Error("Only owner/admin can update settings.");
   }
 
+  const defaultClockInTime = String(formData.get("defaultClockInTime") ?? "07:00");
+  const clockGraceRaw = Number(formData.get("clockGraceMinutes") ?? 10);
+  const clockGraceMinutes = Number.isFinite(clockGraceRaw) ? Math.max(0, Math.min(120, Math.trunc(clockGraceRaw))) : 10;
+
   await prisma.organizationSetting.upsert({
     where: { orgId: auth.orgId },
     update: {
       workerCanEditOwnTimeSameDay: formData.get("workerCanEditOwnTimeSameDay") === "on",
       gpsTimeTrackingEnabled: formData.get("gpsTimeTrackingEnabled") === "on",
+      defaultClockInTime,
+      clockGraceMinutes,
     },
     create: {
       orgId: auth.orgId,
       workerCanEditOwnTimeSameDay: formData.get("workerCanEditOwnTimeSameDay") === "on",
       gpsTimeTrackingEnabled: formData.get("gpsTimeTrackingEnabled") === "on",
+      defaultClockInTime,
+      clockGraceMinutes,
     },
   });
 
   revalidatePath("/settings/targets");
+  revalidatePath("/attendance");
+}
+
+export async function ownerClockInEmployeeAction(formData: FormData) {
+  if (isDemoMode()) {
+    revalidatePath("/attendance");
+    revalidatePath("/time");
+    return;
+  }
+
+  const auth = await requireAuth();
+  if (!canManageOrg(auth.role)) {
+    throw new Error("Only owner/admin can clock in employees.");
+  }
+
+  const workerId = String(formData.get("workerId") ?? "");
+  const jobId = String(formData.get("jobId") ?? "");
+  if (!workerId || !jobId) return;
+
+  const active = await prisma.timeEntry.findFirst({
+    where: { workerId, end: null },
+    select: { id: true },
+  });
+  if (active) {
+    throw new Error("Employee already has a running timer.");
+  }
+
+  const worker = await prisma.userProfile.findFirstOrThrow({
+    where: { id: workerId, orgId: auth.orgId },
+  });
+
+  const now = new Date();
+  const entry = await prisma.timeEntry.create({
+    data: {
+      jobId,
+      workerId,
+      date: now,
+      start: now,
+      breakMinutes: 0,
+      hourlyRateLoaded: toNumber(worker.hourlyRateDefault) || 35,
+      notes: "Owner clock-in",
+    },
+  });
+
+  await logActivity(auth.orgId, jobId, auth.userId, "time.owner.clock_in", {
+    workerId,
+    timeEntryId: entry.id,
+  });
+  revalidatePath("/attendance");
+  revalidatePath("/time");
+  revalidatePath("/today");
+}
+
+export async function ownerClockOutEmployeeAction(formData: FormData) {
+  if (isDemoMode()) {
+    revalidatePath("/attendance");
+    revalidatePath("/time");
+    return;
+  }
+
+  const auth = await requireAuth();
+  if (!canManageOrg(auth.role)) {
+    throw new Error("Only owner/admin can clock out employees.");
+  }
+
+  const workerId = String(formData.get("workerId") ?? "");
+  if (!workerId) return;
+
+  const active = await prisma.timeEntry.findFirst({
+    where: {
+      workerId,
+      end: null,
+      job: { orgId: auth.orgId },
+    },
+    orderBy: { start: "desc" },
+  });
+  if (!active) return;
+
+  await prisma.timeEntry.update({
+    where: { id: active.id },
+    data: { end: new Date() },
+  });
+
+  await logActivity(auth.orgId, active.jobId, auth.userId, "time.owner.clock_out", {
+    workerId,
+    timeEntryId: active.id,
+  });
+  revalidatePath("/attendance");
+  revalidatePath("/time");
+  revalidatePath("/today");
+}
+
+export async function sendClockRemindersAction(formData: FormData) {
+  if (isDemoMode()) {
+    revalidatePath("/attendance");
+    return;
+  }
+
+  const auth = await requireAuth();
+  if (!canManageOrg(auth.role)) {
+    throw new Error("Only owner/admin can send reminders.");
+  }
+
+  const count = Number(formData.get("count") ?? 0);
+  const reminderType = String(formData.get("reminderType") ?? "clock_in");
+
+  await prisma.activityLog.create({
+    data: {
+      orgId: auth.orgId,
+      actorId: auth.userId,
+      action: "attendance.reminders.sent",
+      metadata: { count, reminderType },
+    },
+  });
+
+  revalidatePath("/attendance");
 }
 
 export async function createWorkerAction(formData: FormData) {
   if (isDemoMode()) {
     revalidatePath("/settings/targets");
+    revalidatePath("/team");
     return;
   }
 
@@ -879,12 +1372,14 @@ export async function createWorkerAction(formData: FormData) {
   });
 
   revalidatePath("/settings/targets");
+  revalidatePath("/team");
   revalidatePath("/time");
 }
 
 export async function updateWorkerAction(formData: FormData) {
   if (isDemoMode()) {
     revalidatePath("/settings/targets");
+    revalidatePath("/team");
     revalidatePath("/time");
     return;
   }
@@ -913,12 +1408,14 @@ export async function updateWorkerAction(formData: FormData) {
   });
 
   revalidatePath("/settings/targets");
+  revalidatePath("/team");
   revalidatePath("/time");
 }
 
 export async function setWorkerActiveAction(formData: FormData) {
   if (isDemoMode()) {
     revalidatePath("/settings/targets");
+    revalidatePath("/team");
     revalidatePath("/time");
     return;
   }
@@ -938,6 +1435,7 @@ export async function setWorkerActiveAction(formData: FormData) {
   });
 
   revalidatePath("/settings/targets");
+  revalidatePath("/team");
   revalidatePath("/time");
 }
 

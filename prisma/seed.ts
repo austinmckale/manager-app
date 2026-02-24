@@ -1,4 +1,4 @@
-﻿import { PrismaClient, JobStatus, Role, ExpenseCategory, InvoiceStatus, EstimateStatus, ChangeOrderStatus, LineItemType } from "@prisma/client";
+﻿import { PrismaClient, JobStatus, Role, ExpenseCategory, InvoiceStatus, EstimateStatus, ChangeOrderStatus, LeadSource, LeadStage, LineItemType } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
@@ -22,6 +22,8 @@ async function main() {
         create: {
           workerCanEditOwnTimeSameDay: true,
           gpsTimeTrackingEnabled: false,
+          defaultClockInTime: "07:00",
+          clockGraceMinutes: 10,
         },
       },
     },
@@ -99,6 +101,51 @@ async function main() {
       orgId,
       jobId: job.id,
       userId: workerId,
+    },
+  });
+
+  await prisma.lead.upsert({
+    where: { id: "70000000-0000-0000-0000-000000000001" },
+    update: {
+      orgId,
+      contactName: "Samantha Reed",
+      source: LeadSource.WEBSITE_FORM,
+      stage: LeadStage.ESTIMATE_SENT,
+      serviceType: "Water damage mitigation",
+    },
+    create: {
+      id: "70000000-0000-0000-0000-000000000001",
+      orgId,
+      contactName: "Samantha Reed",
+      phone: "555-101-9090",
+      email: "samantha@example.com",
+      address: "14 Cedar St, Austin, TX",
+      source: LeadSource.WEBSITE_FORM,
+      stage: LeadStage.ESTIMATE_SENT,
+      serviceType: "Water damage mitigation",
+      notes: "Submitted from website intake form",
+    },
+  });
+
+  await prisma.lead.upsert({
+    where: { id: "70000000-0000-0000-0000-000000000002" },
+    update: {
+      orgId,
+      contactName: "John Ortiz",
+      source: LeadSource.PHONE_CALL,
+      stage: LeadStage.LOST,
+      lostReason: "price",
+    },
+    create: {
+      id: "70000000-0000-0000-0000-000000000002",
+      orgId,
+      contactName: "John Ortiz",
+      phone: "555-777-1212",
+      address: "800 North Ave, Austin, TX",
+      source: LeadSource.PHONE_CALL,
+      stage: LeadStage.LOST,
+      serviceType: "Bathroom remodel",
+      lostReason: "price",
     },
   });
 
@@ -264,3 +311,4 @@ main()
   .finally(async () => {
     await prisma.$disconnect();
   });
+

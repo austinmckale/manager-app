@@ -1,5 +1,5 @@
 ﻿import Link from "next/link";
-import { BriefcaseBusiness, CalendarDays, ChartNoAxesCombined, Clock3, ImageIcon, ReceiptText, Settings } from "lucide-react";
+import { BriefcaseBusiness, CalendarDays, ChartNoAxesCombined, ReceiptText, Settings, PhoneIncoming, ClipboardCheck } from "lucide-react";
 import { QuickActionsFab } from "@/components/quick-actions-fab";
 
 type AppShellProps = {
@@ -9,13 +9,13 @@ type AppShellProps = {
 };
 
 const navItems = [
-  { href: "/today", label: "Today", icon: CalendarDays },
+  { href: "/today", label: "Inbox", icon: CalendarDays },
+  { href: "/leads", label: "Leads", icon: PhoneIncoming },
   { href: "/jobs", label: "Jobs", icon: BriefcaseBusiness },
-  { href: "/time", label: "Time", icon: Clock3 },
+  { href: "/attendance", label: "Attendance", icon: ClipboardCheck },
   { href: "/dashboard", label: "KPI", icon: ChartNoAxesCombined },
-  { href: "/reports", label: "Reports", icon: ReceiptText },
-  { href: "/settings/targets", label: "Targets", icon: Settings },
-  { href: "/portfolio", label: "Portfolio", icon: ImageIcon },
+  { href: "/accounting", label: "Accounting", icon: ReceiptText },
+  { href: "/settings/targets", label: "Settings", icon: Settings },
 ];
 
 export function AppShell({ title, userName, children }: AppShellProps) {

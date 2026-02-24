@@ -2,14 +2,14 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Plus, Camera, Receipt, Timer, FileText, UserPlus } from "lucide-react";
+import { Plus, Camera, Receipt, FileText, PhoneIncoming, ClipboardCheck } from "lucide-react";
 
 const actions = [
-  { href: "/time", label: "Start Timer", icon: Timer },
+  { href: "/leads#new-lead-form", label: "New Lead", icon: PhoneIncoming },
+  { href: "/attendance", label: "Attendance", icon: ClipboardCheck },
   { href: "/jobs", label: "Add Expense", icon: Receipt },
   { href: "/jobs", label: "Capture Photo", icon: Camera },
-  { href: "/jobs", label: "Invoice/Estimate", icon: FileText },
-  { href: "/settings/targets#add-worker-form", label: "Add Worker", icon: UserPlus },
+  { href: "/leads", label: "Joist Import", icon: FileText },
 ];
 
 export function QuickActionsFab() {

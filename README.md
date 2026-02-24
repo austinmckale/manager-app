@@ -45,6 +45,8 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY="..."
 SUPABASE_SERVICE_ROLE_KEY="..."
 NEXT_PUBLIC_APP_URL="http://localhost:3001"
 SUPABASE_STORAGE_BUCKET="job-assets"
+LEAD_INGEST_API_KEY="set-a-long-random-secret"
+DEFAULT_ORG_ID="00000000-0000-0000-0000-000000000001"
 ```
 
 ### 3) Prisma
@@ -85,10 +87,12 @@ What this means:
 ## Key Routes
 
 - Dashboard: `/dashboard`
+- Leads: `/leads`
 - Jobs: `/jobs`
 - Job Detail: `/jobs/[jobId]`
 - Customers: `/customers`
 - Time: `/time`
+- Team: `/team`
 - Reports: `/reports`
 - Portfolio: `/portfolio`
 - Target Settings: `/settings/targets`
@@ -130,3 +134,8 @@ npm run build
 - Prisma is pinned to `6.x` currently for schema compatibility.
 - Before production launch, restore real auth flows and disable demo bypass.
 - Deep research implementation checklist: `docs/deep-research-follow-through.md`.
+- Launch checklist: `docs/launch-checklist.md`.
+- Field trial script: `docs/field-trial-script.md`.
+- Rebuild upgrade plan: `docs/rebuild-design-upgrade-plan.md`.
+- Auto lead intake setup: `docs/lead-autointake.md`.
+- Joist-friendly flow: `docs/joist-friendly-flow.md`.

@@ -16,7 +16,7 @@ import { toNumber } from "@/lib/utils";
 const kpiOptions = [
   { key: KPI_KEYS.laborPercentRevenue, name: "Labor % of revenue" },
   { key: KPI_KEYS.materialsPercentRevenue, name: "Materials % of revenue" },
-  { key: KPI_KEYS.estimateToWinRate, name: "Estimate-to-win rate" },
+  { key: KPI_KEYS.leadToWinRate, name: "Lead-to-win rate" },
 ];
 
 export default async function TargetSettingsPage() {

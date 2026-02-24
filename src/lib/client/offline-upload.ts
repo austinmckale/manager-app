@@ -14,6 +14,9 @@ export type UploadQueueItem = {
   isPortfolio?: boolean;
   isClientVisible?: boolean;
   expenseId?: string;
+  retryCount?: number;
+  lastError?: string;
+  lastAttemptAt?: string;
 };
 
 const DB_NAME = "fieldflow-offline";
@@ -50,6 +53,13 @@ export async function removeQueuedUpload(id: string) {
     queue.filter((item) => item.id !== id),
     KEY,
   );
+}
+
+export async function updateQueuedUpload(id: string, updater: (item: UploadQueueItem) => UploadQueueItem) {
+  const queue = await getUploadQueue();
+  const next = queue.map((item) => (item.id === id ? updater(item) : item));
+  const db = await getDb();
+  await db.put(STORE_NAME, next, KEY);
 }
 
 export async function clearUploadQueue() {
