@@ -27,9 +27,6 @@ const sourceOptions: LeadSource[] = [
 
 export default async function LeadsPage() {
   const auth = await requireAuth();
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim() || "";
-  const intakeWebhookPath = "/api/leads/intake";
-  const intakeWebhookUrl = appUrl ? `${appUrl}${intakeWebhookPath}` : intakeWebhookPath;
 
   const leads = isDemoMode()
     ? [
@@ -101,30 +98,6 @@ export default async function LeadsPage() {
 
   return (
     <div className="space-y-4">
-      <section className="rounded-2xl border border-teal-200 bg-teal-50 p-4">
-        <h2 className="text-base font-semibold text-teal-900">Lead Intake</h2>
-        <p className="mt-1 text-sm text-teal-800">Capture website forms, phone calls, and text leads in one place.</p>
-        <details className="mt-2">
-          <summary className="cursor-pointer text-xs font-medium text-teal-800">
-            Technical intake settings
-          </summary>
-          <p className="mt-2 text-xs text-teal-700">
-            Site webhook endpoint: <span className="font-mono">{intakeWebhookUrl}</span>
-          </p>
-          <p className="mt-1 text-xs text-teal-700">
-            Required header: <span className="font-mono">x-lead-intake-key: [your LEAD_INGEST_API_KEY]</span>
-          </p>
-        </details>
-        <div className="mt-3 flex flex-wrap gap-2 text-xs">
-          <Link href="/jobs?view=week" className="rounded-lg border border-teal-300 bg-white px-2.5 py-1 text-teal-700">
-            Jobs board (this week)
-          </Link>
-          <Link href="/jobs#new-job" className="rounded-lg border border-teal-300 bg-white px-2.5 py-1 text-teal-700">
-            New job
-          </Link>
-        </div>
-      </section>
-
       <section
         id="joist-import"
         className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4"
