@@ -29,6 +29,19 @@ import { prisma } from "@/lib/prisma";
 import { SERVICE_TAG_OPTIONS, normalizeServiceTags } from "@/lib/service-tags";
 import { buildAbsoluteUrl, currency, getStoragePublicUrl, percent, toNumber } from "@/lib/utils";
 
+function toGoogleCalendarDate(date: Date) {
+  return date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+}
+
+function buildGoogleCalendarUrl(params: { title: string; start: Date; end: Date; details?: string | null; location?: string | null }) {
+  const start = toGoogleCalendarDate(params.start);
+  const end = toGoogleCalendarDate(params.end);
+  const title = encodeURIComponent(params.title);
+  const details = encodeURIComponent(params.details ?? "");
+  const location = encodeURIComponent(params.location ?? "");
+  return `https://www.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${start}/${end}&details=${details}&location=${location}`;
+}
+
 export default async function JobDetailPage({
   params,
   searchParams,
@@ -397,6 +410,13 @@ export default async function JobDetailPage({
                   const end = new Date(event.endAt);
                   const dateStr = format(start, "EEE, MMM d");
                   const timeStr = `${format(start, "h:mm a")} – ${format(end, "h:mm a")}`;
+                  const calendarUrl = buildGoogleCalendarUrl({
+                    title: `${job.jobName} site visit`,
+                    start,
+                    end,
+                    details: event.notes ?? "",
+                    location: job.address ?? "",
+                  });
                   return (
                     <article
                       key={event.id}
@@ -409,12 +429,20 @@ export default async function JobDetailPage({
                         </div>
                         {event.notes ? <p className="mt-1 text-xs text-slate-500">{event.notes}</p> : null}
                       </div>
-                      <div className="flex gap-1">
+                      <div className="flex flex-wrap gap-1">
                         <a
                           href={`/jobs/${job.id}?edit=${event.id}#schedule`}
                           className="rounded border border-slate-300 px-2 py-1 text-xs"
                         >
                           Edit
+                        </a>
+                        <a
+                          href={calendarUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700"
+                        >
+                          Add to Google Calendar
                         </a>
                         <form action={deleteScheduleEventAction} className="inline">
                           <input type="hidden" name="eventId" value={event.id} />
