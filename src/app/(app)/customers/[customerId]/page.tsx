@@ -55,13 +55,13 @@ export default async function CustomerDetailPage({
   const todayJobs = customerJobs.filter((job) =>
     job.scheduleEvents?.some((event) => event.startAt >= todayStart && event.startAt <= todayEnd),
   );
-  const primaryAddress = (() => {
+  const primaryAddress: string | null = (() => {
     const raw = customer.addresses;
     if (!raw) return null;
     if (typeof raw === "string") return raw;
     if (Array.isArray(raw)) {
       const firstString = raw.find((value) => typeof value === "string" && value.trim().length > 0);
-      if (firstString) return firstString;
+      if (typeof firstString === "string") return firstString;
       const firstObj = raw.find(
         (value) => value && typeof value === "object" && "address" in (value as Record<string, unknown>),
       ) as { address?: unknown } | undefined;
