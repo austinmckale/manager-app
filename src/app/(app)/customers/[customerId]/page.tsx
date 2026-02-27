@@ -55,6 +55,25 @@ export default async function CustomerDetailPage({
   const todayJobs = customerJobs.filter((job) =>
     job.scheduleEvents?.some((event) => event.startAt >= todayStart && event.startAt <= todayEnd),
   );
+  const primaryAddress = (() => {
+    const raw = customer.addresses;
+    if (!raw) return null;
+    if (typeof raw === "string") return raw;
+    if (Array.isArray(raw)) {
+      const firstString = raw.find((value) => typeof value === "string" && value.trim().length > 0);
+      if (firstString) return firstString;
+      const firstObj = raw.find(
+        (value) => value && typeof value === "object" && "address" in (value as Record<string, unknown>),
+      ) as { address?: unknown } | undefined;
+      if (firstObj && typeof firstObj.address === "string" && firstObj.address.trim()) return firstObj.address;
+      return null;
+    }
+    if (typeof raw === "object" && "address" in (raw as Record<string, unknown>)) {
+      const addr = (raw as { address?: unknown }).address;
+      if (typeof addr === "string" && addr.trim()) return addr;
+    }
+    return null;
+  })();
 
   return (
     <div className="space-y-4">
@@ -63,8 +82,8 @@ export default async function CustomerDetailPage({
           <div>
             <p className="text-xs uppercase tracking-wide text-slate-500">Client Hub</p>
             <h2 className="text-xl font-semibold text-slate-900">{customer.name}</h2>
-            {customer.address ? (
-              <p className="text-sm text-slate-600">{customer.address}</p>
+            {primaryAddress ? (
+              <p className="text-sm text-slate-600">{primaryAddress}</p>
             ) : null}
             <div className="mt-1 space-y-0.5 text-xs text-slate-600">
               {customer.phone ? <p>Phone: {customer.phone}</p> : null}
