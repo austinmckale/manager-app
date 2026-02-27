@@ -831,6 +831,7 @@ export async function updateScheduleEventAction(formData: FormData) {
   const startAt = String(formData.get("startAt") ?? "");
   const endAt = String(formData.get("endAt") ?? "");
   const notes = String(formData.get("notes") ?? "").trim() || null;
+  const overrideConflicts = String(formData.get("overrideConflicts") ?? "") === "1";
   if (!eventId || !jobId || !startAt || !endAt) return;
 
   if (isDemoMode()) {
@@ -883,17 +884,23 @@ export async function updateScheduleEventAction(formData: FormData) {
         endAt: { gt: newStart },
       },
       include: {
-        job: { select: { jobName: true } },
+        job: { select: { id: true, jobName: true } },
       },
     });
 
-    if (conflict) {
-      throw new Error(
-        `Schedule conflict: one of the crew is already scheduled on "${conflict.job.jobName}" between ${format(
-          conflict.startAt,
-          "MMM d h:mm a",
-        )}–${format(conflict.endAt, "h:mm a")}. Adjust times or crew and try again.`,
-      );
+    if (conflict && !overrideConflicts) {
+      const params = new URLSearchParams();
+      params.set("conflict", "1");
+      params.set("conflictAction", "edit");
+      params.set("conflictJobId", conflict.job.id);
+      params.set("conflictJobName", conflict.job.jobName);
+      params.set("conflictStart", conflict.startAt.toISOString());
+      params.set("conflictEnd", conflict.endAt.toISOString());
+      params.set("edit", eventId);
+      params.set("editStartAt", startAt);
+      params.set("editEndAt", endAt);
+      if (notes) params.set("editNotes", notes);
+      redirect(`/jobs/${jobId}?${params.toString()}#schedule`);
     }
   }
 
@@ -1041,18 +1048,27 @@ export async function quickScheduleCrewAction(formData: FormData) {
           startAt: { lt: blockEnd },
           endAt: { gt: blockStart },
         },
-        include: {
-          job: { select: { jobName: true } },
-        },
+      include: {
+        job: { select: { id: true, jobName: true } },
+      },
       });
 
-      if (conflict) {
-        throw new Error(
-          `Schedule conflict: one of these workers is already scheduled on "${conflict.job.jobName}" between ${format(
-            conflict.startAt,
-            "MMM d h:mm a",
-          )}–${format(conflict.endAt, "h:mm a")}. Adjust times, crew, or slot and try again.`,
-        );
+      if (conflict && !overrideConflicts) {
+        const params = new URLSearchParams();
+        params.set("conflict", "1");
+        params.set("conflictAction", "quick");
+        params.set("conflictJobId", conflict.job.id);
+        params.set("conflictJobName", conflict.job.jobName);
+        params.set("conflictStart", conflict.startAt.toISOString());
+        params.set("conflictEnd", conflict.endAt.toISOString());
+        params.set("slot", slot);
+        params.set("startTime", startTime);
+        params.set("endTime", endTime);
+        if (notes) params.set("notes", notes);
+        if (customDate) params.set("customDate", customDate);
+        dates.forEach((date) => params.append("dates", date));
+        workerIds.forEach((id) => params.append("workerIds", id));
+        redirect(`/jobs/${jobId}?${params.toString()}#schedule`);
       }
     }
   }

@@ -47,12 +47,45 @@ export default async function JobDetailPage({
   searchParams,
 }: {
   params: Promise<{ jobId: string }>;
-  searchParams: Promise<{ shareToken?: string; edit?: string }>;
+  searchParams: Promise<{
+    shareToken?: string;
+    edit?: string;
+    conflict?: string;
+    conflictAction?: string;
+    conflictJobId?: string;
+    conflictJobName?: string;
+    conflictStart?: string;
+    conflictEnd?: string;
+    slot?: string;
+    notes?: string;
+    startTime?: string;
+    endTime?: string;
+    customDate?: string;
+    dates?: string | string[];
+    workerIds?: string | string[];
+    editStartAt?: string;
+    editEndAt?: string;
+    editNotes?: string;
+  }>;
 }) {
   const auth = await requireAuth();
   const { jobId } = await params;
   const query = await searchParams;
   const editEventId = query.edit ?? null;
+  const toArray = (value?: string | string[]) => (value ? (Array.isArray(value) ? value : [value]) : []);
+  const draftDates = toArray(query.dates);
+  const draftWorkerIds = toArray(query.workerIds);
+  const draftSlot = query.slot ?? "";
+  const draftNotes = query.notes ?? "";
+  const draftStartTime = query.startTime ?? "08:00";
+  const draftEndTime = query.endTime ?? "17:00";
+  const draftCustomDate = query.customDate ?? "";
+  const conflictActive = query.conflict === "1";
+  const conflictAction = query.conflictAction ?? "";
+  const conflictStart = query.conflictStart ? new Date(query.conflictStart) : null;
+  const conflictEnd = query.conflictEnd ? new Date(query.conflictEnd) : null;
+  const draftDateSet = new Set(draftDates);
+  const draftWorkerSet = new Set(draftWorkerIds);
 
   const [job, users] = await Promise.all([
     getJobById({ orgId: auth.orgId, role: auth.role, userId: auth.userId, jobId }),
@@ -64,6 +97,20 @@ export default async function JobDetailPage({
   const assignedUserIds = new Set(job.assignments?.map((assignment) => assignment.userId) ?? []);
   const assignedCrew = users.filter((user) => assignedUserIds.has(user.id));
   const editingEvent = editEventId ? job.scheduleEvents?.find((e) => e.id === editEventId) : null;
+  const editStartValue =
+    conflictAction === "edit" && query.editStartAt
+      ? query.editStartAt
+      : editingEvent
+        ? format(new Date(editingEvent.startAt), "yyyy-MM-dd'T'HH:mm")
+        : "";
+  const editEndValue =
+    conflictAction === "edit" && query.editEndAt
+      ? query.editEndAt
+      : editingEvent
+        ? format(new Date(editingEvent.endAt), "yyyy-MM-dd'T'HH:mm")
+        : "";
+  const editNotesValue =
+    conflictAction === "edit" && query.editNotes !== undefined ? query.editNotes : editingEvent?.notes ?? "";
   const quickDates = (() => {
     const out: Date[] = [];
     let d = startOfDay(new Date());
@@ -259,7 +306,53 @@ export default async function JobDetailPage({
 
       <section id="schedule" className="rounded-2xl border border-slate-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-slate-900">0) Schedule + Crew</h3>
-        <form action={quickScheduleCrewAction} className="mt-3 grid gap-3 rounded-xl border border-slate-200 p-3 text-sm">
+        {conflictActive ? (
+          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+            <p className="font-medium">Schedule conflict</p>
+            <p className="mt-1 text-amber-800">
+              One of the crew is already scheduled on{" "}
+              <span className="font-semibold">{query.conflictJobName ?? "another job"}</span>
+              {conflictStart && conflictEnd
+                ? ` between ${format(conflictStart, "MMM d h:mm a")} – ${format(conflictEnd, "h:mm a")}.`
+                : "."}
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {conflictAction === "quick" ? (
+                <button
+                  form="quick-schedule-form"
+                  name="overrideConflicts"
+                  value="1"
+                  className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white"
+                >
+                  Schedule anyway
+                </button>
+              ) : null}
+              {conflictAction === "edit" ? (
+                <button
+                  form="edit-schedule-form"
+                  name="overrideConflicts"
+                  value="1"
+                  className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white"
+                >
+                  Save anyway
+                </button>
+              ) : null}
+              {query.conflictJobId ? (
+                <a
+                  href={`/jobs/${query.conflictJobId}`}
+                  className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900"
+                >
+                  View conflicting job
+                </a>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+        <form
+          id="quick-schedule-form"
+          action={quickScheduleCrewAction}
+          className="mt-3 grid gap-3 rounded-xl border border-slate-200 p-3 text-sm"
+        >
           <input type="hidden" name="jobId" value={job.id} />
           <div>
             <p className="font-medium">Crew on this job</p>
@@ -270,7 +363,14 @@ export default async function JobDetailPage({
             <div className="mt-2 grid gap-2 sm:grid-cols-2">
               {users.map((user) => (
                 <label key={user.id} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1 text-xs">
-                  <input type="checkbox" name="workerIds" value={user.id} defaultChecked={assignedUserIds.has(user.id)} />
+                  <input
+                    type="checkbox"
+                    name="workerIds"
+                    value={user.id}
+                    defaultChecked={
+                      draftWorkerIds.length > 0 ? draftWorkerSet.has(user.id) : assignedUserIds.has(user.id)
+                    }
+                  />
                   {user.fullName}
                 </label>
               ))}
@@ -280,34 +380,42 @@ export default async function JobDetailPage({
           <div>
             <p className="font-medium">Dates (M–F, next 3 weeks)</p>
             <div className="mt-2 grid gap-2 sm:grid-cols-5">
-              {quickDates.map((dateValue, index) => (
+              {quickDates.map((dateValue, index) => {
+                const dateKey = format(dateValue, "yyyy-MM-dd");
+                const shouldCheck = draftDates.length > 0 ? draftDateSet.has(dateKey) : index === 0;
+                return (
                 <label key={dateValue.toISOString()} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1 text-xs">
-                  <input type="checkbox" name="dates" value={format(dateValue, "yyyy-MM-dd")} defaultChecked={index === 0} />
+                  <input type="checkbox" name="dates" value={dateKey} defaultChecked={shouldCheck} />
                   {format(dateValue, "EEE M/d")}
                 </label>
-              ))}
+              );})}
             </div>
             <p className="mt-1 text-[11px] text-slate-500">Weekdays only. Or add another date:</p>
-            <input type="date" name="customDate" className="mt-0.5 rounded-lg border border-slate-300 px-2 py-1 text-xs" />
+            <input
+              type="date"
+              name="customDate"
+              defaultValue={draftCustomDate}
+              className="mt-0.5 rounded-lg border border-slate-300 px-2 py-1 text-xs"
+            />
           </div>
 
           <div>
             <p className="font-medium">Time Block</p>
             <div className="mt-2 flex flex-wrap gap-2 text-xs">
               <label className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1">
-                <input type="radio" name="slot" value="AM" />
+                <input type="radio" name="slot" value="AM" defaultChecked={(draftSlot || "FULL") === "AM"} />
                 AM (8-12)
               </label>
               <label className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1">
-                <input type="radio" name="slot" value="PM" />
+                <input type="radio" name="slot" value="PM" defaultChecked={draftSlot === "PM"} />
                 PM (1-5)
               </label>
               <label className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1">
-                <input type="radio" name="slot" value="FULL" defaultChecked />
+                <input type="radio" name="slot" value="FULL" defaultChecked={draftSlot ? draftSlot === "FULL" : true} />
                 Full (8-5)
               </label>
               <label className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1">
-                <input type="radio" name="slot" value="CUSTOM" />
+                <input type="radio" name="slot" value="CUSTOM" defaultChecked={draftSlot === "CUSTOM"} />
                 Custom
               </label>
             </div>
@@ -315,16 +423,21 @@ export default async function JobDetailPage({
               <span className="text-[11px] text-slate-500">Custom times (when Custom is selected):</span>
               <label className="inline-flex items-center gap-1 text-xs">
                 Start
-                <input type="time" name="startTime" defaultValue="08:00" className="rounded border border-slate-300 px-1.5 py-0.5" />
+                <input type="time" name="startTime" defaultValue={draftStartTime} className="rounded border border-slate-300 px-1.5 py-0.5" />
               </label>
               <label className="inline-flex items-center gap-1 text-xs">
                 End
-                <input type="time" name="endTime" defaultValue="17:00" className="rounded border border-slate-300 px-1.5 py-0.5" />
+                <input type="time" name="endTime" defaultValue={draftEndTime} className="rounded border border-slate-300 px-1.5 py-0.5" />
               </label>
             </div>
           </div>
 
-          <input name="notes" placeholder="Block notes (optional)" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+          <input
+            name="notes"
+            placeholder="Block notes (optional)"
+            defaultValue={draftNotes}
+            className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
+          />
           <button type="submit" className="rounded-xl bg-slate-900 px-3 py-2 text-white">Save Crew + Schedule</button>
         </form>
 
@@ -346,7 +459,7 @@ export default async function JobDetailPage({
             actual hours per worker still come from clock-in on Team/Payroll.
           </p>
           {editingEvent ? (
-            <form action={updateScheduleEventAction} className="mb-3 rounded-xl border border-amber-200 bg-amber-50/50 p-3 text-sm">
+            <form id="edit-schedule-form" action={updateScheduleEventAction} className="mb-3 rounded-xl border border-amber-200 bg-amber-50/50 p-3 text-sm">
               <input type="hidden" name="eventId" value={editingEvent.id} />
               <input type="hidden" name="jobId" value={job.id} />
               <p className="mb-1 font-medium text-slate-900">Edit scheduled visit</p>
@@ -361,7 +474,7 @@ export default async function JobDetailPage({
                     type="datetime-local"
                     name="startAt"
                     required
-                    defaultValue={format(new Date(editingEvent.startAt), "yyyy-MM-dd'T'HH:mm")}
+                    defaultValue={editStartValue}
                     className="rounded-lg border border-slate-300 px-2 py-1.5"
                   />
                 </label>
@@ -371,12 +484,12 @@ export default async function JobDetailPage({
                     type="datetime-local"
                     name="endAt"
                     required
-                    defaultValue={format(new Date(editingEvent.endAt), "yyyy-MM-dd'T'HH:mm")}
+                    defaultValue={editEndValue}
                     className="rounded-lg border border-slate-300 px-2 py-1.5"
                   />
                 </label>
               </div>
-              <input name="notes" placeholder="Notes (optional)" defaultValue={editingEvent.notes ?? ""} className="mt-2 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+              <input name="notes" placeholder="Notes (optional)" defaultValue={editNotesValue} className="mt-2 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
               <div className="mt-2 flex gap-2">
                 <button type="submit" className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm text-white">Save</button>
                 <a href={`/jobs/${job.id}#schedule`} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm">Cancel</a>
