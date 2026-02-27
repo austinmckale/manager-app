@@ -144,7 +144,17 @@ export default async function JobsPage({
               );
             })}
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
+          <div className="mt-2 sm:hidden">
+            <label className="text-[11px] uppercase tracking-wide text-slate-500">Status</label>
+            <select name="status" defaultValue={status} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm">
+              {statusOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option === "ALL" ? "All" : option.replaceAll("_", " ")}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="mt-2 hidden flex-wrap items-center gap-2 sm:flex">
             <span className="text-[11px] uppercase tracking-wide text-slate-500">Status</span>
             <div className="flex flex-wrap gap-1">
               {statusOptions.map((option) => {
