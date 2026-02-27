@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
 import { createClientSupabase } from "@/lib/supabase/client";
 
 export default function LoginPage() {
@@ -9,13 +8,13 @@ export default function LoginPage() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState(false);
-  const searchParams = useSearchParams();
-
   useEffect(() => {
-    if (searchParams?.get("error") === "unauthorized") {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("error") === "unauthorized") {
       setMessage("This account is not authorized for this dashboard.");
     }
-  }, [searchParams]);
+  }, []);
 
   const onSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
