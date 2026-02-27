@@ -208,7 +208,7 @@ async function listBucketFilesRecursive(
 }
 
 async function downloadBucketFile(
-  client: ReturnType<typeof createClient>,
+  client: SupabaseClient<any, any, any, any, any>,
   outputDir: string,
   file: StorageManifestFile,
 ) {
