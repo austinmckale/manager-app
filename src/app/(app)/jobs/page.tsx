@@ -28,7 +28,7 @@ const viewOptions = [
 export default async function JobsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; q?: string; view?: "today" | "week" | "all"; customerId?: string }>;
+  searchParams: Promise<{ status?: string; q?: string; view?: "today" | "week" | "all"; customerId?: string; focus?: "visits" }>;
 }) {
   const auth = await requireAuth();
   const params = await searchParams;
@@ -37,6 +37,7 @@ export default async function JobsPage({
   // Default to "This Week" so the jobs list stays focused on active work.
   const view = params.view ?? "week";
   const preselectedCustomerId = params.customerId ?? "";
+  const focus = params.focus ?? "";
 
   const [customers, jobs, alerts] = await Promise.all([
     getCustomers(auth.orgId),
@@ -116,7 +117,9 @@ export default async function JobsPage({
           <div>
             <h2 className="text-sm font-semibold text-slate-900">Jobs board</h2>
             <p className="mt-0.5 text-xs text-slate-500">
-              Focus on this week&apos;s active work, but you can switch filters below.
+              {focus === "visits" && view === "today"
+                ? "Today visit board: scheduled blocks only."
+                : "Focus on this week&apos;s active work, but you can switch filters below."}
             </p>
           </div>
           <div className="text-right text-xs text-slate-500">
@@ -195,12 +198,17 @@ export default async function JobsPage({
 
       <section className="space-y-2">
         {(() => {
-          const scheduledJobs = jobs
+          const scopedJobs =
+            focus === "visits" && view === "today"
+              ? jobs.filter((job) => (job.scheduleEvents?.length ?? 0) > 0)
+              : jobs;
+
+          const scheduledJobs = scopedJobs
             .map((job) => ({ job, nextEvent: job.scheduleEvents?.[0] ?? null }))
             .filter((item) => item.nextEvent)
             .sort((a, b) => (a.nextEvent!.startAt > b.nextEvent!.startAt ? 1 : -1));
 
-          const unscheduledJobs = jobs
+          const unscheduledJobs = scopedJobs
             .filter((job) => !job.scheduleEvents || job.scheduleEvents.length === 0)
             .sort((a, b) => (a.updatedAt > b.updatedAt ? -1 : 1));
 
@@ -277,12 +285,14 @@ export default async function JobsPage({
             <>
               {scheduledJobs.length > 0 ? (
                 <>
-                  <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Scheduled (soonest first)</h3>
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    {focus === "visits" && view === "today" ? "Today visits (soonest first)" : "Scheduled (soonest first)"}
+                  </h3>
                   {scheduledJobs.map(({ job }) => renderJobCard(job))}
                 </>
               ) : null}
 
-              {unscheduledJobs.length > 0 ? (
+              {focus === "visits" && view === "today" ? null : unscheduledJobs.length > 0 ? (
                 <>
                   <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Active, no schedule</h3>
                   {unscheduledJobs.map((job) => renderJobCard(job))}
@@ -291,7 +301,19 @@ export default async function JobsPage({
             </>
           );
         })()}
-        {jobs.length === 0 ? <p className="text-sm text-slate-500">No jobs found for this view.</p> : null}
+        {(() => {
+          const scopedCount =
+            focus === "visits" && view === "today"
+              ? jobs.filter((job) => (job.scheduleEvents?.length ?? 0) > 0).length
+              : jobs.length;
+          return scopedCount === 0 ? (
+            <p className="text-sm text-slate-500">
+              {focus === "visits" && view === "today"
+                ? "No visits scheduled today."
+                : "No jobs found for this view."}
+            </p>
+          ) : null;
+        })()}
       </section>
 
       <section id="new-job" className="rounded-2xl border border-slate-200 bg-white p-3">

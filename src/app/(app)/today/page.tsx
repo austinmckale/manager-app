@@ -129,7 +129,7 @@ export default async function TodayPage() {
         <h2 className="text-sm font-semibold text-slate-900">Daily Command</h2>
         <p className="mt-1 text-xs text-slate-500">Only today-critical actions for mobile use.</p>
         <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-          <Link href="/jobs?view=today" className="rounded-xl border border-slate-200 bg-slate-50 p-3 hover:bg-slate-100">
+          <Link href="/jobs?view=today&focus=visits" className="rounded-xl border border-slate-200 bg-slate-50 p-3 hover:bg-slate-100">
             <p className="text-xs text-slate-500">Visits today</p>
             <p className="mt-1 text-xl font-semibold text-slate-900">{visitsTodayCount}</p>
           </Link>
