@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 type EnvMap = Record<string, string>;
 
@@ -150,7 +150,7 @@ async function dumpDatabase(databaseUrl: string, outputPath: string) {
 }
 
 async function listBucketFilesRecursive(
-  client: ReturnType<typeof createClient>,
+  client: SupabaseClient<any, any, any, any, any>,
   bucket: string,
   prefix = "",
 ): Promise<StorageManifestFile[]> {
