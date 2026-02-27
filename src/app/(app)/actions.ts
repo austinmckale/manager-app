@@ -1,7 +1,7 @@
 "use server";
 
 import { ExpenseCategory, InvoiceStatus, JobStatus, LeadSource, LeadStage, LineItemType, Prisma, Role } from "@prisma/client";
-import { addDays, format, setHours, setMinutes, setSeconds, startOfDay, startOfWeek, subHours } from "date-fns";
+import { addDays, endOfDay, format, setHours, setMinutes, setSeconds, startOfDay, startOfWeek, subHours } from "date-fns";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
