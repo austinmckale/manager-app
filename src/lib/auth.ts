@@ -16,6 +16,16 @@ type RequireAuthOptions = {
 };
 
 const AUTH_REQUIRED = process.env.AUTH_REQUIRED === "1" || process.env.NODE_ENV === "production";
+const AUTH_ALLOWED_EMAILS = (process.env.AUTH_ALLOWED_EMAILS ?? "")
+  .split(",")
+  .map((value) => value.trim().toLowerCase())
+  .filter(Boolean);
+
+export function isEmailAllowed(email?: string | null) {
+  if (AUTH_ALLOWED_EMAILS.length === 0) return true;
+  if (!email) return false;
+  return AUTH_ALLOWED_EMAILS.includes(email.trim().toLowerCase());
+}
 
 async function ensureBaseOrg() {
   const existing = await prisma.organization.findFirst({
@@ -137,6 +147,9 @@ export async function requireAuth(options?: RequireAuthOptions): Promise<AuthCon
     const supabase = await createServerSupabase();
     const { data, error } = await supabase.auth.getUser();
     if (!error && data.user) {
+      if (!isEmailAllowed(data.user.email)) {
+        throw new Error("Unauthorized");
+      }
       const profile = await ensureUserForSessionUser(data.user);
       return {
         userId: profile.id,

@@ -1,6 +1,7 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { isEmailAllowed } from "@/lib/auth";
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
@@ -29,6 +30,11 @@ export async function GET(request: Request) {
 
   await supabase.auth.exchangeCodeForSession(code);
 
+  const { data } = await supabase.auth.getUser();
+  if (!isEmailAllowed(data.user?.email)) {
+    await supabase.auth.signOut();
+    return NextResponse.redirect(`${origin}/login?error=unauthorized`);
+  }
+
   return NextResponse.redirect(`${origin}/dashboard`);
 }
-
