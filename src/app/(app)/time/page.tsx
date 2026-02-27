@@ -176,7 +176,7 @@ export default async function TimePage({
       <TeamTabs active="payroll" />
 
       <section className="rounded-2xl border border-teal-200 bg-teal-50 p-4">
-        <h2 className="text-base font-semibold text-teal-900">Payroll week</h2>
+        <h2 className="text-base font-semibold text-teal-900">Payroll Dashboard</h2>
         <p className="mt-1 text-sm text-teal-800">
           Review this week’s hours and pay, lock the week when you’re ready to run payroll, then export or use the time data in your bank or processor. You can add or edit time below until the week is locked.
         </p>

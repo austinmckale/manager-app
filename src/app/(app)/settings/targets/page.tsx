@@ -60,8 +60,8 @@ export default async function TargetSettingsPage() {
 
       {manage ? (
         <section className="rounded-2xl border border-slate-200 bg-white p-4">
-          <h2 className="text-sm font-semibold text-slate-900">Time Tracking Rules</h2>
-          <p className="mt-1 text-xs text-slate-500">Used for attendance: when someone is marked late vs missing, and who can edit time.</p>
+          <h2 className="text-sm font-semibold text-slate-900">Time Tracking & Alerts</h2>
+          <p className="mt-1 text-xs text-slate-500">Controls attendance rules and optional Discord clock-in alerts.</p>
           <form action={updateOrgSettingsAction} className="mt-3 grid gap-3 text-sm">
             <div className="grid gap-1 sm:grid-cols-2">
               <label className="block text-xs text-slate-600">Default clock-in time</label>
@@ -91,8 +91,12 @@ export default async function TargetSettingsPage() {
               Workers can edit own same-day entries
             </label>
             <label className="flex items-center gap-2">
-              <input type="checkbox" name="gpsTimeTrackingEnabled" defaultChecked={settings?.gpsTimeTrackingEnabled ?? false} />
-              Enable optional GPS start/stop
+              <input
+                type="checkbox"
+                name="discordClockInAlertsEnabled"
+                defaultChecked={settings?.gpsTimeTrackingEnabled ?? false}
+              />
+              Enable Discord clock-in alerts from Overview
             </label>
             <button type="submit" className="rounded-xl border border-slate-300 px-3 py-2">
               Save Rules

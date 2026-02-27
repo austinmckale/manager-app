@@ -72,7 +72,6 @@ export async function getJobs(params: {
   if (isDemoMode()) {
     const assignments = getMergedDemoAssignments();
     const scheduleEvents = getMergedDemoScheduleEvents();
-    const assignedJobIds = assignments.map((assignment) => assignment.jobId);
 
     const filtered = demoJobs.filter((job) => {
       const statusOk = !params.status || params.status === "ALL" || job.status === params.status;
@@ -263,6 +262,7 @@ export async function getTodayOpsSummary(params: { orgId: string; userId: string
       weekEvents,
       overdueTasks,
       unsentEstimates: 1,
+      sentEstimates: 2,
       unpaidInvoices: 2,
       missingReceipts: 1,
       newLeadsAwaitingContact: 2,
@@ -287,7 +287,18 @@ export async function getTodayOpsSummary(params: { orgId: string; userId: string
 
   const assignmentFilter = params.role === Role.WORKER ? { assignments: { some: { userId: params.userId } } } : {};
 
-  const [assignedJobs, todayEvents, weekEvents, overdueTasks, unsentEstimates, unpaidInvoices, missingReceipts, newLeadsAwaitingContact, newLeadList] =
+  const [
+    assignedJobs,
+    todayEvents,
+    weekEvents,
+    overdueTasks,
+    unsentEstimates,
+    sentEstimates,
+    unpaidInvoices,
+    missingReceipts,
+    newLeadsAwaitingContact,
+    newLeadList,
+  ] =
     await Promise.all([
       prisma.job.findMany({
         where: { orgId: params.orgId, ...assignmentFilter },
@@ -320,6 +331,7 @@ export async function getTodayOpsSummary(params: { orgId: string; userId: string
         orderBy: { dueDate: "asc" },
       }),
       prisma.estimate.count({ where: { job: { orgId: params.orgId, ...assignmentFilter }, status: "DRAFT" } }),
+      prisma.estimate.count({ where: { job: { orgId: params.orgId, ...assignmentFilter }, status: "SENT" } }),
       prisma.invoice.count({ where: { job: { orgId: params.orgId, ...assignmentFilter }, status: { in: ["SENT", "OVERDUE"] } } }),
       prisma.expense.count({
         where: {
@@ -357,6 +369,7 @@ export async function getTodayOpsSummary(params: { orgId: string; userId: string
     weekEvents,
     overdueTasks,
     unsentEstimates,
+    sentEstimates,
     unpaidInvoices,
     missingReceipts,
     newLeadsAwaitingContact,

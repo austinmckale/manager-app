@@ -2,7 +2,7 @@
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const redirectTo = url.searchParams.get("redirectTo") ?? "/dashboard";
+  const redirectTo = url.searchParams.get("redirectTo") ?? "/today";
 
   const response = NextResponse.redirect(new URL(redirectTo, url.origin));
   response.cookies.set("dev_bypass", "1", {

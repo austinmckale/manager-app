@@ -1928,19 +1928,21 @@ export async function updateOrgSettingsAction(formData: FormData) {
   const defaultClockInTime = String(formData.get("defaultClockInTime") ?? "07:00");
   const clockGraceRaw = Number(formData.get("clockGraceMinutes") ?? 10);
   const clockGraceMinutes = Number.isFinite(clockGraceRaw) ? Math.max(0, Math.min(120, Math.trunc(clockGraceRaw))) : 10;
+  const discordClockInAlertsEnabled =
+    formData.get("discordClockInAlertsEnabled") === "on" || formData.get("gpsTimeTrackingEnabled") === "on";
 
   await prisma.organizationSetting.upsert({
     where: { orgId: auth.orgId },
     update: {
       workerCanEditOwnTimeSameDay: formData.get("workerCanEditOwnTimeSameDay") === "on",
-      gpsTimeTrackingEnabled: formData.get("gpsTimeTrackingEnabled") === "on",
+      gpsTimeTrackingEnabled: discordClockInAlertsEnabled,
       defaultClockInTime,
       clockGraceMinutes,
     },
     create: {
       orgId: auth.orgId,
       workerCanEditOwnTimeSameDay: formData.get("workerCanEditOwnTimeSameDay") === "on",
-      gpsTimeTrackingEnabled: formData.get("gpsTimeTrackingEnabled") === "on",
+      gpsTimeTrackingEnabled: discordClockInAlertsEnabled,
       defaultClockInTime,
       clockGraceMinutes,
     },

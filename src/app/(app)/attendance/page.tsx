@@ -280,7 +280,7 @@ export default async function AttendancePage({
       <TeamTabs active="attendance" />
 
       <section className="rounded-2xl border border-teal-200 bg-teal-50 p-4">
-        <h2 className="text-base font-semibold text-teal-900">Team & attendance</h2>
+        <h2 className="text-base font-semibold text-teal-900">Attendance Dashboard</h2>
         <p className="mt-1 text-sm text-teal-800">
           See each employee&apos;s week, then clock everyone in/out in Today Roster. Add and manage workers at the bottom.
         </p>
