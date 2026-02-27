@@ -15,7 +15,7 @@ type RequireAuthOptions = {
   allowFallback?: boolean;
 };
 
-const AUTH_REQUIRED = process.env.AUTH_REQUIRED === "1";
+const AUTH_REQUIRED = process.env.AUTH_REQUIRED === "1" || process.env.NODE_ENV === "production";
 
 async function ensureBaseOrg() {
   const existing = await prisma.organization.findFirst({
