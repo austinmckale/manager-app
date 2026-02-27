@@ -164,41 +164,44 @@ export default async function DashboardPage() {
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="text-base font-semibold text-slate-900">Form submissions (website)</h2>
-          <Link
-            href="/leads?source=WEBSITE_FORM"
-            className="text-sm text-slate-500 hover:text-slate-900"
-          >
-            View all
-          </Link>
-        </div>
-        <div className="mt-3 flex flex-wrap gap-4 text-sm">
-          <span className="text-slate-500">Today:</span>
-          <span className="font-medium text-slate-900">{formSubmissionStats.today}</span>
-          <span className="text-slate-500">7d:</span>
-          <span className="font-medium text-slate-900">{formSubmissionStats.last7}</span>
-          <span className="text-slate-500">30d:</span>
-          <span className="font-medium text-slate-900">{formSubmissionStats.last30}</span>
-        </div>
-        {recentFormLeads.length === 0 ? (
-          <p className="mt-3 text-sm text-slate-500">No website form submissions yet.</p>
-        ) : (
-          <ul className="mt-3 space-y-2">
-            {recentFormLeads.map((lead) => (
-              <li key={lead.id} className="flex items-center justify-between gap-2 text-sm">
-                <Link href="/leads" className="font-medium text-slate-900 hover:underline">
-                  {lead.contactName}
-                </Link>
-                <span className="text-slate-500">
-                  {lead.serviceType ?? "-"} · {format(lead.createdAt, "MMM d, yyyy")}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+        <details>
+          <summary className="cursor-pointer text-base font-semibold text-slate-900">
+            Website form log
+          </summary>
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <Link
+              href="/leads?source=WEBSITE_FORM"
+              className="text-sm text-slate-500 hover:text-slate-900"
+            >
+              View all
+            </Link>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-4 text-sm">
+            <span className="text-slate-500">Today:</span>
+            <span className="font-medium text-slate-900">{formSubmissionStats.today}</span>
+            <span className="text-slate-500">7d:</span>
+            <span className="font-medium text-slate-900">{formSubmissionStats.last7}</span>
+            <span className="text-slate-500">30d:</span>
+            <span className="font-medium text-slate-900">{formSubmissionStats.last30}</span>
+          </div>
+          {recentFormLeads.length === 0 ? (
+            <p className="mt-3 text-sm text-slate-500">No website form submissions yet.</p>
+          ) : (
+            <ul className="mt-3 space-y-2">
+              {recentFormLeads.map((lead) => (
+                <li key={lead.id} className="flex items-center justify-between gap-2 text-sm">
+                  <Link href="/leads" className="font-medium text-slate-900 hover:underline">
+                    {lead.contactName}
+                  </Link>
+                  <span className="text-slate-500">
+                    {lead.serviceType ?? "-"} · {format(lead.createdAt, "MMM d, yyyy")}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </details>
       </section>
     </div>
   );
 }
-

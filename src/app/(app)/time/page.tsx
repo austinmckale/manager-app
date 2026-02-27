@@ -1,9 +1,10 @@
 import { endOfWeek, format, startOfWeek } from "date-fns";
 import { createTimeEntryAction, deleteTimeEntryAction, setPayrollWeekStateAction, updateTimeEntryAction } from "@/app/(app)/actions";
+import { TeamTabs } from "@/components/team-tabs";
 import { requireAuth } from "@/lib/auth";
 import { getJobs, getOrgUsers } from "@/lib/data";
 import { demoJobs, demoUsers, isDemoMode, listDemoRuntimeTimeEntries } from "@/lib/demo";
-import { canEditTimeEntry, canManageOrg } from "@/lib/permissions";
+import { canEditTimeEntry } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 import { currency, toNumber } from "@/lib/utils";
 
@@ -172,6 +173,8 @@ export default async function TimePage({
 
   return (
     <div className="space-y-4">
+      <TeamTabs active="payroll" />
+
       <section className="rounded-2xl border border-teal-200 bg-teal-50 p-4">
         <h2 className="text-base font-semibold text-teal-900">Payroll week</h2>
         <p className="mt-1 text-sm text-teal-800">
@@ -198,32 +201,30 @@ export default async function TimePage({
           </span>
         </div>
 
-        {canManageOrg(auth.role) && (
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <form action={setPayrollWeekStateAction} className="inline">
-              <input type="hidden" name="weekStart" value={weekStartKey} />
-              <input type="hidden" name="state" value="OPEN" />
-              <button type="submit" className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs">Reopen week</button>
-            </form>
-            <form action={setPayrollWeekStateAction} className="inline">
-              <input type="hidden" name="weekStart" value={weekStartKey} />
-              <input type="hidden" name="state" value="LOCKED" />
-              <button type="submit" className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs">Lock week</button>
-            </form>
-            <form action={setPayrollWeekStateAction} className="inline">
-              <input type="hidden" name="weekStart" value={weekStartKey} />
-              <input type="hidden" name="state" value="PAID" />
-              <button type="submit" className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs">Mark paid</button>
-            </form>
-            <a
-              href={exportWeekUrl}
-              download
-              className="rounded-lg border border-teal-300 bg-teal-50 px-2.5 py-1.5 text-xs font-medium text-teal-800"
-            >
-              Export this week (CSV)
-            </a>
-          </div>
-        )}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <form action={setPayrollWeekStateAction} className="inline">
+            <input type="hidden" name="weekStart" value={weekStartKey} />
+            <input type="hidden" name="state" value="OPEN" />
+            <button type="submit" className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs">Reopen week</button>
+          </form>
+          <form action={setPayrollWeekStateAction} className="inline">
+            <input type="hidden" name="weekStart" value={weekStartKey} />
+            <input type="hidden" name="state" value="LOCKED" />
+            <button type="submit" className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs">Lock week</button>
+          </form>
+          <form action={setPayrollWeekStateAction} className="inline">
+            <input type="hidden" name="weekStart" value={weekStartKey} />
+            <input type="hidden" name="state" value="PAID" />
+            <button type="submit" className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs">Mark paid</button>
+          </form>
+          <a
+            href={exportWeekUrl}
+            download
+            className="rounded-lg border border-teal-300 bg-teal-50 px-2.5 py-1.5 text-xs font-medium text-teal-800"
+          >
+            Export this week (CSV)
+          </a>
+        </div>
 
         {payrollWeekLocked && (
           <p className="mt-2 text-xs text-amber-700">This week is locked. Time entry is read-only until you reopen it.</p>
@@ -273,14 +274,12 @@ export default async function TimePage({
               <option key={job.id} value={job.id}>{job.jobName}</option>
             ))}
           </select>
-          {canManageOrg(auth.role) && (
-            <select name="workerId" className="rounded-xl border border-slate-300 px-3 py-2 text-sm">
-              <option value="">Worker (self)</option>
-              {users.map((user) => (
-                <option key={user.id} value={user.id}>{user.fullName}</option>
-              ))}
-            </select>
-          )}
+          <select name="workerId" className="rounded-xl border border-slate-300 px-3 py-2 text-sm">
+            <option value="">Worker (self)</option>
+            {users.map((user) => (
+              <option key={user.id} value={user.id}>{user.fullName}</option>
+            ))}
+          </select>
           <input name="start" type="datetime-local" required className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
           <input name="end" type="datetime-local" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
           <textarea name="notes" rows={2} placeholder="Notes (optional)" className="rounded-xl border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />

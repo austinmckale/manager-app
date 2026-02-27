@@ -4,17 +4,15 @@ import { requireAuth } from "@/lib/auth";
 import { getTodayOpsSummary } from "@/lib/data";
 import { computeDashboardKpis } from "@/lib/kpis";
 import { isDemoMode } from "@/lib/demo";
-import { canManageOrg } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 import { currency } from "@/lib/utils";
 import { sendDailyOpsDigestAction, sendMissingClockInsAlertAction } from "@/app/(app)/actions";
 
 export default async function TodayPage() {
   const auth = await requireAuth();
-  const isOwnerOrAdmin = canManageOrg(auth.role);
   const [ops, kpis, attendanceAlertCount, captureCountsByJob] = await Promise.all([
     getTodayOpsSummary({ orgId: auth.orgId, userId: auth.userId, role: auth.role }),
-    isOwnerOrAdmin ? computeDashboardKpis(auth.orgId) : Promise.resolve({ outstandingInvoicesTotal: 0 }),
+    computeDashboardKpis(auth.orgId),
     (async () => {
       if (isDemoMode()) return 1;
       const [settings, users, entries] = await Promise.all([
@@ -69,130 +67,120 @@ export default async function TodayPage() {
 
   return (
     <div className="space-y-4">
-      {isOwnerOrAdmin ? (
-        <>
-          <section className="rounded-2xl border border-slate-200 bg-white p-4">
-            <h2 className="text-sm font-semibold text-slate-900">Owner Command Center</h2>
-            <p className="mt-2 text-sm text-slate-600">
-              Start on Today each morning, then use Team for schedule and Time for weekly hours.
-            </p>
-            <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-              <Link href="/attendance" className="rounded-xl border border-slate-300 px-3 py-2">
-                Clock Employees
-              </Link>
-              <Link href="/leads#new-lead-form" className="rounded-xl border border-slate-300 px-3 py-2">
-                New Lead
-              </Link>
-              <Link href="/time" className="rounded-xl border border-slate-300 px-3 py-2">
-                Payroll Week
-              </Link>
-              <Link href="/reports" className="rounded-xl border border-slate-300 px-3 py-2">
-                Export Reports
-              </Link>
-            </div>
-          </section>
-
-          <section className="rounded-2xl border border-slate-200 bg-white p-4">
-            <h2 className="text-sm font-semibold text-slate-900">Priority Queue</h2>
-            <p className="mt-0.5 text-xs text-slate-500">
-              Click a card to go fix it. Overdue = tasks past due date. Missing receipts = expenses with no receipt attached.
-            </p>
-            <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-              <Link href="/leads" className="rounded-xl border border-rose-300 bg-rose-50 p-3">
-                <p className="text-xs text-rose-700">New Leads (Uncontacted)</p>
-                <p className="mt-1 text-xl font-semibold text-rose-700">{ops.newLeadsAwaitingContact}</p>
-              </Link>
-              <div className="rounded-xl border border-rose-200 bg-rose-50 p-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="text-xs text-rose-700">Missing Clock-ins</p>
-                    <p className="mt-1 text-xl font-semibold text-rose-700">{attendanceAlertCount}</p>
-                  </div>
-                  {attendanceAlertCount > 0 ? (
-                    <form action={sendMissingClockInsAlertAction}>
-                      <button
-                        type="submit"
-                        className="rounded-lg border border-rose-300 bg-white px-2 py-1 text-[11px] text-rose-700 hover:bg-rose-50"
-                      >
-                        Ping me on Discord
-                      </button>
-                    </form>
-                  ) : null}
-                </div>
-                <p className="mt-1 text-[11px] text-rose-700/80">
-                  Sends a one-time alert with who hasn’t clocked in yet today.
-                </p>
-              </div>
-              <Link href="/jobs#overdue-tasks" className="rounded-xl border border-amber-200 bg-amber-50 p-3">
-                <p className="text-xs text-amber-700">Overdue Tasks</p>
-                <p className="mt-1 text-xl font-semibold text-amber-700">{ops.overdueTasks.length}</p>
-              </Link>
-              <Link href="/jobs#missing-receipts" className="rounded-xl border border-sky-200 bg-sky-50 p-3">
-                <p className="text-xs text-sky-700">Missing Receipts</p>
-                <p className="mt-1 text-xl font-semibold text-sky-700">{ops.missingReceipts}</p>
-              </Link>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <p className="text-xs text-slate-700">Daily ops digest</p>
-                <p className="mt-1 text-[11px] text-slate-500">
-                  Sends a one-time Discord summary of overdue tasks, missing receipts, and missing clock-ins for today.
-                </p>
-                <form action={sendDailyOpsDigestAction} className="mt-2">
-                  <button
-                    type="submit"
-                    className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50"
-                  >
-                    Send digest now
-                  </button>
-                </form>
-              </div>
-              <Link href="/accounting" className="rounded-xl border border-amber-200 bg-amber-50 p-3">
-                <p className="text-xs text-amber-700">Unpaid invoices (owed to you)</p>
-                <p className="mt-1 text-xl font-semibold text-amber-700">{currency(kpis.outstandingInvoicesTotal)}</p>
-              </Link>
-            </div>
-          </section>
-
-          <section className="rounded-2xl border border-rose-200 bg-white p-4">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold text-slate-900">New Leads Requiring First Contact</h2>
-              <Link href="/leads" className="rounded-lg border border-slate-300 px-2 py-1 text-xs">
-                Open Leads
-              </Link>
-            </div>
-            <div className="mt-3 space-y-2 text-sm">
-              {ops.newLeadList.map((lead) => (
-                <article key={lead.id} className="rounded-xl border border-rose-100 bg-rose-50 p-3">
-                  <p className="font-medium text-slate-900">{lead.contactName}</p>
-                  <p className="text-xs text-slate-600">
-                    {(lead.serviceType || "Service TBD")} - {lead.source.replaceAll("_", " ")}
-                  </p>
-                  <p className="text-xs text-slate-500">Received {format(lead.createdAt, "EEE h:mm a")}</p>
-                </article>
-              ))}
-              {ops.newLeadList.length === 0 ? (
-                <p className="text-sm text-slate-500">No uncontacted leads right now.</p>
-              ) : null}
-            </div>
-          </section>
-        </>
-      ) : null}
+      <section className="rounded-2xl border border-slate-200 bg-white p-4">
+        <h2 className="text-sm font-semibold text-slate-900">Owner Command Center</h2>
+        <p className="mt-2 text-sm text-slate-600">
+          Start on Today each morning, then use Team for schedule and the Payroll tab for weekly hours.
+        </p>
+        <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+          <Link href="/attendance" className="rounded-xl border border-slate-300 px-3 py-2">
+            Clock Employees
+          </Link>
+          <Link href="/leads#new-lead-form" className="rounded-xl border border-slate-300 px-3 py-2">
+            New Lead
+          </Link>
+          <Link href="/time" className="rounded-xl border border-slate-300 px-3 py-2">
+            Payroll Week
+          </Link>
+          <Link href="/reports" className="rounded-xl border border-slate-300 px-3 py-2">
+            Export Reports
+          </Link>
+        </div>
+      </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
-        <h2 className="text-sm font-semibold text-slate-900">
-          {isOwnerOrAdmin ? "Today Job Run Sheet" : "Your schedule today"}
-        </h2>
-        <p className="mt-1 text-xs text-slate-500">
-          {isOwnerOrAdmin
-            ? "Every scheduled block across the company today. For each row: Hub (scope/Joist, details) → Time (confirm hours) → Capture (photos/receipts)."
-            : "Your scheduled blocks today. For each: open Hub (scope & details), confirm hours on Time, then Capture (photos/receipts)."}
+        <h2 className="text-sm font-semibold text-slate-900">Priority Queue</h2>
+        <p className="mt-0.5 text-xs text-slate-500">
+          Click a card to go fix it. Overdue = tasks past due date. Missing receipts = expenses with no receipt attached (24h+).
         </p>
-        {isOwnerOrAdmin ? (
-          <p className="mt-1 text-xs font-semibold text-slate-700">
-            Today: {jobsTodayCount} job{jobsTodayCount === 1 ? "" : "s"} · {visitsTodayCount} visit
-            {visitsTodayCount === 1 ? "" : "s"} · {attendanceAlertCount} missing clock-in
-            {attendanceAlertCount === 1 ? "" : "s"}
-          </p>
-        ) : null}
+        <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+          <Link href="/leads" className="rounded-xl border border-rose-300 bg-rose-50 p-3">
+            <p className="text-xs text-rose-700">New Leads (Uncontacted)</p>
+            <p className="mt-1 text-xl font-semibold text-rose-700">{ops.newLeadsAwaitingContact}</p>
+          </Link>
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-3">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="text-xs text-rose-700">Missing Clock-ins</p>
+                <p className="mt-1 text-xl font-semibold text-rose-700">{attendanceAlertCount}</p>
+              </div>
+              {attendanceAlertCount > 0 ? (
+                <form action={sendMissingClockInsAlertAction}>
+                  <button
+                    type="submit"
+                    className="rounded-lg border border-rose-300 bg-white px-2 py-1 text-[11px] text-rose-700 hover:bg-rose-50"
+                  >
+                    Ping me on Discord
+                  </button>
+                </form>
+              ) : null}
+            </div>
+            <p className="mt-1 text-[11px] text-rose-700/80">
+              Sends a one-time alert with who hasn’t clocked in yet today.
+            </p>
+          </div>
+          <Link href="/jobs#overdue-tasks" className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+            <p className="text-xs text-amber-700">Overdue Tasks</p>
+            <p className="mt-1 text-xl font-semibold text-amber-700">{ops.overdueTasks.length}</p>
+          </Link>
+          <Link href="/jobs#missing-receipts" className="rounded-xl border border-sky-200 bg-sky-50 p-3">
+            <p className="text-xs text-sky-700">Missing Receipts (24h+)</p>
+            <p className="mt-1 text-xl font-semibold text-sky-700">{ops.missingReceipts}</p>
+          </Link>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <p className="text-xs text-slate-700">Daily ops digest</p>
+            <p className="mt-1 text-[11px] text-slate-500">
+              Sends a one-time Discord summary of overdue tasks, missing receipts, and missing clock-ins for today.
+            </p>
+            <form action={sendDailyOpsDigestAction} className="mt-2">
+              <button
+                type="submit"
+                className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50"
+              >
+                Send digest now
+              </button>
+            </form>
+          </div>
+          <Link href="/accounting" className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+            <p className="text-xs text-amber-700">Unpaid invoices (owed to you)</p>
+            <p className="mt-1 text-xl font-semibold text-amber-700">{currency(kpis.outstandingInvoicesTotal)}</p>
+          </Link>
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-rose-200 bg-white p-4">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-slate-900">New Leads Requiring First Contact</h2>
+          <Link href="/leads" className="rounded-lg border border-slate-300 px-2 py-1 text-xs">
+            Open Leads
+          </Link>
+        </div>
+        <div className="mt-3 space-y-2 text-sm">
+          {ops.newLeadList.map((lead) => (
+            <article key={lead.id} className="rounded-xl border border-rose-100 bg-rose-50 p-3">
+              <p className="font-medium text-slate-900">{lead.contactName}</p>
+              <p className="text-xs text-slate-600">
+                {(lead.serviceType || "Service TBD")} - {lead.source.replaceAll("_", " ")}
+              </p>
+              <p className="text-xs text-slate-500">Received {format(lead.createdAt, "EEE h:mm a")}</p>
+            </article>
+          ))}
+          {ops.newLeadList.length === 0 ? (
+            <p className="text-sm text-slate-500">No uncontacted leads right now.</p>
+          ) : null}
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-4">
+        <h2 className="text-sm font-semibold text-slate-900">Today Job Run Sheet</h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Every scheduled block across the company today. For each row: Hub (scope/Joist, details) → Time (confirm hours) → Capture (photos/receipts).
+        </p>
+        <p className="mt-1 text-xs font-semibold text-slate-700">
+          Today: {jobsTodayCount} job{jobsTodayCount === 1 ? "" : "s"} · {visitsTodayCount} visit
+          {visitsTodayCount === 1 ? "" : "s"} · {attendanceAlertCount} missing clock-in
+          {attendanceAlertCount === 1 ? "" : "s"}
+        </p>
         <div className="mt-3 space-y-2 text-sm">
           {(() => {
             const seen = new Set<string>();
@@ -267,70 +255,18 @@ export default async function TodayPage() {
           })()}
           {ops.todayEvents.length === 0 ? (
             <p className="text-sm text-slate-500">
-              {isOwnerOrAdmin ? "No schedule blocks for today. Add blocks on each job’s hub." : "No blocks scheduled for you today."}
+              No schedule blocks for today. Add blocks on each job’s hub.
             </p>
+          ) : null}
+          {ops.todayEvents.length === 0 ? (
+            <div className="mt-2">
+              <Link href="/jobs?view=week" className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs text-slate-700">
+                Open Jobs Board
+              </Link>
+            </div>
           ) : null}
         </div>
       </section>
-
-      {!isOwnerOrAdmin ? (
-        <>
-          <section className="rounded-2xl border border-slate-200 bg-white p-4">
-            <h2 className="text-sm font-semibold text-slate-900">This week</h2>
-            <p className="mt-1 text-xs text-slate-500">
-              Jobs you’re scheduled on this week—one link per job to open the hub.
-            </p>
-            <div className="mt-3 space-y-1.5">
-              {(() => {
-                const jobsById = new Map<string, { jobName: string; jobId: string }>();
-                for (const event of ops.weekEvents) {
-                  const id = event.job?.id;
-                  if (id && !jobsById.has(id)) {
-                    jobsById.set(id, { jobName: event.job.jobName, jobId: id });
-                  }
-                }
-                return [...jobsById.values()].slice(0, 12).map(({ jobName, jobId }) => {
-                  return (
-                    <Link
-                      key={jobId}
-                      href={`/jobs/${jobId}`}
-                      className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2 text-sm hover:bg-slate-100"
-                    >
-                      <span className="font-medium text-slate-900">{jobName}</span>
-                      <span className="text-xs text-slate-500">Open hub</span>
-                    </Link>
-                  );
-                });
-              })()}
-              {ops.weekEvents.length === 0 ? (
-                <p className="text-sm text-slate-500">
-                  No blocks this week. You’re on Assigned jobs below when crew is set.
-                </p>
-              ) : null}
-            </div>
-          </section>
-
-          <section className="rounded-2xl border border-slate-200 bg-white p-4">
-            <h2 className="text-sm font-semibold text-slate-900">Assigned jobs</h2>
-            <p className="mt-1 text-xs text-slate-500">
-              Jobs you’re on the crew for. Open the hub for scope, time, and capture.
-            </p>
-            <div className="mt-3 space-y-1.5">
-              {ops.assignedJobs.slice(0, 8).map((job) => (
-                <Link key={job.id} href={`/jobs/${job.id}`} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50">
-                  <span className="font-medium text-slate-900">{job.jobName}</span>
-                  <span className="text-xs text-slate-500 truncate max-w-[50%]">{job.address}</span>
-                </Link>
-              ))}
-              {ops.assignedJobs.length === 0 ? (
-                <p className="text-sm text-slate-500">
-                  You’re not assigned to any jobs. Ask an admin to assign you on Team (Attendance).
-                </p>
-              ) : null}
-            </div>
-          </section>
-        </>
-      ) : null}
     </div>
   );
 }

@@ -14,6 +14,8 @@ const stageOrder: LeadStage[] = [
   LeadStage.WON,
   LeadStage.LOST,
 ];
+const openStages = [LeadStage.NEW, LeadStage.CONTACTED, LeadStage.SITE_VISIT_SET, LeadStage.ESTIMATE_SENT];
+const closedStages = [LeadStage.WON, LeadStage.LOST];
 
 const sourceOptions: LeadSource[] = [
   LeadSource.WEBSITE_FORM,
@@ -89,7 +91,7 @@ export default async function LeadsPage() {
 
   const websiteFormLeads = leads.filter((l) => l.source === LeadSource.WEBSITE_FORM);
   const now = new Date();
-  const closedCutoff = subDays(now, 90);
+  const closedCutoff = subDays(now, 30);
   const formSubmissionStats = {
     today: websiteFormLeads.filter((l) => l.createdAt >= startOfDay(now) && l.createdAt <= endOfDay(now)).length,
     last7: websiteFormLeads.filter((l) => l.createdAt >= startOfDay(subDays(now, 7)) && l.createdAt <= endOfDay(now)).length,
@@ -102,12 +104,25 @@ export default async function LeadsPage() {
       <section className="rounded-2xl border border-teal-200 bg-teal-50 p-4">
         <h2 className="text-base font-semibold text-teal-900">Lead Intake</h2>
         <p className="mt-1 text-sm text-teal-800">Capture website forms, phone calls, and text leads in one place.</p>
-        <p className="mt-1 text-xs text-teal-700">
-          Site webhook endpoint: <span className="font-mono">{intakeWebhookUrl}</span>
-        </p>
-        <p className="mt-1 text-xs text-teal-700">
-          Required header: <span className="font-mono">x-lead-intake-key: [your LEAD_INGEST_API_KEY]</span>
-        </p>
+        <details className="mt-2">
+          <summary className="cursor-pointer text-xs font-medium text-teal-800">
+            Technical intake settings
+          </summary>
+          <p className="mt-2 text-xs text-teal-700">
+            Site webhook endpoint: <span className="font-mono">{intakeWebhookUrl}</span>
+          </p>
+          <p className="mt-1 text-xs text-teal-700">
+            Required header: <span className="font-mono">x-lead-intake-key: [your LEAD_INGEST_API_KEY]</span>
+          </p>
+        </details>
+        <div className="mt-3 flex flex-wrap gap-2 text-xs">
+          <Link href="/jobs?view=week" className="rounded-lg border border-teal-300 bg-white px-2.5 py-1 text-teal-700">
+            Jobs board (this week)
+          </Link>
+          <Link href="/jobs#new-job" className="rounded-lg border border-teal-300 bg-white px-2.5 py-1 text-teal-700">
+            New job
+          </Link>
+        </div>
       </section>
 
       <section
@@ -115,7 +130,7 @@ export default async function LeadsPage() {
         className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4"
       >
         <h3 className="text-sm font-semibold text-emerald-900">Upload from Joist (CSV)</h3>
-        <p className="mt-1 text-xs text-emerald-800">
+        <p className="mt-2 text-xs text-emerald-800">
           Export estimates/invoices from Joist, then upload the CSV here to auto-create or update leads. Mark them WON to
           convert into jobs.
         </p>
@@ -137,32 +152,6 @@ export default async function LeadsPage() {
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
-        <h3 className="text-base font-semibold text-slate-900">Form submissions (website)</h3>
-        <div className="mt-3 flex flex-wrap gap-4 text-sm">
-          <span className="text-slate-500">Today:</span>
-          <span className="font-medium text-slate-900">{formSubmissionStats.today}</span>
-          <span className="text-slate-500">7d:</span>
-          <span className="font-medium text-slate-900">{formSubmissionStats.last7}</span>
-          <span className="text-slate-500">30d:</span>
-          <span className="font-medium text-slate-900">{formSubmissionStats.last30}</span>
-        </div>
-        {recentFormLeads.length === 0 ? (
-          <p className="mt-3 text-sm text-slate-500">No website form submissions yet.</p>
-        ) : (
-          <ul className="mt-3 space-y-2">
-            {recentFormLeads.map((lead) => (
-              <li key={lead.id} className="flex items-center justify-between gap-2 text-sm">
-                <span className="font-medium text-slate-900">{lead.contactName}</span>
-                <span className="text-slate-500">
-                  {(lead as LeadRow).serviceType ?? "-"} · {format(lead.createdAt, "MMM d, yyyy")}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section className="rounded-2xl border border-slate-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-slate-900">Pipeline Command</h3>
         <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
           <article className="rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -176,53 +165,35 @@ export default async function LeadsPage() {
         </div>
       </section>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-4" id="new-lead-form">
-        <h3 className="text-sm font-semibold text-slate-900">New Lead</h3>
-        <form action={createLeadAction} className="mt-3 grid gap-2 sm:grid-cols-2">
-          <input name="contactName" required placeholder="Contact name" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
-          <select name="source" defaultValue={LeadSource.WEBSITE_FORM} className="rounded-xl border border-slate-300 px-3 py-2 text-sm">
-            {sourceOptions.map((source) => (
-              <option key={source} value={source}>{source.replaceAll("_", " ")}</option>
+      <section className="rounded-2xl border border-slate-200 bg-white p-4">
+        <details>
+          <summary className="cursor-pointer text-sm font-semibold text-slate-900">
+            Stage summary
+          </summary>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {stageOrder.map((stage) => (
+              <article key={stage} className="rounded-2xl border border-slate-200 bg-white p-3">
+                <p className="text-xs uppercase tracking-wide text-slate-500">{stage.replaceAll("_", " ")}</p>
+                <p className="mt-2 text-xl font-semibold text-slate-900">{stageCounts.get(stage) ?? 0}</p>
+              </article>
             ))}
-          </select>
-          <input name="phone" placeholder="Phone" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
-          <input name="email" type="email" placeholder="Email" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
-          <input name="address" placeholder="Address" className="rounded-xl border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
-          <input name="serviceType" placeholder="Service type (kitchen, roof, water damage)" className="rounded-xl border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
-          <textarea name="notes" rows={2} placeholder="Notes" className="rounded-xl border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
-          <button type="submit" className="rounded-xl bg-teal-600 px-4 py-2 text-sm font-semibold text-white sm:col-span-2">Save Lead</button>
-        </form>
-      </section>
-
-      <section className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-        {stageOrder.map((stage) => (
-          <article key={stage} className="rounded-2xl border border-slate-200 bg-white p-3">
-            <p className="text-xs uppercase tracking-wide text-slate-500">{stage.replaceAll("_", " ")}</p>
-            <p className="mt-2 text-xl font-semibold text-slate-900">{stageCounts.get(stage) ?? 0}</p>
-          </article>
-        ))}
+          </div>
+        </details>
       </section>
 
       <section className="space-y-3">
-        {stageOrder.map((stage) => {
+        {openStages.map((stage) => {
           const stageLeads = leadsByStage.get(stage) ?? [];
-          const isClosedStage = stage === LeadStage.WON || stage === LeadStage.LOST;
-          const visibleLeads = isClosedStage ? stageLeads.filter((lead) => lead.createdAt >= closedCutoff) : stageLeads;
           return (
             <article key={stage} className="rounded-2xl border border-slate-200 bg-white p-3">
               <div className="flex items-center justify-between">
                 <h4 className="text-sm font-semibold text-slate-900">{stage.replaceAll("_", " ")}</h4>
                 <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700">
-                  {isClosedStage ? `${visibleLeads.length} (last 90d)` : stageLeads.length}
+                  {stageLeads.length}
                 </span>
               </div>
-              {isClosedStage && stageLeads.length > visibleLeads.length ? (
-                <p className="mt-1 text-[11px] text-slate-500">
-                  Showing won/lost leads from the last 90 days ({visibleLeads.length} of {stageLeads.length}).
-                </p>
-              ) : null}
               <div className="mt-2 space-y-2">
-                {visibleLeads.map((lead) => {
+                {stageLeads.map((lead) => {
                   const hasJob = "jobId" in lead && !!(lead as any).jobId;
                   const jobId = hasJob ? String((lead as any).jobId) : null;
                   return (
@@ -244,15 +215,17 @@ export default async function LeadsPage() {
                               {lead.notes}
                             </div>
                           ) : null}
-                          {hasJob && jobId ? (
-                            <p className="mt-1 text-[11px] text-emerald-700">
-                              Converted to job:{" "}
-                              <Link href={`/jobs/${jobId}`} className="underline">
+                      {hasJob && jobId ? (
+                            <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+                              <Link href={`/jobs/${jobId}`} className="rounded-full border border-emerald-200 px-2 py-0.5 text-emerald-700">
                                 Open job
                               </Link>
-                            </p>
+                              <Link href={`/jobs/${jobId}#schedule`} className="rounded-full border border-slate-200 px-2 py-0.5 text-slate-600">
+                                Schedule first visit
+                              </Link>
+                            </div>
                           ) : lead.stage === LeadStage.WON ? (
-                            <p className="mt-1 text-[11px] text-amber-700">
+                            <p className="mt-2 text-[11px] text-amber-700">
                               Won lead with no job yet. Convert to create a job + client from this lead.
                             </p>
                           ) : null}
@@ -304,8 +277,111 @@ export default async function LeadsPage() {
           );
         })}
       </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-4">
+        <details>
+          <summary className="cursor-pointer text-sm font-semibold text-slate-900">
+            Won/Lost archive (last 30 days)
+          </summary>
+          <p className="mt-2 text-xs text-slate-500">
+            Converted leads are hidden from the main pipeline. Open the archive if you need to review them.
+          </p>
+          <div className="mt-3 space-y-3">
+            {closedStages.map((stage) => {
+              const stageLeads = leadsByStage.get(stage) ?? [];
+              const visibleLeads = stageLeads.filter((lead) => lead.createdAt >= closedCutoff);
+              return (
+                <article key={stage} className="rounded-2xl border border-slate-200 bg-white p-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-semibold text-slate-900">{stage.replaceAll("_", " ")}</h4>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700">
+                      {visibleLeads.length}
+                    </span>
+                  </div>
+                  <div className="mt-2 space-y-2">
+                    {visibleLeads.map((lead) => {
+                      const hasJob = "jobId" in lead && !!(lead as any).jobId;
+                      const jobId = hasJob ? String((lead as any).jobId) : null;
+                      return (
+                        <article key={lead.id} className="rounded-xl border border-slate-200 p-3">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-semibold text-slate-900">{lead.contactName}</p>
+                              <p className="text-xs text-slate-500">
+                                {lead.serviceType || "Service TBD"} - {lead.source.replaceAll("_", " ")}
+                              </p>
+                              {hasJob && jobId ? (
+                                <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+                                  <Link href={`/jobs/${jobId}`} className="rounded-full border border-emerald-200 px-2 py-0.5 text-emerald-700">
+                                    Open job
+                                  </Link>
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
+                        </article>
+                      );
+                    })}
+                    {visibleLeads.length === 0 ? <p className="text-xs text-slate-500">No leads in this stage.</p> : null}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </details>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-4" id="new-lead-form">
+        <details>
+          <summary className="cursor-pointer rounded-xl bg-teal-600 px-4 py-2 text-sm font-semibold text-white">
+            + New Lead
+          </summary>
+          <form action={createLeadAction} className="mt-3 grid gap-2 sm:grid-cols-2">
+            <input name="contactName" required placeholder="Contact name" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+            <select name="source" defaultValue={LeadSource.WEBSITE_FORM} className="rounded-xl border border-slate-300 px-3 py-2 text-sm">
+              {sourceOptions.map((source) => (
+                <option key={source} value={source}>{source.replaceAll("_", " ")}</option>
+              ))}
+            </select>
+            <input name="phone" placeholder="Phone" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+            <input name="email" type="email" placeholder="Email" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+            <input name="address" placeholder="Address" className="rounded-xl border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
+            <input name="serviceType" placeholder="Service type (kitchen, roof, water damage)" className="rounded-xl border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
+            <textarea name="notes" rows={2} placeholder="Notes" className="rounded-xl border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
+            <button type="submit" className="rounded-xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white sm:col-span-2">Save Lead</button>
+          </form>
+        </details>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-4">
+        <details>
+          <summary className="cursor-pointer text-sm font-semibold text-slate-900">
+            Website form log
+          </summary>
+          <div className="mt-3 flex flex-wrap gap-4 text-sm">
+            <span className="text-slate-500">Today:</span>
+            <span className="font-medium text-slate-900">{formSubmissionStats.today}</span>
+            <span className="text-slate-500">7d:</span>
+            <span className="font-medium text-slate-900">{formSubmissionStats.last7}</span>
+            <span className="text-slate-500">30d:</span>
+            <span className="font-medium text-slate-900">{formSubmissionStats.last30}</span>
+          </div>
+          {recentFormLeads.length === 0 ? (
+            <p className="mt-3 text-sm text-slate-500">No website form submissions yet.</p>
+          ) : (
+            <ul className="mt-3 space-y-2">
+              {recentFormLeads.map((lead) => (
+                <li key={lead.id} className="flex items-center justify-between gap-2 text-sm">
+                  <span className="font-medium text-slate-900">{lead.contactName}</span>
+                  <span className="text-slate-500">
+                    {(lead as LeadRow).serviceType ?? "-"} · {format(lead.createdAt, "MMM d, yyyy")}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </details>
+      </section>
     </div>
   );
 }
-
-

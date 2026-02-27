@@ -1,7 +1,7 @@
 "use server";
 
 import { ExpenseCategory, InvoiceStatus, JobStatus, LeadSource, LeadStage, LineItemType, Prisma, Role } from "@prisma/client";
-import { format, setHours, setMinutes, setSeconds, startOfDay, startOfWeek, subHours } from "date-fns";
+import { addDays, format, setHours, setMinutes, setSeconds, startOfDay, startOfWeek, subHours } from "date-fns";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -423,6 +423,9 @@ async function convertLeadToJobInternal(auth: { orgId: string; userId: string },
     },
   });
 
+  const conversionDate = new Date();
+  const conversionEndDate = addDays(conversionDate, 14);
+
   const job = await prisma.job.create({
     data: {
       orgId: auth.orgId,
@@ -431,6 +434,8 @@ async function convertLeadToJobInternal(auth: { orgId: string; userId: string },
       address: lead.address || "Address pending",
       status: JobStatus.ESTIMATE,
       categoryTags: [inferServiceTagFromText(lead.serviceType) ?? "general-remodeling", "lead-converted"],
+      startDate: conversionDate,
+      endDate: conversionEndDate,
     },
   });
 

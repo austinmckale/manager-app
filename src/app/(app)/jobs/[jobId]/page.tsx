@@ -194,6 +194,16 @@ export default async function JobDetailPage({
         </div>
         <p className="mt-1 text-[11px] text-slate-500">Revenue comes from sent/paid invoices (or approved estimates if no invoices yet) in section 4. Budget fields are for cost tracking only (Labor/Materials vs Budget bars).</p>
 
+        {!scheduleReady ? (
+          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+            <p className="font-medium">Next step: schedule the first visit</p>
+            <p className="mt-1 text-amber-800">This job won’t show on Today/Team until a visit is scheduled.</p>
+            <a href="#schedule" className="mt-2 inline-flex rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-xs">
+              Schedule now
+            </a>
+          </div>
+        ) : null}
+
         <div className="mt-3 rounded-xl border border-slate-200 p-3">
           <p className="text-xs font-medium text-slate-900">Service Tags (Website Routing)</p>
           <p className="mt-1 text-[11px] text-slate-500">Starred portfolio photos route by these tags.</p>
@@ -242,7 +252,7 @@ export default async function JobDetailPage({
             <p className="font-medium">Crew on this job</p>
             <p className="mt-0.5 text-[11px] text-slate-500">
               These people are attached to this job&apos;s crew. The visits you schedule below are for the job as a whole; each
-              worker&apos;s actual hours still come from clock-in on Team/Time.
+              worker&apos;s actual hours still come from clock-in on Team/Payroll.
             </p>
             <div className="mt-2 grid gap-2 sm:grid-cols-2">
               {users.map((user) => (
@@ -312,7 +322,7 @@ export default async function JobDetailPage({
           </p>
           <p className="mt-1 text-teal-700">
             These people show up on Attendance/Today when you clock in crews for this job. Their exact hours still come from
-            clock-in on Team/Time.
+            clock-in on Team/Payroll.
           </p>
         </div>
 
@@ -320,7 +330,7 @@ export default async function JobDetailPage({
           <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-500">Scheduled visits (plan)</p>
           <p className="mb-2 text-[11px] text-slate-500">
             These visits are the plan for this job&apos;s crew. They feed the weekly grid on Team and the Today run sheet, but
-            actual hours per worker still come from clock-in on Team/Time.
+            actual hours per worker still come from clock-in on Team/Payroll.
           </p>
           {editingEvent ? (
             <form action={updateScheduleEventAction} className="mb-3 rounded-xl border border-amber-200 bg-amber-50/50 p-3 text-sm">

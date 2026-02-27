@@ -1,4 +1,4 @@
-import { endOfDay, endOfWeek, isAfter, isBefore, isSameDay, startOfDay, startOfWeek } from "date-fns";
+import { endOfDay, endOfWeek, isAfter, isBefore, isSameDay, startOfDay, startOfWeek, subHours } from "date-fns";
 import { notFound } from "next/navigation";
 import { JobStatus, LeadStage, Role } from "@prisma/client";
 import {
@@ -72,18 +72,21 @@ export async function getJobs(params: {
   if (isDemoMode()) {
     const assignments = getMergedDemoAssignments();
     const scheduleEvents = getMergedDemoScheduleEvents();
-    const assignedJobIds = assignments
-      .filter((assignment) => params.role !== Role.WORKER || assignment.userId === params.userId)
-      .map((assignment) => assignment.jobId);
+    const assignedJobIds = assignments.map((assignment) => assignment.jobId);
 
     const filtered = demoJobs.filter((job) => {
       const statusOk = !params.status || params.status === "ALL" || job.status === params.status;
       const q = params.q?.toLowerCase() ?? "";
       const textOk = !q || job.jobName.toLowerCase().includes(q) || job.address.toLowerCase().includes(q);
-      const assignmentOk = params.role !== Role.WORKER || assignedJobIds.includes(job.id);
+      const assignmentOk = true;
 
       const jobEvents = scheduleEvents.filter((event) => event.jobId === job.id);
-      const ongoingStatuses: JobStatus[] = [JobStatus.SCHEDULED, JobStatus.IN_PROGRESS, JobStatus.ON_HOLD];
+      const ongoingStatuses: JobStatus[] = [
+        JobStatus.ESTIMATE,
+        JobStatus.SCHEDULED,
+        JobStatus.IN_PROGRESS,
+        JobStatus.ON_HOLD,
+      ];
       const isOngoing = ongoingStatuses.includes(job.status);
       const dateOk =
         view === "all"
@@ -124,21 +127,13 @@ export async function getJobs(params: {
           ],
         }
       : {}),
-    ...(params.role === Role.WORKER
-      ? {
-          OR: [
-            { assignments: { some: { userId: params.userId } } },
-            { tasks: { some: { assignedTo: params.userId } } },
-            { timeEntries: { some: { workerId: params.userId } } },
-          ],
-        }
-      : {}),
+    ...{},
     ...(view === "today"
       ? {
           OR: [
             { scheduleEvents: { some: { startAt: { gte: todayStart, lte: todayEnd } } } },
             { startDate: { gte: todayStart, lte: todayEnd } },
-            { status: { in: [JobStatus.SCHEDULED, JobStatus.IN_PROGRESS, JobStatus.ON_HOLD] } },
+            { status: { in: [JobStatus.ESTIMATE, JobStatus.SCHEDULED, JobStatus.IN_PROGRESS, JobStatus.ON_HOLD] } },
           ],
         }
       : {}),
@@ -147,7 +142,7 @@ export async function getJobs(params: {
           OR: [
             { scheduleEvents: { some: { startAt: { gte: weekStart, lte: weekEnd } } } },
             { startDate: { gte: weekStart, lte: weekEnd } },
-            { status: { in: [JobStatus.SCHEDULED, JobStatus.IN_PROGRESS, JobStatus.ON_HOLD] } },
+            { status: { in: [JobStatus.ESTIMATE, JobStatus.SCHEDULED, JobStatus.IN_PROGRESS, JobStatus.ON_HOLD] } },
           ],
         }
       : {}),
@@ -177,7 +172,8 @@ export async function getJobs(params: {
 
 export async function getJobsPageAlerts(params: { orgId: string; role: Role; userId: string }) {
   const todayStart = startOfDay(new Date());
-  const assignmentFilter = params.role === Role.WORKER ? { assignments: { some: { userId: params.userId } } } : {};
+  const assignmentFilter = {};
+  const receiptCutoff = subHours(new Date(), 24);
 
   if (isDemoMode()) {
     const assignedJobIds = [
@@ -219,7 +215,11 @@ export async function getJobsPageAlerts(params: { orgId: string; role: Role; use
       orderBy: { dueDate: "asc" },
     }),
     prisma.expense.findMany({
-      where: { job: { orgId: params.orgId, ...assignmentFilter }, receipt: null },
+      where: {
+        job: { orgId: params.orgId, ...assignmentFilter },
+        receipt: null,
+        createdAt: { lt: receiptCutoff },
+      },
       select: { jobId: true },
     }),
   ]);
@@ -230,13 +230,12 @@ export async function getJobsPageAlerts(params: { orgId: string; role: Role; use
 export async function getTodayOpsSummary(params: { orgId: string; userId: string; role: Role }) {
   const todayStart = startOfDay(new Date());
   const todayEnd = endOfDay(new Date());
+  const receiptCutoff = subHours(new Date(), 24);
 
   if (isDemoMode()) {
     const assignments = getMergedDemoAssignments();
     const scheduleEvents = getMergedDemoScheduleEvents();
-    const assignedJobIds = assignments
-      .filter((assignment) => params.role !== Role.WORKER || assignment.userId === params.userId)
-      .map((assignment) => assignment.jobId);
+    const assignedJobIds = assignments.map((assignment) => assignment.jobId);
 
     const assignedJobs = demoJobs.filter((job) => assignedJobIds.includes(job.id));
     const todayEvents = scheduleEvents
@@ -299,7 +298,6 @@ export async function getTodayOpsSummary(params: { orgId: string; userId: string
         where: {
           orgId: params.orgId,
           startAt: { gte: todayStart, lte: todayEnd },
-          ...(params.role === Role.WORKER ? { job: { assignments: { some: { userId: params.userId } } } } : {}),
         },
         include: { job: true },
         orderBy: { startAt: "asc" },
@@ -308,7 +306,6 @@ export async function getTodayOpsSummary(params: { orgId: string; userId: string
         where: {
           orgId: params.orgId,
           startAt: { gte: startOfWeek(new Date(), { weekStartsOn: 1 }), lte: endOfWeek(new Date(), { weekStartsOn: 1 }) },
-          ...(params.role === Role.WORKER ? { job: { assignments: { some: { userId: params.userId } } } } : {}),
         },
         include: { job: true },
         orderBy: { startAt: "asc" },
@@ -324,7 +321,13 @@ export async function getTodayOpsSummary(params: { orgId: string; userId: string
       }),
       prisma.estimate.count({ where: { job: { orgId: params.orgId, ...assignmentFilter }, status: "DRAFT" } }),
       prisma.invoice.count({ where: { job: { orgId: params.orgId, ...assignmentFilter }, status: { in: ["SENT", "OVERDUE"] } } }),
-      prisma.expense.count({ where: { job: { orgId: params.orgId, ...assignmentFilter }, receipt: null } }),
+      prisma.expense.count({
+        where: {
+          job: { orgId: params.orgId, ...assignmentFilter },
+          receipt: null,
+          createdAt: { lt: receiptCutoff },
+        },
+      }),
       prisma.lead.count({
         where: {
           orgId: params.orgId,

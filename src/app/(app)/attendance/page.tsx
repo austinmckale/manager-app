@@ -11,6 +11,7 @@ import {
   updateWorkerAction,
 } from "@/app/(app)/actions";
 import { ConfirmDeactivateForm } from "@/components/confirm-deactivate-form";
+import { TeamTabs } from "@/components/team-tabs";
 import { requireAuth } from "@/lib/auth";
 import { getJobs, getOrgUsers } from "@/lib/data";
 import {
@@ -23,7 +24,6 @@ import {
   listDemoRuntimeScheduleEvents,
   listDemoRuntimeTimeEntries,
 } from "@/lib/demo";
-import { canManageOrg } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 import { toNumber } from "@/lib/utils";
 
@@ -51,9 +51,6 @@ export default async function AttendancePage({
   const editingWorkerId = params.edit ?? null;
 
   const auth = await requireAuth();
-  if (!canManageOrg(auth.role)) {
-    return <section className="rounded-2xl border border-slate-200 bg-white p-4 text-sm">Attendance is owner/admin only.</section>;
-  }
 
   const now = new Date();
   const dayStart = startOfDay(now);
@@ -280,6 +277,8 @@ export default async function AttendancePage({
 
   return (
     <div className="space-y-4">
+      <TeamTabs active="attendance" />
+
       <section className="rounded-2xl border border-teal-200 bg-teal-50 p-4">
         <h2 className="text-base font-semibold text-teal-900">Team & attendance</h2>
         <p className="mt-1 text-sm text-teal-800">
@@ -294,8 +293,8 @@ export default async function AttendancePage({
           scheduled on.
         </p>
         <p className="mt-1 text-xs text-slate-600">
-          To change the plan, click a block to edit its visit on the job page. Day-of, use Today/Time to clock people in and adjust
-          actual hours.
+          To change the plan, click a block to edit its visit on the job page. Day-of, use Today or the Payroll tab to clock people
+          in and adjust actual hours.
         </p>
         <div className="mt-3 overflow-x-auto">
           <table className="w-full min-w-[600px] border-collapse text-sm">
@@ -380,8 +379,8 @@ export default async function AttendancePage({
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-slate-900">Assign crew to ongoing jobs</h3>
         <p className="mt-1 text-xs text-slate-500">
-          Quick way to attach workers to jobs for the week. Only workers are listed—add workers in Team to assign more crew. Use
-          “Clock in crew” to start timers on this job for everyone assigned.
+          Quick way to attach workers to jobs for the week. Only workers are listed; add workers below to assign more crew. Use
+          "Clock in crew" to start timers on this job for everyone assigned.
         </p>
         <div className="mt-3 space-y-3">
           {ongoingJobs.map((job) => {
@@ -629,5 +628,3 @@ export default async function AttendancePage({
     </div>
   );
 }
-
-
