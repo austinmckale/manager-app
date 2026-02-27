@@ -5,6 +5,7 @@ import { createClientSupabase } from "@/lib/supabase/client";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState(false);
@@ -22,15 +23,12 @@ export default function LoginPage() {
 
     try {
       const supabase = createClientSupabase();
-      const { error } = await supabase.auth.signInWithOtp({
+      const { error } = await supabase.auth.signInWithPassword({
         email,
-        options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
-        },
+        password,
       });
-
       if (error) throw error;
-      setMessage("Magic link sent. Open it from your phone email.");
+      setMessage("Signed in.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Login failed");
     } finally {
@@ -61,7 +59,7 @@ export default function LoginPage() {
       <div className="w-full max-w-sm rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <p className="text-xs uppercase tracking-[0.2em] text-teal-600">FieldFlow</p>
         <h1 className="mt-2 text-2xl font-semibold text-slate-900">Sign in</h1>
-        <p className="mt-1 text-sm text-slate-600">Use Google or a magic link to access your dashboard.</p>
+        <p className="mt-1 text-sm text-slate-600">Use Google or your email and password to access your dashboard.</p>
 
         <div className="mt-5 space-y-3">
           <button
@@ -91,12 +89,23 @@ export default function LoginPage() {
               className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
             />
           </label>
+          <label className="block text-sm text-slate-700">
+            Password
+            <input
+              type="password"
+              required
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="••••••••"
+              className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+            />
+          </label>
           <button
             type="submit"
             disabled={loading}
             className="w-full rounded-xl bg-teal-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
           >
-            {loading ? "Sending..." : "Send magic link"}
+            {loading ? "Signing in..." : "Sign in"}
           </button>
         </form>
 
