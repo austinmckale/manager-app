@@ -32,6 +32,7 @@ export default async function LeadsPage() {
     ? [
         {
           id: "demo-lead-1",
+          jobId: null,
           contactName: "Samantha Reed",
           phone: "555-101-9090",
           email: "samantha@example.com",
@@ -46,6 +47,7 @@ export default async function LeadsPage() {
         },
         {
           id: "demo-lead-2",
+          jobId: null,
           contactName: "John Ortiz",
           phone: "555-777-1212",
           email: null,
@@ -102,16 +104,17 @@ export default async function LeadsPage() {
         id="joist-import"
         className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4"
       >
-        <h3 className="text-sm font-semibold text-emerald-900">Upload from Joist (CSV)</h3>
+        <h3 className="text-sm font-semibold text-emerald-900">Upload from Joist (CSV or PDF)</h3>
         <p className="mt-2 text-xs text-emerald-800">
-          Export estimates/invoices from Joist, then upload the CSV here to auto-create or update leads. Mark them WON to
-          convert into jobs.
+          Upload Joist exports here (CSV bulk exports or estimate/invoice PDFs). We auto-create or update leads from each
+          document.
         </p>
         <form action={importJoistCsvAction} className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
           <input
             name="csvFile"
             type="file"
-            accept=".csv,text/csv"
+            accept=".csv,text/csv,.pdf,application/pdf"
+            multiple
             required
             className="rounded-xl border border-emerald-300 px-3 py-2 text-sm"
           />
@@ -119,7 +122,7 @@ export default async function LeadsPage() {
             type="submit"
             className="rounded-xl border border-emerald-400 bg-emerald-600 px-3 py-2 text-sm font-semibold text-white"
           >
-            Import Joist CSV
+            Import Joist Files
           </button>
         </form>
       </section>
@@ -167,8 +170,8 @@ export default async function LeadsPage() {
               </div>
               <div className="mt-2 space-y-2">
                 {stageLeads.map((lead) => {
-                  const hasJob = "jobId" in lead && !!(lead as any).jobId;
-                  const jobId = hasJob ? String((lead as any).jobId) : null;
+                  const hasJob = !!lead.jobId;
+                  const jobId = lead.jobId;
                   return (
                     <article key={lead.id} className="rounded-xl border border-slate-200 p-3">
                       <div className="flex items-start justify-between gap-2">
@@ -273,8 +276,8 @@ export default async function LeadsPage() {
                   </div>
                   <div className="mt-2 space-y-2">
                     {visibleLeads.map((lead) => {
-                      const hasJob = "jobId" in lead && !!(lead as any).jobId;
-                      const jobId = hasJob ? String((lead as any).jobId) : null;
+                      const hasJob = !!lead.jobId;
+                      const jobId = lead.jobId;
                       return (
                         <article key={lead.id} className="rounded-xl border border-slate-200 p-3">
                           <div className="flex items-start justify-between gap-2">

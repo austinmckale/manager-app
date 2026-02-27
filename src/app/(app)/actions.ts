@@ -1,7 +1,7 @@
 "use server";
 
 import { ExpenseCategory, InvoiceStatus, JobStatus, LeadSource, LeadStage, LineItemType, Prisma, Role } from "@prisma/client";
-import { addDays, endOfDay, format, setHours, setMinutes, setSeconds, startOfDay, startOfWeek, subHours } from "date-fns";
+import { addDays, format, setHours, setMinutes, setSeconds, startOfDay, startOfWeek, subHours } from "date-fns";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -115,6 +115,175 @@ function mapJoistStatusToLeadStage(statusRaw: string): LeadStage {
   if (["declined", "lost", "rejected", "cancelled", "canceled"].includes(status)) return LeadStage.LOST;
   if (["sent", "viewed", "pending", "open", "draft"].includes(status)) return LeadStage.ESTIMATE_SENT;
   return LeadStage.CONTACTED;
+}
+
+function firstRegexMatch(text: string, patterns: RegExp[]) {
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return match[1].trim();
+  }
+  return "";
+}
+
+function parseContactBlockAddress(block: string) {
+  const lines = block
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/^\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}$/.test(line))
+    .filter((line) => !/^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i.test(line));
+
+  if (lines.length <= 1) return "";
+  return lines.slice(1).join(", ").slice(0, 191);
+}
+
+function extractJoistPdfLeadPayload(text: string, fileName: string) {
+  const normalized = text.replace(/\r/g, "\n");
+  const estimateNumber = firstRegexMatch(normalized, [/Estimate\s*#\s*([A-Za-z0-9-]+)/i]);
+  const invoiceNumber = firstRegexMatch(normalized, [/Invoice\s*#\s*([A-Za-z0-9-]+)/i]);
+  const documentType = estimateNumber ? "estimate" : invoiceNumber ? "invoice" : "document";
+  const documentNumber = estimateNumber || invoiceNumber || "";
+
+  const contactBlock = firstRegexMatch(normalized, [
+    /Prepared For\s*\n([\s\S]{0,240}?)\nRHI SOLUTIONS/i,
+    /Bill To\s*\n([\s\S]{0,240}?)\nRHI SOLUTIONS/i,
+  ]);
+  const contactName =
+    firstRegexMatch(normalized, [/Prepared For\s*\n([^\n]+)/i, /Bill To\s*\n([^\n]+)/i]) ||
+    contactBlock.split("\n")[0]?.trim() ||
+    "Imported Lead";
+
+  const serviceAddressBlock = firstRegexMatch(normalized, [/Service Address\s*\n([\s\S]{0,180}?)\nPrepared For/i]);
+  const serviceAddress = serviceAddressBlock
+    ? serviceAddressBlock
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .join(", ")
+        .slice(0, 191)
+    : "";
+
+  const phone = firstRegexMatch(contactBlock || normalized, [
+    /(\(\d{3}\)\s*\d{3}-\d{4})/,
+    /(\d{3}[-.\s]\d{3}[-.\s]\d{4})/,
+  ]);
+  const email = firstRegexMatch(contactBlock, [/([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i]);
+  const descriptionBlock = firstRegexMatch(normalized, [
+    /Description(?:\s*Total)?\s*\n([\s\S]{0,220}?)\n(?:Scope of Work|Subtotal|Total|--)/i,
+    /Description(?:\s*Total)?\s*\n([^\n]+(?:\n[^\n]+){0,2})/i,
+  ]);
+  const descriptionFromBlock = descriptionBlock
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0 && !/\$\s*\d/.test(line) && !/^total$/i.test(line));
+  const description =
+    descriptionFromBlock ||
+    firstRegexMatch(normalized, [
+      /Project:\s*([^\n]+)/i,
+      /Scope of Work[^\n]*\n([^\n]+)/i,
+    ]);
+  const total = firstRegexMatch(normalized, [/\bTotal\s*\$([0-9,]+\.\d{2})/i]);
+  const docDate = firstRegexMatch(normalized, [/\bDate\s*([0-9]{2}\/[0-9]{2}\/[0-9]{4})/i]);
+
+  const stage = documentType === "invoice" ? LeadStage.WON : LeadStage.ESTIMATE_SENT;
+  const address = serviceAddress || parseContactBlockAddress(contactBlock);
+  const externalRef = documentNumber ? `joist:${documentType}:${documentNumber}`.slice(0, 191) : "";
+  const notes = `Imported from Joist PDF (${fileName})${documentNumber ? ` - ${documentType} #${documentNumber}` : ""}`;
+
+  return {
+    contactName,
+    phone,
+    email,
+    address,
+    serviceType: description,
+    stage,
+    externalRef,
+    notes,
+    rawPayload: {
+      importType: "joist_pdf",
+      fileName,
+      documentType,
+      documentNumber,
+      date: docDate || null,
+      total: total || null,
+    },
+  };
+}
+
+async function upsertJoistLead(
+  auth: { orgId: string },
+  payload: {
+    contactName: string;
+    phone?: string;
+    email?: string;
+    address?: string;
+    serviceType?: string;
+    stage: LeadStage;
+    externalRef?: string;
+    notes?: string;
+    rawPayload?: Prisma.InputJsonValue;
+  },
+) {
+  const phone = normalizeLeadPhone(payload.phone);
+  const email = (payload.email ?? "").trim().toLowerCase();
+  const contactNameInput = (payload.contactName ?? "").trim();
+
+  if (!contactNameInput && !phone && !email) {
+    return "skipped" as const;
+  }
+  const contactName = contactNameInput || phone || email || "Imported Lead";
+
+  if (payload.externalRef) {
+    const result = await prisma.lead.upsert({
+      where: {
+        orgId_externalRef: {
+          orgId: auth.orgId,
+          externalRef: payload.externalRef,
+        },
+      },
+      update: {
+        contactName,
+        phone: phone || null,
+        email: email || null,
+        address: payload.address || null,
+        serviceType: payload.serviceType || null,
+        source: LeadSource.OTHER,
+        stage: payload.stage,
+        notes: payload.notes || null,
+        rawPayload: payload.rawPayload,
+      },
+      create: {
+        orgId: auth.orgId,
+        externalRef: payload.externalRef,
+        contactName,
+        phone: phone || null,
+        email: email || null,
+        address: payload.address || null,
+        serviceType: payload.serviceType || null,
+        source: LeadSource.OTHER,
+        stage: payload.stage,
+        notes: payload.notes || null,
+        rawPayload: payload.rawPayload,
+      },
+    });
+    return result.createdAt.getTime() === result.updatedAt.getTime() ? ("imported" as const) : ("updated" as const);
+  }
+
+  await prisma.lead.create({
+    data: {
+      orgId: auth.orgId,
+      contactName,
+      phone: phone || null,
+      email: email || null,
+      address: payload.address || null,
+      serviceType: payload.serviceType || null,
+      source: LeadSource.OTHER,
+      stage: payload.stage,
+      notes: payload.notes || null,
+      rawPayload: payload.rawPayload,
+    },
+  });
+  return "imported" as const;
 }
 
 async function logActivity(
@@ -299,7 +468,6 @@ export async function sendDailyOpsDigestAction() {
   if (!webhookUrl) return;
 
   const todayStart = startOfDay(new Date());
-  const todayEnd = endOfDay(new Date());
 
   const [alerts, missingClockIns] = await Promise.all([
     getJobsPageAlerts({ orgId: auth.orgId, role: auth.role, userId: auth.userId }),
@@ -503,99 +671,81 @@ export async function importJoistCsvAction(formData: FormData) {
     throw new Error("Only owner/admin can import Joist data.");
   }
 
-  const file = formData.get("csvFile");
-  if (!(file instanceof File) || file.size === 0) {
-    throw new Error("CSV file is required.");
-  }
-
-  const text = await file.text();
-  const rows = parseCsv(text);
-  if (rows.length === 0) {
-    throw new Error("No rows found. Export Joist data as CSV and upload it here.");
+  const files = formData.getAll("csvFile").filter((item): item is File => item instanceof File && item.size > 0);
+  if (files.length === 0) {
+    throw new Error("Upload at least one Joist CSV or PDF file.");
   }
 
   let imported = 0;
   let updated = 0;
   let skipped = 0;
 
-  for (const row of rows) {
-    const contactName = pickCsvValue(row, ["client name", "customer name", "name", "client"]);
-    const phone = pickCsvValue(row, ["phone", "phone number", "client phone"]);
-    const email = pickCsvValue(row, ["email", "client email"]);
-    const address = pickCsvValue(row, ["address", "job address", "client address"]);
-    const serviceType = pickCsvValue(row, ["title", "project", "description", "service"]);
-    const statusRaw = pickCsvValue(row, ["status", "estimate status", "invoice status"]);
-    const estimateNumber = pickCsvValue(row, ["estimate number", "estimate #", "estimate id", "id"]);
-    const invoiceNumber = pickCsvValue(row, ["invoice number", "invoice #"]);
-    const externalRefBase = estimateNumber || invoiceNumber;
-    const stage = mapJoistStatusToLeadStage(statusRaw);
+  for (const file of files) {
+    const lowerName = file.name.toLowerCase();
+    const isPdf = lowerName.endsWith(".pdf") || file.type.includes("pdf");
+    const isCsv = lowerName.endsWith(".csv") || file.type.includes("csv") || file.type.includes("text/plain");
 
-    if (!contactName && !phone && !email) {
+    if (isPdf) {
+      const { PDFParse } = await import("pdf-parse");
+      const parser = new PDFParse({ data: Buffer.from(await file.arrayBuffer()) });
+      try {
+        const extracted = await parser.getText();
+        const payload = extractJoistPdfLeadPayload(extracted.text || "", file.name);
+        const result = await upsertJoistLead(auth, payload);
+        if (result === "imported") imported += 1;
+        if (result === "updated") updated += 1;
+        if (result === "skipped") skipped += 1;
+      } finally {
+        await parser.destroy();
+      }
+      continue;
+    }
+
+    if (!isCsv) {
       skipped += 1;
       continue;
     }
 
-    const externalRef = externalRefBase ? `joist:${externalRefBase}`.slice(0, 191) : "";
-    const notes = `Imported from Joist CSV${statusRaw ? ` - status: ${statusRaw}` : ""}`;
-
-    if (externalRef) {
-      const result = await prisma.lead.upsert({
-        where: {
-          orgId_externalRef: {
-            orgId: auth.orgId,
-            externalRef,
-          },
-        },
-        update: {
-          contactName: contactName || undefined,
-          phone: phone || null,
-          email: email || null,
-          address: address || null,
-          serviceType: serviceType || null,
-          source: LeadSource.OTHER,
-          stage,
-          notes,
-          rawPayload: row,
-        },
-        create: {
-          orgId: auth.orgId,
-          externalRef,
-          contactName: contactName || phone || email || "Imported Lead",
-          phone: phone || null,
-          email: email || null,
-          address: address || null,
-          serviceType: serviceType || null,
-          source: LeadSource.OTHER,
-          stage,
-          notes,
-          rawPayload: row,
-        },
-      });
-
-      if (result.createdAt.getTime() === result.updatedAt.getTime()) imported += 1;
-      else updated += 1;
+    const text = await file.text();
+    const rows = parseCsv(text);
+    if (rows.length === 0) {
+      skipped += 1;
       continue;
     }
 
-    await prisma.lead.create({
-      data: {
-        orgId: auth.orgId,
-        contactName: contactName || phone || email || "Imported Lead",
-        phone: phone || null,
-        email: email || null,
-        address: address || null,
-        serviceType: serviceType || null,
-        source: LeadSource.OTHER,
+    for (const row of rows) {
+      const contactName = pickCsvValue(row, ["client name", "customer name", "name", "client"]);
+      const phone = pickCsvValue(row, ["phone", "phone number", "client phone"]);
+      const email = pickCsvValue(row, ["email", "client email"]);
+      const address = pickCsvValue(row, ["address", "job address", "client address"]);
+      const serviceType = pickCsvValue(row, ["title", "project", "description", "service"]);
+      const statusRaw = pickCsvValue(row, ["status", "estimate status", "invoice status"]);
+      const estimateNumber = pickCsvValue(row, ["estimate number", "estimate #", "estimate id", "id"]);
+      const invoiceNumber = pickCsvValue(row, ["invoice number", "invoice #"]);
+      const externalRefBase = estimateNumber || invoiceNumber;
+      const stage = mapJoistStatusToLeadStage(statusRaw);
+      const externalRef = externalRefBase ? `joist:${externalRefBase}`.slice(0, 191) : "";
+      const notes = `Imported from Joist CSV (${file.name})${statusRaw ? ` - status: ${statusRaw}` : ""}`;
+
+      const result = await upsertJoistLead(auth, {
+        contactName,
+        phone,
+        email,
+        address,
+        serviceType,
         stage,
+        externalRef,
         notes,
         rawPayload: row,
-      },
-    });
-    imported += 1;
+      });
+      if (result === "imported") imported += 1;
+      if (result === "updated") updated += 1;
+      if (result === "skipped") skipped += 1;
+    }
   }
 
   await logActivity(auth.orgId, null, auth.userId, "lead.import.joist", {
-    fileName: file.name,
+    fileNames: files.map((file) => file.name),
     imported,
     updated,
     skipped,
