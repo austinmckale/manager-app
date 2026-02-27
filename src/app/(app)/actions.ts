@@ -964,6 +964,7 @@ export async function quickScheduleCrewAction(formData: FormData) {
   const customDate = String(formData.get("customDate") ?? "").trim();
   const startTime = String(formData.get("startTime") ?? "08:00");
   const endTime = String(formData.get("endTime") ?? "17:00");
+  const overrideConflicts = String(formData.get("overrideConflicts") ?? "") === "1";
   let dates = formData
     .getAll("dates")
     .map((value) => String(value))
@@ -1048,9 +1049,9 @@ export async function quickScheduleCrewAction(formData: FormData) {
           startAt: { lt: blockEnd },
           endAt: { gt: blockStart },
         },
-      include: {
-        job: { select: { id: true, jobName: true } },
-      },
+        include: {
+          job: { select: { id: true, jobName: true } },
+        },
       });
 
       if (conflict && !overrideConflicts) {
