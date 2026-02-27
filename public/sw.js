@@ -1,8 +1,6 @@
-﻿self.addEventListener("install", (event) => {
+self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open("fieldflow-static-v1").then((cache) =>
-      cache.addAll(["/", "/login", "/manifest.webmanifest"]),
-    ),
+    caches.keys().then((keys) => Promise.all(keys.map((key) => caches.delete(key)))),
   );
   self.skipWaiting();
 });
@@ -11,18 +9,8 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
 });
 
+// Network-only service worker: never cache app pages or API responses.
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
-  event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request)
-        .then((response) => {
-          const copy = response.clone();
-          caches.open("fieldflow-static-v1").then((cache) => cache.put(event.request, copy));
-          return response;
-        })
-        .catch(() => caches.match("/"));
-    }),
-  );
+  event.respondWith(fetch(event.request));
 });
