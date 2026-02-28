@@ -287,6 +287,7 @@ model JobScheduleEvent {
   @@index([orgId])
   @@index([jobId])
   @@index([startAt])
+  @@index([orgId, startAt])
 }
 
 model Estimate {
@@ -399,6 +400,7 @@ model Expense {
   @@index([jobId])
   @@index([category])
   @@index([date])
+  @@index([jobId, createdAt])
 }
 
 model Task {
@@ -418,6 +420,7 @@ model Task {
   @@index([jobId])
   @@index([assignedTo])
   @@index([status])
+  @@index([jobId, status, dueDate])
 }
 
 model Invoice {
@@ -616,4 +619,3 @@ model KpiTarget {
   @@index([effectiveDate])
   @@unique([orgId, kpiKey, period, effectiveDate])
 }
-
