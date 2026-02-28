@@ -32,9 +32,22 @@ export default async function TargetSettingsPage() {
       <section className="rounded-2xl border border-teal-200 bg-teal-50 p-4">
         <h2 className="text-base font-semibold text-teal-900">Team Setup</h2>
         <p className="mt-1 text-sm text-teal-800">Add workers here first. Time tracking, payroll cost, assignments, and job accountability depend on this list.</p>
-        <Link href="/settings/todos" className="mt-3 inline-flex rounded-lg border border-teal-300 bg-white px-3 py-1.5 text-xs font-medium text-teal-800">
-          Open Execution To-Do Board
-        </Link>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-4">
+        <h2 className="text-sm font-semibold text-slate-900">Where Margin + Cost Tracking Lives</h2>
+        <p className="mt-1 text-xs text-slate-500">Financial tracking was not removed — use these pages:</p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          <Link href="/jobs" className="rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-700 hover:bg-slate-50">
+            Jobs: per-job margin, labor, materials, receipts
+          </Link>
+          <Link href="/reports" className="rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-700 hover:bg-slate-50">
+            Reports: export time, expenses, profitability CSV
+          </Link>
+          <Link href="/accounting" className="rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-700 hover:bg-slate-50">
+            Accounting: unpaid invoices, labor/material snapshots
+          </Link>
+        </div>
       </section>
 
       {manage ? (
