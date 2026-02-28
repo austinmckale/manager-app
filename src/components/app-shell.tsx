@@ -2,7 +2,7 @@ import Link from "next/link";
 import {
   BriefcaseBusiness,
   CalendarDays,
-  ReceiptText,
+  UsersRound,
   Settings,
   PhoneIncoming,
 } from "lucide-react";
@@ -20,7 +20,7 @@ const navItems = [
   { href: "/today", label: "Overview", icon: CalendarDays },
   { href: "/leads", label: "Leads", icon: PhoneIncoming },
   { href: "/jobs", label: "Jobs", icon: BriefcaseBusiness },
-  { href: "/time", label: "Payroll", icon: ReceiptText },
+  { href: "/attendance", label: "Team", icon: UsersRound },
   { href: "/settings/targets", label: "Settings", icon: Settings },
 ];
 
