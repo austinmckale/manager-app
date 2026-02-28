@@ -1,5 +1,6 @@
 import Link from "next/link";
 import {
+  ChartColumnBig,
   BriefcaseBusiness,
   CalendarDays,
   UsersRound,
@@ -20,6 +21,7 @@ const navItems = [
   { href: "/today", label: "Overview", icon: CalendarDays },
   { href: "/leads", label: "Leads", icon: PhoneIncoming },
   { href: "/jobs", label: "Jobs", icon: BriefcaseBusiness },
+  { href: "/reports", label: "Reports", icon: ChartColumnBig },
   { href: "/attendance", label: "Team", icon: UsersRound },
   { href: "/settings/targets", label: "Settings", icon: Settings },
 ];
@@ -39,7 +41,7 @@ export function AppShell({ title, userName, children }: AppShellProps) {
       <AuthSessionWarmup />
       <NavPrefetch />
       <nav className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto grid max-w-5xl grid-cols-5 gap-1 px-1 py-1">
+        <div className="mx-auto grid max-w-5xl grid-cols-6 gap-1 px-1 py-1">
           {navItems.map((item) => {
             const Icon = item.icon;
             return (
