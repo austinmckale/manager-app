@@ -149,6 +149,25 @@ const requireAuthCached = cache(async (allowFallback: boolean): Promise<AuthCont
 
   try {
     const supabase = await createServerSupabase();
+    // Fast path: read session from auth cookies without forcing a remote user lookup.
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const sessionUser = session?.user;
+    if (sessionUser) {
+      if (!isEmailAllowed(sessionUser.email)) {
+        throw new Error("Unauthorized");
+      }
+      const profile = await ensureUserForSessionUser(sessionUser);
+      return {
+        userId: profile.id,
+        orgId: profile.orgId,
+        role: profile.role,
+        fullName: profile.fullName,
+        email: profile.email,
+      };
+    }
+
     const { data, error } = await supabase.auth.getUser();
     if (!error && data.user) {
       if (!isEmailAllowed(data.user.email)) {
