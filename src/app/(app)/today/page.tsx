@@ -1,9 +1,12 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { endOfDay, endOfWeek, format, setHours, setMinutes, setSeconds, startOfDay, startOfWeek } from "date-fns";
 import { requireAuth } from "@/lib/auth";
 import { getTodayOpsSummary } from "@/lib/data";
 import { isDemoMode } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
+import { createRoutePerf } from "@/lib/route-perf";
+import { RoutePanelSkeleton } from "@/components/route-panel-skeleton";
 import { currency } from "@/lib/utils";
 import { sendMissingClockInsAlertAction } from "@/app/(app)/actions";
 
@@ -16,10 +19,24 @@ type WeeklyPayrollSnapshot = {
   totalGrossPay: number;
 }
 
-export default async function TodayPage() {
-  const auth = await requireAuth();
-  const [ops, teamSnapshot, weeklyPayroll] = await Promise.all([
-    getTodayOpsSummary({ orgId: auth.orgId, userId: auth.userId, role: auth.role }),
+export default function TodayPage() {
+  return (
+    <Suspense fallback={<RoutePanelSkeleton cards={4} sections={3} />}>
+      <TodayPageContent />
+    </Suspense>
+  );
+}
+
+async function TodayPageContent() {
+  const perf = createRoutePerf("/today");
+  let orgId = "";
+  let role = "";
+  try {
+    const auth = await perf.time("auth", () => requireAuth());
+    orgId = auth.orgId;
+    role = auth.role;
+    const [ops, teamSnapshot, weeklyPayroll] = await perf.time("bootstrap", () => Promise.all([
+      getTodayOpsSummary({ orgId: auth.orgId, userId: auth.userId, role: auth.role }),
     (async (): Promise<TeamSnapshot> => {
       if (isDemoMode()) {
         return {
@@ -91,39 +108,39 @@ export default async function TodayPage() {
         totalGrossPay,
       };
     })(),
-  ]);
+    ]));
 
-  const captureCountsByJob = await (async () => {
-    if (isDemoMode()) return {} as Record<string, { photosToday: number; receiptsToday: number }>;
+    const captureCountsByJob = await perf.time("capture", async () => {
+      if (isDemoMode()) return {} as Record<string, { photosToday: number; receiptsToday: number }>;
 
-    const todayJobIds = [...new Set(ops.todayEvents.map((event) => event.job.id))];
-    if (todayJobIds.length === 0) return {} as Record<string, { photosToday: number; receiptsToday: number }>;
+      const todayJobIds = [...new Set(ops.todayEvents.map((event) => event.job.id))];
+      if (todayJobIds.length === 0) return {} as Record<string, { photosToday: number; receiptsToday: number }>;
 
-    const todayStart = startOfDay(new Date());
-    const todayEnd = endOfDay(new Date());
-    const assets = await prisma.fileAsset.findMany({
-      where: {
-        jobId: { in: todayJobIds },
-        createdAt: { gte: todayStart, lte: todayEnd },
-        type: { in: ["PHOTO", "RECEIPT"] },
-      },
-      select: { jobId: true, type: true },
+      const todayStart = startOfDay(new Date());
+      const todayEnd = endOfDay(new Date());
+      const assets = await prisma.fileAsset.findMany({
+        where: {
+          jobId: { in: todayJobIds },
+          createdAt: { gte: todayStart, lte: todayEnd },
+          type: { in: ["PHOTO", "RECEIPT"] },
+        },
+        select: { jobId: true, type: true },
+      });
+
+      const summary: Record<string, { photosToday: number; receiptsToday: number }> = {};
+      for (const asset of assets) {
+        const current = summary[asset.jobId] ?? { photosToday: 0, receiptsToday: 0 };
+        if (asset.type === "PHOTO") current.photosToday += 1;
+        if (asset.type === "RECEIPT") current.receiptsToday += 1;
+        summary[asset.jobId] = current;
+      }
+      return summary;
     });
 
-    const summary: Record<string, { photosToday: number; receiptsToday: number }> = {};
-    for (const asset of assets) {
-      const current = summary[asset.jobId] ?? { photosToday: 0, receiptsToday: 0 };
-      if (asset.type === "PHOTO") current.photosToday += 1;
-      if (asset.type === "RECEIPT") current.receiptsToday += 1;
-      summary[asset.jobId] = current;
-    }
-    return summary;
-  })();
+    const jobsTodayCount = new Set(ops.todayEvents.map((event) => event.job.id)).size;
+    const visitsTodayCount = ops.todayEvents.length;
 
-  const jobsTodayCount = new Set(ops.todayEvents.map((event) => event.job.id)).size;
-  const visitsTodayCount = ops.todayEvents.length;
-
-  return (
+    return (
     <div className="space-y-4">
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
         <h2 className="text-sm font-semibold text-slate-900">Daily Command</h2>
@@ -258,5 +275,8 @@ export default async function TodayPage() {
         </div>
       </section>
     </div>
-  );
+    );
+  } finally {
+    perf.flush({ orgId, role });
+  }
 }

@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { createClientSupabase } from "@/lib/supabase/client";
 
 export default function LoginPage() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
@@ -28,7 +30,13 @@ export default function LoginPage() {
         password,
       });
       if (error) throw error;
-      setMessage("Signed in.");
+      try {
+        await fetch("/api/auth/session-cache", { method: "POST", credentials: "include" });
+      } catch {
+        // Keep login resilient even if cache warmup fails.
+      }
+      router.replace("/today");
+      router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Login failed");
     } finally {

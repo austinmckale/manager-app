@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { addDays, addMinutes, endOfWeek, format, setHours, setMinutes, setSeconds, startOfDay, startOfWeek } from "date-fns";
 import { JobStatus, Role } from "@prisma/client";
 import Link from "next/link";
@@ -11,6 +12,7 @@ import {
   updateWorkerAction,
 } from "@/app/(app)/actions";
 import { ConfirmDeactivateForm } from "@/components/confirm-deactivate-form";
+import { RoutePanelSkeleton } from "@/components/route-panel-skeleton";
 import { TeamTabs } from "@/components/team-tabs";
 import { requireAuth } from "@/lib/auth";
 import { getOrgUsers } from "@/lib/data";
@@ -25,6 +27,7 @@ import {
   listDemoRuntimeTimeEntries,
 } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
+import { createRoutePerf } from "@/lib/route-perf";
 import { toNumber } from "@/lib/utils";
 
 function parseClockTime(value?: string | null) {
@@ -42,15 +45,31 @@ function roleLabel(role: string) {
   return map[role] ?? role;
 }
 
-export default async function AttendancePage({
+export default function AttendancePage(props: {
+  searchParams: Promise<{ edit?: string }>;
+}) {
+  return (
+    <Suspense fallback={<RoutePanelSkeleton cards={4} sections={5} />}>
+      <AttendancePageContent {...props} />
+    </Suspense>
+  );
+}
+
+async function AttendancePageContent({
   searchParams,
 }: {
   searchParams: Promise<{ edit?: string }>;
 }) {
-  const params = await searchParams;
-  const editingWorkerId = params.edit ?? null;
+  const perf = createRoutePerf("/attendance");
+  let orgId = "";
+  let role = "";
+  try {
+    const params = await perf.time("search_params", () => searchParams);
+    const editingWorkerId = params.edit ?? null;
 
-  const auth = await requireAuth();
+    const auth = await perf.time("auth", () => requireAuth());
+    orgId = auth.orgId;
+    role = auth.role;
 
   const now = new Date();
   const dayStart = startOfDay(now);
@@ -60,9 +79,19 @@ export default async function AttendancePage({
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
   const ongoingStatuses: JobStatus[] = [JobStatus.SCHEDULED, JobStatus.IN_PROGRESS, JobStatus.ON_HOLD];
 
-  const [settings, allUsers, jobs, todaysEntries, assignmentRowsWithWeek, ongoingJobsRaw] =
-    isDemoMode()
-      ? await Promise.all([
+    type BootstrapTuple = [
+      { defaultClockInTime: string; clockGraceMinutes: number; workerCanEditOwnTimeSameDay: boolean; gpsTimeTrackingEnabled: boolean },
+      Awaited<ReturnType<typeof getOrgUsers>>,
+      Array<{ id: string; jobName: string }>,
+      Array<{ id: string; workerId: string; jobId: string; start: Date; end: Date | null; job: { id: string; jobName: string } }>,
+      Array<{ userId: string; job: { id: string; jobName: string; scheduleEvents: Array<{ id: string; startAt: Date; endAt: Date; createdAt?: Date }> } }>,
+      Array<{ id: string; jobName: string; address: string; assignments: Array<{ userId: string }>; scheduleEvents: Array<{ id: string; startAt: Date; endAt: Date }> }>,
+    ];
+
+    let bootstrap: BootstrapTuple;
+    if (isDemoMode()) {
+      bootstrap = (await perf.time("bootstrap_demo", () =>
+        Promise.all([
           Promise.resolve({
             defaultClockInTime: "07:00",
             clockGraceMinutes: 10,
@@ -81,10 +110,7 @@ export default async function AttendancePage({
               })),
           ),
           Promise.resolve(
-            [
-              ...demoJobAssignments,
-              ...listDemoRuntimeAssignments(),
-            ].map((assignment) => {
+            [...demoJobAssignments, ...listDemoRuntimeAssignments()].map((assignment) => {
               const allEvents = [...demoScheduleEvents, ...listDemoRuntimeScheduleEvents()].filter(
                 (event) => event.jobId === assignment.jobId,
               );
@@ -112,8 +138,7 @@ export default async function AttendancePage({
                 const weekEvents = allEvents.filter(
                   (e) => new Date(e.startAt) >= weekStart && new Date(e.startAt) <= weekEnd,
                 );
-                const hasWeekEvents = weekEvents.length > 0;
-                if (!hasWeekEvents) return null;
+                if (weekEvents.length === 0) return null;
                 return {
                   ...job,
                   assignments: allAssignments,
@@ -122,9 +147,21 @@ export default async function AttendancePage({
               })
               .filter((job) => job !== null),
           ),
-        ])
-      : await Promise.all([
-          prisma.organizationSetting.findUnique({ where: { orgId: auth.orgId } }),
+        ]),
+      )) as unknown as BootstrapTuple;
+    } else {
+      bootstrap = (await perf.time("bootstrap_live", () =>
+        Promise.all([
+          prisma.organizationSetting
+            .findUnique({ where: { orgId: auth.orgId } })
+            .then((value) =>
+              value ?? {
+                defaultClockInTime: "07:00",
+                clockGraceMinutes: 10,
+                workerCanEditOwnTimeSameDay: true,
+                gpsTimeTrackingEnabled: false,
+              },
+            ),
           getOrgUsers(auth.orgId),
           prisma.job.findMany({
             where: { orgId: auth.orgId },
@@ -179,7 +216,11 @@ export default async function AttendancePage({
             },
             orderBy: { updatedAt: "desc" },
           }),
-        ]);
+        ]),
+      )) as unknown as BootstrapTuple;
+    }
+
+    const [settings, allUsers, jobs, todaysEntries, assignmentRowsWithWeek, ongoingJobsRaw] = bootstrap;
 
   const users = allUsers.filter((u) => u.isActive);
   const ongoingJobs = ongoingJobsRaw;
@@ -287,7 +328,7 @@ export default async function AttendancePage({
     }
   }
 
-  return (
+    return (
     <div className="space-y-4">
       <TeamTabs active="attendance" />
 
@@ -638,5 +679,8 @@ export default async function AttendancePage({
         </div>
       </section>
     </div>
-  );
+    );
+  } finally {
+    perf.flush({ orgId, role });
+  }
 }

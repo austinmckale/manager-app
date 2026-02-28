@@ -1,10 +1,13 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { LeadSource, LeadStage } from "@prisma/client";
 import { endOfDay, format, startOfDay, subDays } from "date-fns";
 import { convertLeadToJobAction, createLeadAction, importJoistCsvAction, updateLeadStageAction } from "@/app/(app)/actions";
+import { RoutePanelSkeleton } from "@/components/route-panel-skeleton";
 import { requireAuth } from "@/lib/auth";
 import { isDemoMode } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
+import { createRoutePerf } from "@/lib/route-perf";
 
 const stageOrder: LeadStage[] = [
   LeadStage.NEW,
@@ -25,11 +28,26 @@ const sourceOptions: LeadSource[] = [
   LeadSource.OTHER,
 ];
 
-export default async function LeadsPage() {
-  const auth = await requireAuth();
+export default function LeadsPage() {
+  return (
+    <Suspense fallback={<RoutePanelSkeleton cards={4} sections={5} />}>
+      <LeadsPageContent />
+    </Suspense>
+  );
+}
 
-  const leads = isDemoMode()
-    ? [
+async function LeadsPageContent() {
+  const perf = createRoutePerf("/leads");
+  let orgId = "";
+  let role = "";
+  try {
+    const auth = await perf.time("auth", () => requireAuth());
+    orgId = auth.orgId;
+    role = auth.role;
+
+    const leads = await perf.time("leads_query", async () =>
+      isDemoMode()
+        ? [
         {
           id: "demo-lead-1",
           jobId: null,
@@ -61,24 +79,25 @@ export default async function LeadsPage() {
           createdAt: new Date(),
         },
       ]
-    : await prisma.lead.findMany({
-        where: { orgId: auth.orgId },
-        orderBy: { createdAt: "desc" },
-        take: 200,
-        select: {
-          id: true,
-          jobId: true,
-          contactName: true,
-          phone: true,
-          email: true,
-          address: true,
-          serviceType: true,
-          source: true,
-          stage: true,
-          notes: true,
-          createdAt: true,
-        },
-      });
+        : await prisma.lead.findMany({
+            where: { orgId: auth.orgId },
+            orderBy: { createdAt: "desc" },
+            take: 200,
+            select: {
+              id: true,
+              jobId: true,
+              contactName: true,
+              phone: true,
+              email: true,
+              address: true,
+              serviceType: true,
+              source: true,
+              stage: true,
+              notes: true,
+              createdAt: true,
+            },
+          }),
+    );
 
   type LeadRow = (typeof leads)[number];
   const stageCounts = new Map(stageOrder.map((stage) => [stage, 0]));
@@ -111,7 +130,7 @@ export default async function LeadsPage() {
   };
   const recentFormLeads = websiteFormLeads.slice(0, 8);
 
-  return (
+    return (
     <div className="space-y-4">
       <section
         id="joist-import"
@@ -372,5 +391,8 @@ export default async function LeadsPage() {
         </details>
       </section>
     </div>
-  );
+    );
+  } finally {
+    perf.flush({ orgId, role });
+  }
 }

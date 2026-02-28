@@ -1,5 +1,7 @@
 import { Role } from "@prisma/client";
 import { cache } from "react";
+import { cookies } from "next/headers";
+import { parseAuthContextCookieValue, AUTH_CONTEXT_COOKIE_NAME } from "@/lib/auth-context-cookie";
 import { getDemoOrgId, isDemoMode, listDemoRuntimeUsers } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
 import { createServerSupabase } from "@/lib/supabase/server";
@@ -145,6 +147,12 @@ const requireAuthCached = cache(async (allowFallback: boolean): Promise<AuthCont
       fullName: user?.fullName ?? "Demo User",
       email: user?.email ?? "demo@local.invalid",
     };
+  }
+
+  const cookieStore = await cookies();
+  const cachedAuth = parseAuthContextCookieValue(cookieStore.get(AUTH_CONTEXT_COOKIE_NAME)?.value);
+  if (cachedAuth && isEmailAllowed(cachedAuth.email)) {
+    return cachedAuth;
   }
 
   try {

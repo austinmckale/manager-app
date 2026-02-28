@@ -1,10 +1,13 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { endOfWeek, format, startOfWeek } from "date-fns";
 import { JobStatus } from "@prisma/client";
 import { createJobAction } from "@/app/(app)/actions";
 import { JobStatusBadge } from "@/components/job-status-badge";
+import { RoutePanelSkeleton } from "@/components/route-panel-skeleton";
 import { requireAuth } from "@/lib/auth";
 import { getCustomers, getJobs, getJobsPageAlerts } from "@/lib/data";
+import { createRoutePerf } from "@/lib/route-perf";
 import { SERVICE_TAG_OPTIONS } from "@/lib/service-tags";
 import { currency, toNumber } from "@/lib/utils";
 
@@ -25,13 +28,29 @@ const viewOptions = [
   { value: "all", label: "All" },
 ] as const;
 
-export default async function JobsPage({
+export default function JobsPage(props: {
+  searchParams: Promise<{ status?: string; q?: string; view?: "today" | "week" | "all"; customerId?: string; focus?: "visits" }>;
+}) {
+  return (
+    <Suspense fallback={<RoutePanelSkeleton cards={4} sections={4} />}>
+      <JobsPageContent {...props} />
+    </Suspense>
+  );
+}
+
+async function JobsPageContent({
   searchParams,
 }: {
   searchParams: Promise<{ status?: string; q?: string; view?: "today" | "week" | "all"; customerId?: string; focus?: "visits" }>;
 }) {
-  const auth = await requireAuth();
-  const params = await searchParams;
+  const perf = createRoutePerf("/jobs");
+  let orgId = "";
+  let role = "";
+  try {
+    const auth = await perf.time("auth", () => requireAuth());
+    orgId = auth.orgId;
+    role = auth.role;
+    const params = await perf.time("search_params", () => searchParams);
   const status = params.status ?? "ALL";
   const q = params.q ?? "";
   // Default to "This Week" so the jobs list stays focused on active work.
@@ -39,24 +58,26 @@ export default async function JobsPage({
   const preselectedCustomerId = params.customerId ?? "";
   const focus = params.focus ?? "";
 
-  const [customers, jobs, alerts] = await Promise.all([
-    getCustomers(auth.orgId),
-    getJobs({
-      orgId: auth.orgId,
-      role: auth.role,
-      userId: auth.userId,
-      status,
-      q,
-      view,
-    }),
-    getJobsPageAlerts({ orgId: auth.orgId, role: auth.role, userId: auth.userId }),
-  ]);
+    const [customers, jobs, alerts] = await perf.time("data", () =>
+      Promise.all([
+        getCustomers(auth.orgId),
+        getJobs({
+          orgId: auth.orgId,
+          role: auth.role,
+          userId: auth.userId,
+          status,
+          q,
+          view,
+        }),
+        getJobsPageAlerts({ orgId: auth.orgId, role: auth.role, userId: auth.userId }),
+      ]),
+    );
 
   const hasOverdue = alerts.overdueTasks.length > 0;
   const hasMissingReceipts = alerts.jobIdsWithMissingReceipts.length > 0;
   const jobNamesById = new Map(jobs.map((j) => [j.id, j.jobName]));
 
-  return (
+    return (
     <div className="space-y-4">
       {(hasOverdue || hasMissingReceipts) ? (
         <section className="rounded-2xl border border-amber-200 bg-amber-50/50 p-4">
@@ -385,5 +406,8 @@ export default async function JobsPage({
         </details>
       </section>
     </div>
-  );
+    );
+  } finally {
+    perf.flush({ orgId, role });
+  }
 }

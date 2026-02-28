@@ -1,11 +1,14 @@
+import { Suspense } from "react";
 import { endOfWeek, format, startOfWeek } from "date-fns";
 import { createTimeEntryAction, deleteTimeEntryAction, setPayrollWeekStateAction, updateTimeEntryAction } from "@/app/(app)/actions";
+import { RoutePanelSkeleton } from "@/components/route-panel-skeleton";
 import { TeamTabs } from "@/components/team-tabs";
 import { requireAuth } from "@/lib/auth";
 import { getOrgUsers } from "@/lib/data";
 import { demoJobs, demoUsers, isDemoMode, listDemoRuntimeTimeEntries } from "@/lib/demo";
 import { canEditTimeEntry } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
+import { createRoutePerf } from "@/lib/route-perf";
 import { currency, toNumber } from "@/lib/utils";
 
 type PayrollWeekState = "OPEN" | "LOCKED" | "PAID";
@@ -20,13 +23,29 @@ function toDateTimeLocal(value: Date) {
   return new Date(value.getTime() - value.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 
-export default async function TimePage({
+export default function TimePage(props: {
+  searchParams: Promise<{ workerId?: string; jobId?: string; from?: string; to?: string }>;
+}) {
+  return (
+    <Suspense fallback={<RoutePanelSkeleton cards={4} sections={4} />}>
+      <TimePageContent {...props} />
+    </Suspense>
+  );
+}
+
+async function TimePageContent({
   searchParams,
 }: {
   searchParams: Promise<{ workerId?: string; jobId?: string; from?: string; to?: string }>;
 }) {
-  const auth = await requireAuth();
-  const params = await searchParams;
+  const perf = createRoutePerf("/time");
+  let orgId = "";
+  let role = "";
+  try {
+    const auth = await perf.time("auth", () => requireAuth());
+    orgId = auth.orgId;
+    role = auth.role;
+    const params = await perf.time("search_params", () => searchParams);
 
   const now = new Date();
   const weekStart = startOfWeek(now, { weekStartsOn: 1 });
@@ -38,89 +57,97 @@ export default async function TimePage({
   const from = params.from ? new Date(params.from) : defaultFrom;
   const to = params.to ? new Date(params.to) : now;
 
-  const [users, jobs, settings] = await Promise.all([
-    getOrgUsers(auth.orgId),
-    isDemoMode()
-      ? Promise.resolve(demoJobs)
-      : prisma.job.findMany({
-          where: {
-            orgId: auth.orgId,
-            ...(auth.role === "WORKER" ? { assignments: { some: { userId: auth.userId } } } : {}),
-          },
-          select: { id: true, jobName: true },
-          orderBy: { updatedAt: "desc" },
-          take: 200,
-        }),
-    isDemoMode() ? null : prisma.organizationSetting.findUnique({ where: { orgId: auth.orgId } }),
-  ]);
+    const [users, jobs, settings] = await perf.time("bootstrap", () =>
+      Promise.all([
+        getOrgUsers(auth.orgId),
+        isDemoMode()
+          ? Promise.resolve(demoJobs)
+          : prisma.job.findMany({
+              where: {
+                orgId: auth.orgId,
+                ...(auth.role === "WORKER" ? { assignments: { some: { userId: auth.userId } } } : {}),
+              },
+              select: { id: true, jobName: true },
+              orderBy: { updatedAt: "desc" },
+              take: 200,
+            }),
+        isDemoMode() ? null : prisma.organizationSetting.findUnique({ where: { orgId: auth.orgId } }),
+      ]),
+    );
 
-  const rawEntries = isDemoMode()
-    ? listDemoRuntimeTimeEntries().map((entry) => ({
-        ...entry,
-        job: demoJobs.find((j) => j.id === entry.jobId) ?? demoJobs[0],
-        worker: demoUsers.find((u) => u.id === entry.workerId) ?? demoUsers[0],
-      }))
-    : await prisma.timeEntry.findMany({
-        where: {
-          job: { orgId: auth.orgId },
-          ...(params.workerId ? { workerId: params.workerId } : {}),
-          ...(params.jobId ? { jobId: params.jobId } : {}),
-          start: { gte: from, lte: to },
-          ...(auth.role === "WORKER" ? { workerId: auth.userId } : {}),
-        },
-        select: {
-          id: true,
-          workerId: true,
-          jobId: true,
-          start: true,
-          end: true,
-          date: true,
-          notes: true,
-          hourlyRateLoaded: true,
-          job: { select: { id: true, jobName: true } },
-          worker: { select: { id: true, fullName: true } },
-        },
-        orderBy: { start: "desc" },
-        take: 200,
-      });
+    const rawEntries = await perf.time("entries", async () =>
+      isDemoMode()
+        ? listDemoRuntimeTimeEntries().map((entry) => ({
+            ...entry,
+            job: demoJobs.find((j) => j.id === entry.jobId) ?? demoJobs[0],
+            worker: demoUsers.find((u) => u.id === entry.workerId) ?? demoUsers[0],
+          }))
+        : await prisma.timeEntry.findMany({
+            where: {
+              job: { orgId: auth.orgId },
+              ...(params.workerId ? { workerId: params.workerId } : {}),
+              ...(params.jobId ? { jobId: params.jobId } : {}),
+              start: { gte: from, lte: to },
+              ...(auth.role === "WORKER" ? { workerId: auth.userId } : {}),
+            },
+            select: {
+              id: true,
+              workerId: true,
+              jobId: true,
+              start: true,
+              end: true,
+              date: true,
+              notes: true,
+              hourlyRateLoaded: true,
+              job: { select: { id: true, jobName: true } },
+              worker: { select: { id: true, fullName: true } },
+            },
+            orderBy: { start: "desc" },
+            take: 200,
+          }),
+    );
 
   const entries = rawEntries.filter((e) => e.start >= from && e.start <= to);
 
-  const weeklyEntries = isDemoMode()
-    ? rawEntries.filter((e) => e.start >= weekStart && e.start <= weekEnd)
-    : await prisma.timeEntry.findMany({
-        where: {
-          job: { orgId: auth.orgId },
-          start: { gte: weekStart, lte: weekEnd },
-          ...(auth.role === "WORKER" ? { workerId: auth.userId } : {}),
-        },
-        select: {
-          id: true,
-          workerId: true,
-          jobId: true,
-          start: true,
-          end: true,
-          hourlyRateLoaded: true,
-          job: { select: { id: true, jobName: true } },
-          worker: { select: { id: true, fullName: true } },
-        },
-        orderBy: { start: "asc" },
-        take: 500,
-      });
+    const weeklyEntries = await perf.time("weekly_entries", async () =>
+      isDemoMode()
+        ? rawEntries.filter((e) => e.start >= weekStart && e.start <= weekEnd)
+        : await prisma.timeEntry.findMany({
+            where: {
+              job: { orgId: auth.orgId },
+              start: { gte: weekStart, lte: weekEnd },
+              ...(auth.role === "WORKER" ? { workerId: auth.userId } : {}),
+            },
+            select: {
+              id: true,
+              workerId: true,
+              jobId: true,
+              start: true,
+              end: true,
+              hourlyRateLoaded: true,
+              job: { select: { id: true, jobName: true } },
+              worker: { select: { id: true, fullName: true } },
+            },
+            orderBy: { start: "asc" },
+            take: 500,
+          }),
+    );
 
-  const payrollWeekStateLogs = isDemoMode()
-    ? []
-    : await prisma.activityLog.findMany({
-        where: {
-          orgId: auth.orgId,
-          action: {
-            in: ["payroll.week.locked", "payroll.week.opened", "payroll.week.paid"],
-          },
-        },
-        select: { action: true, metadata: true, createdAt: true },
-        orderBy: { createdAt: "desc" },
-        take: 100,
-      });
+    const payrollWeekStateLogs = await perf.time("week_state", async () =>
+      isDemoMode()
+        ? []
+        : await prisma.activityLog.findMany({
+            where: {
+              orgId: auth.orgId,
+              action: {
+                in: ["payroll.week.locked", "payroll.week.opened", "payroll.week.paid"],
+              },
+            },
+            select: { action: true, metadata: true, createdAt: true },
+            orderBy: { createdAt: "desc" },
+            take: 100,
+          }),
+    );
 
   const payrollByWorker = new Map<string, { workerName: string; hours: number; laborCost: number; entryCount: number }>();
   for (const entry of entries) {
@@ -202,7 +229,7 @@ export default async function TimePage({
   const defaultFromStr = format(defaultFrom, "yyyy-MM-dd");
   const defaultToStr = format(now, "yyyy-MM-dd");
 
-  return (
+    return (
     <div className="space-y-4">
       <TeamTabs active="payroll" />
 
@@ -427,5 +454,8 @@ export default async function TimePage({
         )}
       </section>
     </div>
-  );
+    );
+  } finally {
+    perf.flush({ orgId, role });
+  }
 }

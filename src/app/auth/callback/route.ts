@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-import { isEmailAllowed } from "@/lib/auth";
+import { isEmailAllowed, requireAuth } from "@/lib/auth";
+import {
+  AUTH_CONTEXT_COOKIE_NAME,
+  createAuthContextCookieValue,
+  getAuthContextCookieOptions,
+} from "@/lib/auth-context-cookie";
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
@@ -36,5 +41,15 @@ export async function GET(request: Request) {
     return NextResponse.redirect(`${origin}/login?error=unauthorized`);
   }
 
-  return NextResponse.redirect(`${origin}/today`);
+  const response = NextResponse.redirect(`${origin}/today`);
+  try {
+    const auth = await requireAuth({ allowFallback: false });
+    const cookieValue = createAuthContextCookieValue(auth);
+    if (cookieValue) {
+      response.cookies.set(AUTH_CONTEXT_COOKIE_NAME, cookieValue, getAuthContextCookieOptions());
+    }
+  } catch {
+    // Fall through without auth context cache.
+  }
+  return response;
 }

@@ -1,6 +1,7 @@
-﻿import { cookies } from "next/headers";
-import { NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
+import { NextResponse } from "next/server";
+import { AUTH_CONTEXT_COOKIE_NAME, getAuthContextCookieOptions } from "@/lib/auth-context-cookie";
 
 export async function POST(request: Request) {
   const cookieStore = await cookies();
@@ -22,5 +23,7 @@ export async function POST(request: Request) {
   await supabase.auth.signOut();
 
   const origin = new URL(request.url).origin;
-  return NextResponse.redirect(`${origin}/login`, { status: 302 });
+  const response = NextResponse.redirect(`${origin}/login`, { status: 302 });
+  response.cookies.set(AUTH_CONTEXT_COOKIE_NAME, "", getAuthContextCookieOptions(0));
+  return response;
 }
