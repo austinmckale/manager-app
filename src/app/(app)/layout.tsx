@@ -3,6 +3,7 @@ import { AppShell } from "@/components/app-shell";
 import { requireAuth } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
+export const preferredRegion = "sfo1";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   let auth;
