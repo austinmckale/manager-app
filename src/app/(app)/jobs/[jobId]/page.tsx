@@ -595,7 +595,7 @@ export default async function JobDetailPage({
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-slate-900">Joist / Scope of work</h3>
-        <p className="mt-1 text-xs text-slate-500">Upload your Joist estimate or scope-of-work PDF so price and scope are on file for this job.</p>
+        <p className="mt-1 text-xs text-slate-500">Upload one Joist PDF. We auto-extract customer, address, estimate/invoice number, and total into this section.</p>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <FileCapture jobId={job.id} fileType="DOCUMENT" />
           <div className="space-y-2">
@@ -615,7 +615,11 @@ export default async function JobDetailPage({
                       >
                         {asset.fileName}
                       </a>
-                      {asset.description ? <span className="ml-1 text-slate-500">· {asset.description}</span> : null}
+                      {asset.description ? (
+                        <p className="mt-0.5 text-slate-500">{asset.description}</p>
+                      ) : (
+                        <p className="mt-0.5 text-amber-700">No extracted details yet. Re-upload the PDF to process details.</p>
+                      )}
                     </li>
                   ))}
                 </ul>

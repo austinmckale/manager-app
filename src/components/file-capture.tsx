@@ -79,6 +79,7 @@ export function FileCapture({ jobId, fileType = "PHOTO", expenseId, onUploaded }
   const [isOnline, setIsOnline] = useState(true);
 
   const activeFileType: "PHOTO" | "RECEIPT" | "DOCUMENT" = modeLocked ? fileType : captureMode;
+  const isDocumentMode = modeLocked && fileType === "DOCUMENT";
   const selectedArea = areaOption === "Other" ? areaCustom.trim() : areaOption;
 
   const refreshQueue = useCallback(async () => {
@@ -161,6 +162,17 @@ export function FileCapture({ jobId, fileType = "PHOTO", expenseId, onUploaded }
   const onFilesSelected = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
 
+    if (isDocumentMode) {
+      const invalid = Array.from(files).find((file) => {
+        const lower = file.name.toLowerCase();
+        return !(lower.endsWith(".pdf") || file.type.toLowerCase().includes("pdf"));
+      });
+      if (invalid) {
+        alert("Joist upload only supports PDF files.");
+        return;
+      }
+    }
+
     if (activeFileType === "PHOTO" && !selectedArea) {
       alert("Area is required for photos.");
       return;
@@ -228,11 +240,11 @@ export function FileCapture({ jobId, fileType = "PHOTO", expenseId, onUploaded }
     }
   };
 
-  const acceptValue = activeFileType === "PHOTO" || activeFileType === "RECEIPT" ? "image/*" : "*/*";
+  const acceptValue = activeFileType === "PHOTO" || activeFileType === "RECEIPT" ? "image/*" : ".pdf,application/pdf";
 
   return (
     <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-3">
-      <p className="text-sm font-medium text-slate-900">Capture / Upload</p>
+      <p className="text-sm font-medium text-slate-900">{isDocumentMode ? "Joist PDF Upload" : "Capture / Upload"}</p>
 
       {!modeLocked ? (
         <div className="grid grid-cols-2 gap-2 text-xs">
@@ -257,6 +269,12 @@ export function FileCapture({ jobId, fileType = "PHOTO", expenseId, onUploaded }
         {isOnline ? "Online" : "Offline"} - Pending {scopedQueueItems.length}
         {queuedErrors > 0 ? ` - Failed ${queuedErrors}` : ""}
       </div>
+
+      {isDocumentMode ? (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-2 text-xs text-slate-600">
+          Upload the Joist PDF. We auto-extract estimate/invoice number, customer, address, and total to show under this job.
+        </div>
+      ) : null}
 
       {activeFileType === "PHOTO" ? (
         <>
@@ -356,34 +374,38 @@ export function FileCapture({ jobId, fileType = "PHOTO", expenseId, onUploaded }
         </div>
       ) : null}
 
-      <div className="space-y-2">
-        <p className="text-xs text-slate-600">Tags (optional)</p>
-        <div className="flex flex-wrap gap-1.5">
-          {CONTROLLED_TAG_OPTIONS.map((tag) => {
-            const selected = selectedTags.includes(tag.slug);
-            return (
-              <button
-                key={tag.slug}
-                type="button"
-                onClick={() => toggleTag(tag.slug)}
-                className={`rounded-full border px-2 py-1 text-[11px] ${selected ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 text-slate-700"}`}
-              >
-                {tag.label}
-              </button>
-            );
-          })}
+      {!isDocumentMode ? (
+        <div className="space-y-2">
+          <p className="text-xs text-slate-600">Tags (optional)</p>
+          <div className="flex flex-wrap gap-1.5">
+            {CONTROLLED_TAG_OPTIONS.map((tag) => {
+              const selected = selectedTags.includes(tag.slug);
+              return (
+                <button
+                  key={tag.slug}
+                  type="button"
+                  onClick={() => toggleTag(tag.slug)}
+                  className={`rounded-full border px-2 py-1 text-[11px] ${selected ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 text-slate-700"}`}
+                >
+                  {tag.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      ) : null}
 
-      <label className="block text-xs text-slate-600">
-        {activeFileType === "RECEIPT" ? "Receipt notes (optional)" : "Description (optional)"}
-        <textarea
-          value={description}
-          onChange={(event) => setDescription(event.target.value)}
-          className="mt-1 w-full rounded-xl border border-slate-300 px-2 py-2 text-sm"
-          rows={2}
-        />
-      </label>
+      {!isDocumentMode ? (
+        <label className="block text-xs text-slate-600">
+          {activeFileType === "RECEIPT" ? "Receipt notes (optional)" : "Description (optional)"}
+          <textarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            className="mt-1 w-full rounded-xl border border-slate-300 px-2 py-2 text-sm"
+            rows={2}
+          />
+        </label>
+      ) : null}
 
       {activeFileType === "PHOTO" ? (
         <>
@@ -399,36 +421,51 @@ export function FileCapture({ jobId, fileType = "PHOTO", expenseId, onUploaded }
         </>
       ) : null}
 
-      <div className="grid grid-cols-2 gap-2">
-        <label className="rounded-xl border border-teal-200 bg-teal-50 px-3 py-2 text-center text-sm font-medium text-teal-700">
-          Camera
+      {isDocumentMode ? (
+        <label className="block rounded-xl border border-slate-300 px-3 py-2 text-center text-sm font-medium text-slate-700">
+          Upload Joist PDF
           <input
             type="file"
             accept={acceptValue}
-            capture={activeFileType === "PHOTO" || activeFileType === "RECEIPT" ? "environment" : undefined}
             className="hidden"
-            multiple={activeFileType === "PHOTO"}
             onChange={(event) => {
               void onFilesSelected(event.target.files);
               event.currentTarget.value = "";
             }}
           />
         </label>
+      ) : (
+        <div className="grid grid-cols-2 gap-2">
+          <label className="rounded-xl border border-teal-200 bg-teal-50 px-3 py-2 text-center text-sm font-medium text-teal-700">
+            Camera
+            <input
+              type="file"
+              accept={acceptValue}
+              capture={activeFileType === "PHOTO" || activeFileType === "RECEIPT" ? "environment" : undefined}
+              className="hidden"
+              multiple={activeFileType === "PHOTO"}
+              onChange={(event) => {
+                void onFilesSelected(event.target.files);
+                event.currentTarget.value = "";
+              }}
+            />
+          </label>
 
-        <label className="rounded-xl border border-slate-300 px-3 py-2 text-center text-sm font-medium text-slate-700">
-          Files
-          <input
-            type="file"
-            accept={acceptValue}
-            className="hidden"
-            multiple={activeFileType === "PHOTO"}
-            onChange={(event) => {
-              void onFilesSelected(event.target.files);
-              event.currentTarget.value = "";
-            }}
-          />
-        </label>
-      </div>
+          <label className="rounded-xl border border-slate-300 px-3 py-2 text-center text-sm font-medium text-slate-700">
+            Files
+            <input
+              type="file"
+              accept={acceptValue}
+              className="hidden"
+              multiple={activeFileType === "PHOTO"}
+              onChange={(event) => {
+                void onFilesSelected(event.target.files);
+                event.currentTarget.value = "";
+              }}
+            />
+          </label>
+        </div>
+      )}
 
       <div className="text-xs text-slate-500">{uploading ? "Uploading..." : "Ready"}</div>
 

@@ -3,6 +3,7 @@ import { ExpenseCategory } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { isDemoMode } from "@/lib/demo";
+import { combineDescriptions, extractJoistDocumentFromFileName, extractJoistDocumentFromText, type JoistDocumentExtract } from "@/lib/joist-document";
 import { prisma } from "@/lib/prisma";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
@@ -51,6 +52,7 @@ export async function POST(request: Request) {
   const ext = body.fileName.split(".").pop() || "jpg";
   const storageKey = `${auth.orgId}/${body.jobId}/${Date.now()}-${crypto.randomUUID()}.${ext}`;
   const payload = dataUrlToBuffer(body.dataUrl);
+  let joistExtract: JoistDocumentExtract | null = null;
 
   const bucket = process.env.SUPABASE_STORAGE_BUCKET ?? "job-assets";
   const upload = await supabaseAdmin.storage.from(bucket).upload(storageKey, payload, {
@@ -61,6 +63,34 @@ export async function POST(request: Request) {
   if (upload.error) {
     return NextResponse.json({ error: upload.error.message }, { status: 500 });
   }
+
+  const isPdfDocument =
+    body.fileType === "DOCUMENT" &&
+    (body.fileName.toLowerCase().endsWith(".pdf") || body.mimeType.toLowerCase().includes("pdf"));
+
+  if (body.fileType === "DOCUMENT") {
+    if (isPdfDocument) {
+      try {
+        const { PDFParse } = await import("pdf-parse");
+        const parser = new PDFParse({ data: payload });
+        try {
+          const extracted = await parser.getText();
+          joistExtract = extractJoistDocumentFromText(extracted.text || "");
+        } finally {
+          await parser.destroy();
+        }
+      } catch (error) {
+        joistExtract = extractJoistDocumentFromFileName(
+          body.fileName,
+          error instanceof Error ? error.message : "PDF parse failed",
+        );
+      }
+    } else if (body.fileName.toLowerCase().includes("joist")) {
+      joistExtract = extractJoistDocumentFromFileName(body.fileName, "Non-PDF document fallback");
+    }
+  }
+
+  const description = combineDescriptions(body.description, joistExtract?.summary);
 
   let linkedExpenseId = body.expenseId || null;
   const numericAmount = Number(body.expenseAmount);
@@ -123,7 +153,7 @@ export async function POST(request: Request) {
       stage: body.stage,
       area: body.area,
       tags: body.tags ?? [],
-      description: body.description || null,
+      description: description || null,
       isPortfolio: body.fileType === "PHOTO" ? Boolean(body.isPortfolio) : false,
       isClientVisible: Boolean(body.isClientVisible),
     },
@@ -138,6 +168,19 @@ export async function POST(request: Request) {
       metadata: {
         fileAssetId: created.id,
         type: created.type,
+        joistExtract: joistExtract
+          ? {
+              documentType: joistExtract.documentType,
+              documentNumber: joistExtract.documentNumber,
+              customerName: joistExtract.customerName || null,
+              address: joistExtract.address || null,
+              scopeSummary: joistExtract.scopeSummary || null,
+              total: joistExtract.totalText || null,
+              date: joistExtract.dateText || null,
+              parseSource: joistExtract.parseSource,
+              parseError: joistExtract.parseError ?? null,
+            }
+          : null,
       },
     },
   });

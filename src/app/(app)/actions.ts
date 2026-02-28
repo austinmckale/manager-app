@@ -254,6 +254,22 @@ function buildFallbackJoistPdfPayload(fileName: string, reason: string) {
   };
 }
 
+function buildLeadJobNameFromLead(lead: {
+  contactName: string;
+  address: string | null;
+  serviceType: string | null;
+}) {
+  const customerName = (lead.contactName ?? "").trim();
+  const address = (lead.address ?? "").trim();
+  const serviceType = (lead.serviceType ?? "").trim();
+
+  if (address && customerName) return `${address} - ${customerName}`;
+  if (address) return address;
+  if (customerName) return customerName;
+  if (serviceType) return serviceType;
+  return "Imported Job";
+}
+
 async function upsertJoistLead(
   auth: { orgId: string },
   payload: {
@@ -665,7 +681,7 @@ async function convertLeadToJobInternal(
     data: {
       orgId: auth.orgId,
       customerId: customer.id,
-      jobName: jobNameInput || `${lead.serviceType || "New"} - ${lead.contactName}`,
+      jobName: jobNameInput || buildLeadJobNameFromLead(lead),
       address: lead.address || "Address pending",
       status: options?.jobStatus ?? JobStatus.ESTIMATE,
       categoryTags: [inferServiceTagFromText(lead.serviceType) ?? "general-remodeling", "lead-converted"],
