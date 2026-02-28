@@ -7,6 +7,7 @@ import {
   PhoneIncoming,
 } from "lucide-react";
 import { QuickActionsFab } from "@/components/quick-actions-fab";
+import { NavPrefetch } from "@/components/nav-prefetch";
 
 type AppShellProps = {
   title: string;
@@ -34,6 +35,7 @@ export function AppShell({ title, userName, children }: AppShellProps) {
       </header>
       <main className="px-4 py-4">{children}</main>
       <QuickActionsFab />
+      <NavPrefetch />
       <nav className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white/95 backdrop-blur">
         <div className="mx-auto grid max-w-5xl grid-cols-5 gap-1 px-1 py-1">
           {navItems.map((item) => {
