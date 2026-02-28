@@ -80,7 +80,7 @@ export default async function TodayPage() {
         ) AS "totalGrossPay"
         FROM "TimeEntry"
         INNER JOIN "Job" ON "Job"."id" = "TimeEntry"."jobId"
-        WHERE "Job"."orgId" = ${auth.orgId}
+        WHERE "Job"."orgId" = ${auth.orgId}::uuid
           AND "TimeEntry"."start" >= ${weekStart}
           AND "TimeEntry"."start" <= ${weekEnd}
           AND "TimeEntry"."end" IS NOT NULL
