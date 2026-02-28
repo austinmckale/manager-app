@@ -13,7 +13,7 @@ import {
 import { ConfirmDeactivateForm } from "@/components/confirm-deactivate-form";
 import { TeamTabs } from "@/components/team-tabs";
 import { requireAuth } from "@/lib/auth";
-import { getJobs, getOrgUsers } from "@/lib/data";
+import { getOrgUsers } from "@/lib/data";
 import {
   demoJobAssignments,
   demoJobs,
@@ -60,7 +60,7 @@ export default async function AttendancePage({
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
   const ongoingStatuses: JobStatus[] = [JobStatus.SCHEDULED, JobStatus.IN_PROGRESS, JobStatus.ON_HOLD];
 
-  const [settings, allUsers, jobs, todaysEntries, assignmentRowsWithWeek, allJobsWithAssignments, ongoingJobsRaw] =
+  const [settings, allUsers, jobs, todaysEntries, assignmentRowsWithWeek, ongoingJobsRaw] =
     isDemoMode()
       ? await Promise.all([
           Promise.resolve({
@@ -100,7 +100,6 @@ export default async function AttendancePage({
               };
             }),
           ),
-          getJobs({ orgId: auth.orgId, role: auth.role, userId: auth.userId, view: "all" }),
           Promise.resolve(
             demoJobs
               .map((job) => {
@@ -129,38 +128,53 @@ export default async function AttendancePage({
           getOrgUsers(auth.orgId),
           prisma.job.findMany({
             where: { orgId: auth.orgId },
+            select: { id: true, jobName: true },
             orderBy: { updatedAt: "desc" },
             take: 150,
           }),
           prisma.timeEntry.findMany({
             where: { job: { orgId: auth.orgId }, start: { gte: dayStart } },
-            include: { job: true, worker: true },
+            select: {
+              id: true,
+              workerId: true,
+              jobId: true,
+              start: true,
+              end: true,
+              job: { select: { id: true, jobName: true } },
+            },
             orderBy: { start: "asc" },
           }),
           prisma.jobAssignment.findMany({
             where: { orgId: auth.orgId },
             include: {
               job: {
-                include: {
+                select: {
+                  id: true,
+                  jobName: true,
                   scheduleEvents: {
                     where: { startAt: { gte: weekStart, lte: weekEnd } },
                     orderBy: { startAt: "asc" },
+                    select: { id: true, startAt: true, endAt: true, createdAt: true },
                   },
                 },
               },
             },
           }),
-          getJobs({ orgId: auth.orgId, role: auth.role, userId: auth.userId, view: "all" }),
           prisma.job.findMany({
             where: {
               orgId: auth.orgId,
+              status: { in: ongoingStatuses },
               scheduleEvents: { some: { startAt: { gte: weekStart, lte: weekEnd } } },
             },
-            include: {
-              assignments: true,
+            select: {
+              id: true,
+              jobName: true,
+              address: true,
+              assignments: { select: { userId: true } },
               scheduleEvents: {
                 where: { startAt: { gte: weekStart, lte: weekEnd } },
                 orderBy: { startAt: "asc" },
+                select: { id: true, startAt: true, endAt: true },
               },
             },
             orderBy: { updatedAt: "desc" },
@@ -195,10 +209,9 @@ export default async function AttendancePage({
             jobName: a.job.jobName,
             startAt: new Date(e.startAt),
             endAt: new Date(e.endAt),
-            createdAt: "createdAt" in e && e.createdAt ? new Date((e as any).createdAt) : new Date(0),
           })),
       )
-      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      .sort((a, b) => a.startAt.getTime() - b.startAt.getTime());
 
     // Deduplicate blocks that have the same time window (start/end) for this
     // worker/day. If multiple jobs share that exact window, keep the one that
@@ -248,7 +261,6 @@ export default async function AttendancePage({
     const scheduleBlocksDeduped = todaysBlocks.reduce<
       { id: string; jobName: string; startAt: Date; endAt: Date; count: number }[]
     >((acc, block) => {
-      const key = `${block.jobName}-${block.startAt.getTime()}-${block.endAt.getTime()}`;
       const existing = acc.find(
         (b) => b.jobName === block.jobName && b.startAt.getTime() === block.startAt.getTime() && b.endAt.getTime() === block.endAt.getTime(),
       );
@@ -380,7 +392,7 @@ export default async function AttendancePage({
         <h3 className="text-sm font-semibold text-slate-900">Assign crew to ongoing jobs</h3>
         <p className="mt-1 text-xs text-slate-500">
           Quick way to attach workers to jobs for the week. Only workers are listed; add workers below to assign more crew. Use
-          "Clock in crew" to start timers on this job for everyone assigned.
+          &quot;Clock in crew&quot; to start timers on this job for everyone assigned.
         </p>
         <div className="mt-3 space-y-3">
           {ongoingJobs.map((job) => {

@@ -2,7 +2,7 @@ import { endOfWeek, format, startOfWeek } from "date-fns";
 import { createTimeEntryAction, deleteTimeEntryAction, setPayrollWeekStateAction, updateTimeEntryAction } from "@/app/(app)/actions";
 import { TeamTabs } from "@/components/team-tabs";
 import { requireAuth } from "@/lib/auth";
-import { getJobs, getOrgUsers } from "@/lib/data";
+import { getOrgUsers } from "@/lib/data";
 import { demoJobs, demoUsers, isDemoMode, listDemoRuntimeTimeEntries } from "@/lib/demo";
 import { canEditTimeEntry } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
@@ -40,7 +40,17 @@ export default async function TimePage({
 
   const [users, jobs, settings] = await Promise.all([
     getOrgUsers(auth.orgId),
-    getJobs({ orgId: auth.orgId, role: auth.role, userId: auth.userId, view: "all" }),
+    isDemoMode()
+      ? Promise.resolve(demoJobs)
+      : prisma.job.findMany({
+          where: {
+            orgId: auth.orgId,
+            ...(auth.role === "WORKER" ? { assignments: { some: { userId: auth.userId } } } : {}),
+          },
+          select: { id: true, jobName: true },
+          orderBy: { updatedAt: "desc" },
+          take: 200,
+        }),
     isDemoMode() ? null : prisma.organizationSetting.findUnique({ where: { orgId: auth.orgId } }),
   ]);
 
@@ -58,7 +68,18 @@ export default async function TimePage({
           start: { gte: from, lte: to },
           ...(auth.role === "WORKER" ? { workerId: auth.userId } : {}),
         },
-        include: { job: true, worker: true },
+        select: {
+          id: true,
+          workerId: true,
+          jobId: true,
+          start: true,
+          end: true,
+          date: true,
+          notes: true,
+          hourlyRateLoaded: true,
+          job: { select: { id: true, jobName: true } },
+          worker: { select: { id: true, fullName: true } },
+        },
         orderBy: { start: "desc" },
         take: 200,
       });
@@ -73,7 +94,16 @@ export default async function TimePage({
           start: { gte: weekStart, lte: weekEnd },
           ...(auth.role === "WORKER" ? { workerId: auth.userId } : {}),
         },
-        include: { job: true, worker: true },
+        select: {
+          id: true,
+          workerId: true,
+          jobId: true,
+          start: true,
+          end: true,
+          hourlyRateLoaded: true,
+          job: { select: { id: true, jobName: true } },
+          worker: { select: { id: true, fullName: true } },
+        },
         orderBy: { start: "asc" },
         take: 500,
       });
@@ -87,6 +117,7 @@ export default async function TimePage({
             in: ["payroll.week.locked", "payroll.week.opened", "payroll.week.paid"],
           },
         },
+        select: { action: true, metadata: true, createdAt: true },
         orderBy: { createdAt: "desc" },
         take: 100,
       });

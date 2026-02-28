@@ -65,6 +65,19 @@ export default async function LeadsPage() {
         where: { orgId: auth.orgId },
         orderBy: { createdAt: "desc" },
         take: 200,
+        select: {
+          id: true,
+          jobId: true,
+          contactName: true,
+          phone: true,
+          email: true,
+          address: true,
+          serviceType: true,
+          source: true,
+          stage: true,
+          notes: true,
+          createdAt: true,
+        },
       });
 
   type LeadRow = (typeof leads)[number];
