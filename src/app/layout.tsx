@@ -17,6 +17,11 @@ export const metadata: Metadata = {
   title: "FieldFlow Manager",
   description: "Mobile-first job management for contractors",
   applicationName: "FieldFlow Manager",
+  icons: {
+    icon: [{ url: "/brand/chat-logo.png", type: "image/png" }],
+    shortcut: [{ url: "/brand/chat-logo.png", type: "image/png" }],
+    apple: [{ url: "/brand/chat-logo.png", type: "image/png" }],
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
