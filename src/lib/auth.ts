@@ -1,4 +1,5 @@
 import { Role } from "@prisma/client";
+import { cache } from "react";
 import { getDemoOrgId, isDemoMode, listDemoRuntimeUsers } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
 import { createServerSupabase } from "@/lib/supabase/server";
@@ -131,7 +132,10 @@ async function resolveFallbackContext(): Promise<AuthContext> {
 
 export async function requireAuth(options?: RequireAuthOptions): Promise<AuthContext> {
   const allowFallback = options?.allowFallback ?? !AUTH_REQUIRED;
+  return requireAuthCached(allowFallback);
+}
 
+const requireAuthCached = cache(async (allowFallback: boolean): Promise<AuthContext> => {
   if (isDemoMode()) {
     const user = listDemoRuntimeUsers()[0];
     return {
@@ -168,4 +172,4 @@ export async function requireAuth(options?: RequireAuthOptions): Promise<AuthCon
   }
 
   return resolveFallbackContext();
-}
+});

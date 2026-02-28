@@ -18,7 +18,7 @@ type WeeklyPayrollSnapshot = {
 
 export default async function TodayPage() {
   const auth = await requireAuth();
-  const [ops, teamSnapshot, weeklyPayroll, captureCountsByJob] = await Promise.all([
+  const [ops, teamSnapshot, weeklyPayroll] = await Promise.all([
     getTodayOpsSummary({ orgId: auth.orgId, userId: auth.userId, role: auth.role }),
     (async (): Promise<TeamSnapshot> => {
       if (isDemoMode()) {
@@ -95,30 +95,34 @@ export default async function TodayPage() {
         totalGrossPay,
       };
     })(),
-    (async () => {
-      if (isDemoMode()) return {} as Record<string, { photosToday: number; receiptsToday: number }>;
-
-      const todayStart = startOfDay(new Date());
-      const todayEnd = endOfDay(new Date());
-      const assets = await prisma.fileAsset.findMany({
-        where: {
-          job: { orgId: auth.orgId },
-          createdAt: { gte: todayStart, lte: todayEnd },
-          type: { in: ["PHOTO", "RECEIPT"] },
-        },
-        select: { jobId: true, type: true },
-      });
-
-      const summary: Record<string, { photosToday: number; receiptsToday: number }> = {};
-      for (const asset of assets) {
-        const current = summary[asset.jobId] ?? { photosToday: 0, receiptsToday: 0 };
-        if (asset.type === "PHOTO") current.photosToday += 1;
-        if (asset.type === "RECEIPT") current.receiptsToday += 1;
-        summary[asset.jobId] = current;
-      }
-      return summary;
-    })(),
   ]);
+
+  const captureCountsByJob = await (async () => {
+    if (isDemoMode()) return {} as Record<string, { photosToday: number; receiptsToday: number }>;
+
+    const todayJobIds = [...new Set(ops.todayEvents.map((event) => event.job.id))];
+    if (todayJobIds.length === 0) return {} as Record<string, { photosToday: number; receiptsToday: number }>;
+
+    const todayStart = startOfDay(new Date());
+    const todayEnd = endOfDay(new Date());
+    const assets = await prisma.fileAsset.findMany({
+      where: {
+        jobId: { in: todayJobIds },
+        createdAt: { gte: todayStart, lte: todayEnd },
+        type: { in: ["PHOTO", "RECEIPT"] },
+      },
+      select: { jobId: true, type: true },
+    });
+
+    const summary: Record<string, { photosToday: number; receiptsToday: number }> = {};
+    for (const asset of assets) {
+      const current = summary[asset.jobId] ?? { photosToday: 0, receiptsToday: 0 };
+      if (asset.type === "PHOTO") current.photosToday += 1;
+      if (asset.type === "RECEIPT") current.receiptsToday += 1;
+      summary[asset.jobId] = current;
+    }
+    return summary;
+  })();
 
   const jobsTodayCount = new Set(ops.todayEvents.map((event) => event.job.id)).size;
   const visitsTodayCount = ops.todayEvents.length;
@@ -154,7 +158,7 @@ export default async function TodayPage() {
         <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
           <Link href="/jobs#overdue-tasks" className="rounded-xl border border-amber-200 bg-amber-50 p-3">
             <p className="text-xs text-amber-700">Overdue tasks</p>
-            <p className="mt-1 text-xl font-semibold text-amber-700">{ops.overdueTasks.length}</p>
+            <p className="mt-1 text-xl font-semibold text-amber-700">{ops.overdueTasksCount}</p>
           </Link>
           <Link href="/jobs#missing-receipts" className="rounded-xl border border-sky-200 bg-sky-50 p-3">
             <p className="text-xs text-sky-700">Missing receipts</p>

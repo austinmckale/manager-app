@@ -152,10 +152,17 @@ export async function getJobs(params: {
     orderBy: { updatedAt: "desc" },
     include: {
       customer: true,
-      invoices: true,
-      expenses: true,
-      timeEntries: { include: { worker: true } },
-      assignments: true,
+      invoices: { select: { total: true } },
+      expenses: { select: { amount: true } },
+      timeEntries: {
+        where: { start: { gte: weekStart, lte: weekEnd }, end: { not: null } },
+        select: {
+          workerId: true,
+          start: true,
+          end: true,
+          worker: { select: { fullName: true } },
+        },
+      },
       scheduleEvents: {
         where:
           view === "today"
@@ -232,148 +239,67 @@ export async function getTodayOpsSummary(params: { orgId: string; userId: string
   const receiptCutoff = subHours(new Date(), 24);
 
   if (isDemoMode()) {
-    const assignments = getMergedDemoAssignments();
     const scheduleEvents = getMergedDemoScheduleEvents();
-    const assignedJobIds = assignments.map((assignment) => assignment.jobId);
-
-    const assignedJobs = demoJobs.filter((job) => assignedJobIds.includes(job.id));
     const todayEvents = scheduleEvents
-      .filter((event) => assignedJobIds.includes(event.jobId) && isSameDay(event.startAt, new Date()))
+      .filter((event) => isSameDay(event.startAt, new Date()))
       .map((event) => ({
         ...event,
         job: demoJobs.find((job) => job.id === event.jobId) ?? demoJobs[0],
       }));
-    const weekEvents = scheduleEvents
-      .filter((event) => assignedJobIds.includes(event.jobId))
-      .map((event) => ({
-        ...event,
-        job: demoJobs.find((job) => job.id === event.jobId) ?? demoJobs[0],
-      }));
-    const overdueTasks = demoTasks.filter(
-      (task) =>
-        assignedJobIds.includes(task.jobId) &&
-        task.dueDate &&
-        isBefore(task.dueDate, todayStart),
-    );
 
     return {
-      assignedJobs,
       todayEvents,
-      weekEvents,
-      overdueTasks,
-      unsentEstimates: 1,
-      sentEstimates: 2,
-      unpaidInvoices: 2,
+      overdueTasksCount: 1,
       missingReceipts: 1,
       newLeadsAwaitingContact: 2,
-      newLeadList: [
-        {
-          id: "demo-lead-today-1",
-          contactName: "Samantha Reed",
-          serviceType: "Water Damage",
-          source: "WEBSITE_FORM",
-          createdAt: new Date(Date.now() - 1000 * 60 * 45),
-        },
-        {
-          id: "demo-lead-today-2",
-          contactName: "John Ortiz",
-          serviceType: "Bathroom Remodel",
-          source: "PHONE_CALL",
-          createdAt: new Date(Date.now() - 1000 * 60 * 90),
-        },
-      ],
     };
   }
 
-  const assignmentFilter = params.role === Role.WORKER ? { assignments: { some: { userId: params.userId } } } : {};
-
-  const [
-    assignedJobs,
-    todayEvents,
-    weekEvents,
-    overdueTasks,
-    unsentEstimates,
-    sentEstimates,
-    unpaidInvoices,
-    missingReceipts,
-    newLeadsAwaitingContact,
-    newLeadList,
-  ] =
-    await Promise.all([
-      prisma.job.findMany({
-        where: { orgId: params.orgId, ...assignmentFilter },
-        include: { customer: true, invoices: true, expenses: true, timeEntries: true },
-        orderBy: { updatedAt: "desc" },
-      }),
-      prisma.jobScheduleEvent.findMany({
-        where: {
-          orgId: params.orgId,
-          startAt: { gte: todayStart, lte: todayEnd },
+  const workerJobFilter = params.role === Role.WORKER ? { assignments: { some: { userId: params.userId } } } : {};
+  const [todayEvents, overdueTasksCount, missingReceipts, newLeadsAwaitingContact] = await Promise.all([
+    prisma.jobScheduleEvent.findMany({
+      where: {
+        orgId: params.orgId,
+        startAt: { gte: todayStart, lte: todayEnd },
+        ...(params.role === Role.WORKER ? { job: workerJobFilter } : {}),
+      },
+      include: {
+        job: {
+          select: {
+            id: true,
+            jobName: true,
+          },
         },
-        include: { job: true },
-        orderBy: { startAt: "asc" },
-      }),
-      prisma.jobScheduleEvent.findMany({
-        where: {
-          orgId: params.orgId,
-          startAt: { gte: startOfWeek(new Date(), { weekStartsOn: 1 }), lte: endOfWeek(new Date(), { weekStartsOn: 1 }) },
-        },
-        include: { job: true },
-        orderBy: { startAt: "asc" },
-      }),
-      prisma.task.findMany({
-        where: {
-          job: { orgId: params.orgId, ...assignmentFilter },
-          dueDate: { lt: todayStart },
-          status: { in: ["TODO", "IN_PROGRESS", "BLOCKED"] },
-        },
-        include: { job: true, assignee: true },
-        orderBy: { dueDate: "asc" },
-      }),
-      prisma.estimate.count({ where: { job: { orgId: params.orgId, ...assignmentFilter }, status: "DRAFT" } }),
-      prisma.estimate.count({ where: { job: { orgId: params.orgId, ...assignmentFilter }, status: "SENT" } }),
-      prisma.invoice.count({ where: { job: { orgId: params.orgId, ...assignmentFilter }, status: { in: ["SENT", "OVERDUE"] } } }),
-      prisma.expense.count({
-        where: {
-          job: { orgId: params.orgId, ...assignmentFilter },
-          receipt: null,
-          createdAt: { lt: receiptCutoff },
-        },
-      }),
-      prisma.lead.count({
-        where: {
-          orgId: params.orgId,
-          stage: LeadStage.NEW,
-        },
-      }),
-      prisma.lead.findMany({
-        where: {
-          orgId: params.orgId,
-          stage: LeadStage.NEW,
-        },
-        orderBy: { createdAt: "asc" },
-        take: 8,
-        select: {
-          id: true,
-          contactName: true,
-          serviceType: true,
-          source: true,
-          createdAt: true,
-        },
-      }),
-    ]);
+      },
+      orderBy: { startAt: "asc" },
+    }),
+    prisma.task.count({
+      where: {
+        job: { orgId: params.orgId, ...workerJobFilter },
+        dueDate: { lt: todayStart },
+        status: { in: ["TODO", "IN_PROGRESS", "BLOCKED"] },
+      },
+    }),
+    prisma.expense.count({
+      where: {
+        job: { orgId: params.orgId, ...workerJobFilter },
+        receipt: null,
+        createdAt: { lt: receiptCutoff },
+      },
+    }),
+    prisma.lead.count({
+      where: {
+        orgId: params.orgId,
+        stage: LeadStage.NEW,
+      },
+    }),
+  ]);
 
   return {
-    assignedJobs,
     todayEvents,
-    weekEvents,
-    overdueTasks,
-    unsentEstimates,
-    sentEstimates,
-    unpaidInvoices,
+    overdueTasksCount,
     missingReceipts,
     newLeadsAwaitingContact,
-    newLeadList,
   };
 }
 
