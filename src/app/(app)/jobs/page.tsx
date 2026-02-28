@@ -41,6 +41,8 @@ export default function JobsPage(props: {
     updated?: string;
     skipped?: string;
     errors?: string;
+    jobsLinked?: string;
+    firstError?: string;
   }>;
 }) {
   return (
@@ -64,6 +66,8 @@ async function JobsPageContent({
     updated?: string;
     skipped?: string;
     errors?: string;
+    jobsLinked?: string;
+    firstError?: string;
   }>;
 }) {
   const perf = createRoutePerf("/jobs");
@@ -86,6 +90,8 @@ async function JobsPageContent({
         updated: Number(params.updated ?? 0) || 0,
         skipped: Number(params.skipped ?? 0) || 0,
         errors: Number(params.errors ?? 0) || 0,
+        jobsLinked: Number(params.jobsLinked ?? 0) || 0,
+        firstError: params.firstError ?? "",
       }
     : null;
 
@@ -132,10 +138,13 @@ async function JobsPageContent({
           </button>
         </form>
         {joistSummary ? (
-          <p className="mt-2 text-xs text-emerald-900">
-            Last import: {joistSummary.imported} imported, {joistSummary.updated} updated, {joistSummary.skipped} skipped
-            {joistSummary.errors > 0 ? `, ${joistSummary.errors} errors` : ""}.
-          </p>
+          <div className="mt-2 space-y-1 text-xs text-emerald-900">
+            <p>
+              Last import: {joistSummary.imported} imported, {joistSummary.updated} updated, {joistSummary.skipped} skipped
+              {joistSummary.errors > 0 ? `, ${joistSummary.errors} errors` : ""}. Jobs linked: {joistSummary.jobsLinked}.
+            </p>
+            {joistSummary.firstError ? <p>First error: {joistSummary.firstError}</p> : null}
+          </div>
         ) : null}
       </section>
 

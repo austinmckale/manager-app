@@ -210,6 +210,50 @@ function extractJoistPdfLeadPayload(text: string, fileName: string) {
   };
 }
 
+function extractJoistDocFromFileName(fileName: string) {
+  const lower = fileName.toLowerCase();
+  const cleaned = lower.replace(/\.[a-z0-9]+$/, "");
+  const estimateMatch = cleaned.match(/estimate[_\s-]?([a-z0-9-]+)/i);
+  const invoiceMatch = cleaned.match(/invoice[_\s-]?([a-z0-9-]+)/i);
+
+  if (estimateMatch?.[1]) {
+    return { documentType: "estimate" as const, documentNumber: estimateMatch[1] };
+  }
+  if (invoiceMatch?.[1]) {
+    return { documentType: "invoice" as const, documentNumber: invoiceMatch[1] };
+  }
+  return { documentType: "document" as const, documentNumber: "" };
+}
+
+function buildFallbackJoistPdfPayload(fileName: string, reason: string) {
+  const parsed = extractJoistDocFromFileName(fileName);
+  const fallbackName = parsed.documentNumber
+    ? `Joist ${parsed.documentType} ${parsed.documentNumber}`
+    : `Joist import ${fileName.replace(/\.[a-z0-9]+$/i, "")}`;
+  const stage = parsed.documentType === "invoice" ? LeadStage.WON : LeadStage.ESTIMATE_SENT;
+  const externalRef = parsed.documentNumber
+    ? `joist:${parsed.documentType}:${parsed.documentNumber}`.slice(0, 191)
+    : "";
+
+  return {
+    contactName: fallbackName,
+    phone: "",
+    email: "",
+    address: "",
+    serviceType: "",
+    stage,
+    externalRef,
+    notes: `Imported from Joist PDF filename fallback (${fileName})`,
+    rawPayload: {
+      importType: "joist_pdf_filename_fallback",
+      fileName,
+      documentType: parsed.documentType,
+      documentNumber: parsed.documentNumber || null,
+      parseError: reason,
+    },
+  };
+}
+
 async function upsertJoistLead(
   auth: { orgId: string },
   payload: {
@@ -229,7 +273,7 @@ async function upsertJoistLead(
   const contactNameInput = (payload.contactName ?? "").trim();
 
   if (!contactNameInput && !phone && !email) {
-    return "skipped" as const;
+    return { outcome: "skipped" as const };
   }
   const contactName = contactNameInput || phone || email || "Imported Lead";
 
@@ -266,10 +310,14 @@ async function upsertJoistLead(
         rawPayload: payload.rawPayload,
       },
     });
-    return result.createdAt.getTime() === result.updatedAt.getTime() ? ("imported" as const) : ("updated" as const);
+    return {
+      outcome: result.createdAt.getTime() === result.updatedAt.getTime() ? ("imported" as const) : ("updated" as const),
+      leadId: result.id,
+      stage: result.stage,
+    };
   }
 
-  await prisma.lead.create({
+  const created = await prisma.lead.create({
     data: {
       orgId: auth.orgId,
       contactName,
@@ -283,7 +331,11 @@ async function upsertJoistLead(
       rawPayload: payload.rawPayload,
     },
   });
-  return "imported" as const;
+  return {
+    outcome: "imported" as const,
+    leadId: created.id,
+    stage: created.stage,
+  };
 }
 
 async function logActivity(
@@ -570,13 +622,27 @@ export async function updateLeadStageAction(formData: FormData) {
   revalidatePath("/dashboard");
 }
 
-async function convertLeadToJobInternal(auth: { orgId: string; userId: string }, leadId: string, jobNameInput: string) {
+async function convertLeadToJobInternal(
+  auth: { orgId: string; userId: string },
+  leadId: string,
+  jobNameInput: string,
+  options?: { stageAfterLink?: LeadStage; jobStatus?: JobStatus },
+) {
   const lead = await prisma.lead.findFirstOrThrow({
     where: { id: leadId, orgId: auth.orgId },
   });
 
   // If this lead already has a job linked, skip creating another one.
   if (lead.jobId) {
+    if (options?.stageAfterLink && lead.stage !== options.stageAfterLink) {
+      await prisma.lead.update({
+        where: { id: lead.id },
+        data: {
+          stage: options.stageAfterLink,
+          lostReason: null,
+        },
+      });
+    }
     return prisma.job.findFirstOrThrow({ where: { id: lead.jobId, orgId: auth.orgId } });
   }
 
@@ -601,7 +667,7 @@ async function convertLeadToJobInternal(auth: { orgId: string; userId: string },
       customerId: customer.id,
       jobName: jobNameInput || `${lead.serviceType || "New"} - ${lead.contactName}`,
       address: lead.address || "Address pending",
-      status: JobStatus.ESTIMATE,
+      status: options?.jobStatus ?? JobStatus.ESTIMATE,
       categoryTags: [inferServiceTagFromText(lead.serviceType) ?? "general-remodeling", "lead-converted"],
       startDate: conversionDate,
       endDate: conversionEndDate,
@@ -611,7 +677,7 @@ async function convertLeadToJobInternal(auth: { orgId: string; userId: string },
   await prisma.lead.update({
     where: { id: lead.id },
     data: {
-      stage: LeadStage.WON,
+      stage: options?.stageAfterLink ?? LeadStage.WON,
       customerId: customer.id,
       jobId: job.id,
       convertedAt: new Date(),
@@ -679,6 +745,7 @@ export async function importJoistCsvAction(formData: FormData) {
   let imported = 0;
   let updated = 0;
   let skipped = 0;
+  let jobsLinked = 0;
   const importErrors: Array<{ file: string; detail: string }> = [];
 
   for (const file of files) {
@@ -688,17 +755,35 @@ export async function importJoistCsvAction(formData: FormData) {
       const isCsv = lowerName.endsWith(".csv") || file.type.includes("csv") || file.type.includes("text/plain");
 
       if (isPdf) {
+        let payload:
+          | ReturnType<typeof extractJoistPdfLeadPayload>
+          | ReturnType<typeof buildFallbackJoistPdfPayload>;
         const { PDFParse } = await import("pdf-parse");
         const parser = new PDFParse({ data: Buffer.from(await file.arrayBuffer()) });
         try {
           const extracted = await parser.getText();
-          const payload = extractJoistPdfLeadPayload(extracted.text || "", file.name);
-          const result = await upsertJoistLead(auth, payload);
-          if (result === "imported") imported += 1;
-          if (result === "updated") updated += 1;
-          if (result === "skipped") skipped += 1;
+          payload = extractJoistPdfLeadPayload(extracted.text || "", file.name);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "PDF parse failed";
+          importErrors.push({ file: file.name, detail: `PDF parsed by filename fallback: ${message}` });
+          payload = buildFallbackJoistPdfPayload(file.name, message);
         } finally {
           await parser.destroy();
+        }
+
+        const result = await upsertJoistLead(auth, payload);
+        if (result.outcome === "imported") imported += 1;
+        if (result.outcome === "updated") updated += 1;
+        if (result.outcome === "skipped") skipped += 1;
+        if (
+          result.leadId &&
+          (payload.stage === LeadStage.ESTIMATE_SENT || payload.stage === LeadStage.WON)
+        ) {
+          await convertLeadToJobInternal(auth, result.leadId, "", {
+            stageAfterLink: payload.stage,
+            jobStatus: payload.stage === LeadStage.WON ? JobStatus.SCHEDULED : JobStatus.ESTIMATE,
+          });
+          jobsLinked += 1;
         }
         continue;
       }
@@ -741,9 +826,19 @@ export async function importJoistCsvAction(formData: FormData) {
             notes,
             rawPayload: row,
           });
-          if (result === "imported") imported += 1;
-          if (result === "updated") updated += 1;
-          if (result === "skipped") skipped += 1;
+          if (result.outcome === "imported") imported += 1;
+          if (result.outcome === "updated") updated += 1;
+          if (result.outcome === "skipped") skipped += 1;
+          if (
+            result.leadId &&
+            (stage === LeadStage.ESTIMATE_SENT || stage === LeadStage.WON)
+          ) {
+            await convertLeadToJobInternal(auth, result.leadId, "", {
+              stageAfterLink: stage,
+              jobStatus: stage === LeadStage.WON ? JobStatus.SCHEDULED : JobStatus.ESTIMATE,
+            });
+            jobsLinked += 1;
+          }
         } catch (error) {
           skipped += 1;
           importErrors.push({
@@ -766,6 +861,7 @@ export async function importJoistCsvAction(formData: FormData) {
     imported,
     updated,
     skipped,
+    jobsLinked,
     errors: importErrors.slice(0, 20),
     errorCount: importErrors.length,
   });
@@ -773,9 +869,18 @@ export async function importJoistCsvAction(formData: FormData) {
   revalidatePath("/leads");
   revalidatePath("/jobs");
   revalidatePath("/dashboard");
-  redirect(
-    `/jobs?joist=1&imported=${imported}&updated=${updated}&skipped=${skipped}&errors=${importErrors.length}`,
-  );
+  const redirectParams = new URLSearchParams({
+    joist: "1",
+    imported: String(imported),
+    updated: String(updated),
+    skipped: String(skipped),
+    errors: String(importErrors.length),
+    jobsLinked: String(jobsLinked),
+  });
+  if (importErrors.length > 0) {
+    redirectParams.set("firstError", importErrors[0].detail.slice(0, 180));
+  }
+  redirect(`/jobs?${redirectParams.toString()}`);
 }
 
 export async function createJobAction(formData: FormData) {
