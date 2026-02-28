@@ -89,7 +89,7 @@ async function TodayPageContent() {
         SELECT COALESCE(
           SUM(
             (
-              (EXTRACT(EPOCH FROM ("TimeEntry"."end" - "TimeEntry"."start")) / 60 - "TimeEntry"."breakMinutes")
+              GREATEST((EXTRACT(EPOCH FROM ("TimeEntry"."end" - "TimeEntry"."start")) / 60 - "TimeEntry"."breakMinutes"), 0)
               / 60.0
             ) * "TimeEntry"."hourlyRateLoaded"
           ),

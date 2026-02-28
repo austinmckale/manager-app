@@ -9,6 +9,7 @@ import { demoJobs, demoUsers, isDemoMode, listDemoRuntimeTimeEntries } from "@/l
 import { canEditTimeEntry } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 import { createRoutePerf } from "@/lib/route-perf";
+import { getLaborCost, getWorkedHours } from "@/lib/time-entry";
 import { currency, toNumber } from "@/lib/utils";
 
 type PayrollWeekState = "OPEN" | "LOCKED" | "PAID";
@@ -98,6 +99,7 @@ async function TimePageContent({
               end: true,
               date: true,
               notes: true,
+              breakMinutes: true,
               hourlyRateLoaded: true,
               job: { select: { id: true, jobName: true } },
               worker: { select: { id: true, fullName: true } },
@@ -124,6 +126,7 @@ async function TimePageContent({
               jobId: true,
               start: true,
               end: true,
+              breakMinutes: true,
               hourlyRateLoaded: true,
               job: { select: { id: true, jobName: true } },
               worker: { select: { id: true, fullName: true } },
@@ -158,10 +161,9 @@ async function TimePageContent({
       laborCost: 0,
       entryCount: 0,
     };
-    const minutes = entry.end ? (entry.end.getTime() - entry.start.getTime()) / 60000 : 0;
-    const hours = minutes / 60;
+    const hours = getWorkedHours(entry);
     existing.hours += hours;
-    existing.laborCost += hours * toNumber(entry.hourlyRateLoaded);
+    existing.laborCost += getLaborCost(entry);
     existing.entryCount += 1;
     payrollByWorker.set(key, existing);
   }
@@ -186,10 +188,9 @@ async function TimePageContent({
     }
   >();
   for (const entry of weeklyEntries) {
-    const minutes = entry.end ? (entry.end.getTime() - entry.start.getTime()) / 60000 : 0;
-    const hours = minutes / 60;
+    const hours = getWorkedHours(entry);
     const loadedRate = toNumber(entry.hourlyRateLoaded);
-    const pay = hours * loadedRate;
+    const pay = getLaborCost(entry);
     const workerRow = weeklyPayrollByWorker.get(entry.workerId) ?? {
       workerName: entry.worker.fullName,
       totalHours: 0,
@@ -383,8 +384,7 @@ async function TimePageContent({
               entry,
               workerCanEditOwnSameDay: settings?.workerCanEditOwnTimeSameDay ?? true,
             });
-            const minutes = entry.end ? (entry.end.getTime() - entry.start.getTime()) / 60000 : 0;
-            const hours = minutes / 60;
+            const hours = getWorkedHours(entry);
 
             return (
               <article key={entry.id} className="rounded-xl border border-slate-200 p-3 text-sm">
@@ -398,7 +398,7 @@ async function TimePageContent({
                   </div>
                   <div className="text-right">
                     <p className="font-semibold text-slate-900">{hours.toFixed(2)}h</p>
-                    <p className="text-xs text-slate-500">{currency(hours * toNumber(entry.hourlyRateLoaded))}</p>
+                    <p className="text-xs text-slate-500">{currency(getLaborCost(entry))}</p>
                   </div>
                 </div>
                 {canEdit && !payrollWeekLocked ? (

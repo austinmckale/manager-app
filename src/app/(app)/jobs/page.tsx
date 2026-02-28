@@ -9,6 +9,7 @@ import { requireAuth } from "@/lib/auth";
 import { getCustomers, getJobs, getJobsPageAlerts } from "@/lib/data";
 import { createRoutePerf } from "@/lib/route-perf";
 import { SERVICE_TAG_OPTIONS } from "@/lib/service-tags";
+import { getWorkedHours } from "@/lib/time-entry";
 import { currency, toNumber } from "@/lib/utils";
 
 const statusOptions: Array<JobStatus | "ALL"> = [
@@ -244,7 +245,7 @@ async function JobsPageContent({
             for (const entry of job.timeEntries) {
               if (!entry.end) continue;
               if (entry.start < weekStart || entry.start > weekEnd) continue;
-              const hours = (entry.end.getTime() - entry.start.getTime()) / (1000 * 60 * 60);
+              const hours = getWorkedHours(entry);
               const name = entry.worker?.fullName ?? "—";
               const cur = hoursByWorker.get(entry.workerId) ?? { name, hours: 0 };
               cur.hours += hours;

@@ -160,6 +160,7 @@ export async function getJobs(params: {
           workerId: true,
           start: true,
           end: true,
+          breakMinutes: true,
           worker: { select: { fullName: true } },
         },
       },

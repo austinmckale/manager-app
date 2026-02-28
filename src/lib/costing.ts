@@ -1,4 +1,5 @@
 import { ExpenseCategory, JobStatus } from "@prisma/client";
+import { getLaborCost, getWorkedHours } from "@/lib/time-entry";
 import { toNumber } from "@/lib/utils";
 
 export type JobCostingInput = {
@@ -34,11 +35,10 @@ export function computeJobCosting(input: JobCostingInput): JobCostingSummary {
   let laborCost = 0;
 
   for (const entry of input.timeEntries) {
-    if (!entry.end) continue;
-    const minutes = (entry.end.getTime() - entry.start.getTime()) / 60000;
-    const hours = Math.max(0, minutes / 60);
+    const hours = getWorkedHours(entry);
+    if (hours <= 0) continue;
     laborHours += hours;
-    laborCost += hours * toNumber(entry.hourlyRateLoaded);
+    laborCost += getLaborCost(entry);
   }
 
   const expensesByCategory: Record<ExpenseCategory, number> = {

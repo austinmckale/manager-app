@@ -679,68 +679,85 @@ export async function importJoistCsvAction(formData: FormData) {
   let imported = 0;
   let updated = 0;
   let skipped = 0;
+  const importErrors: Array<{ file: string; detail: string }> = [];
 
   for (const file of files) {
-    const lowerName = file.name.toLowerCase();
-    const isPdf = lowerName.endsWith(".pdf") || file.type.includes("pdf");
-    const isCsv = lowerName.endsWith(".csv") || file.type.includes("csv") || file.type.includes("text/plain");
+    try {
+      const lowerName = file.name.toLowerCase();
+      const isPdf = lowerName.endsWith(".pdf") || file.type.includes("pdf");
+      const isCsv = lowerName.endsWith(".csv") || file.type.includes("csv") || file.type.includes("text/plain");
 
-    if (isPdf) {
-      const { PDFParse } = await import("pdf-parse");
-      const parser = new PDFParse({ data: Buffer.from(await file.arrayBuffer()) });
-      try {
-        const extracted = await parser.getText();
-        const payload = extractJoistPdfLeadPayload(extracted.text || "", file.name);
-        const result = await upsertJoistLead(auth, payload);
-        if (result === "imported") imported += 1;
-        if (result === "updated") updated += 1;
-        if (result === "skipped") skipped += 1;
-      } finally {
-        await parser.destroy();
+      if (isPdf) {
+        const { PDFParse } = await import("pdf-parse");
+        const parser = new PDFParse({ data: Buffer.from(await file.arrayBuffer()) });
+        try {
+          const extracted = await parser.getText();
+          const payload = extractJoistPdfLeadPayload(extracted.text || "", file.name);
+          const result = await upsertJoistLead(auth, payload);
+          if (result === "imported") imported += 1;
+          if (result === "updated") updated += 1;
+          if (result === "skipped") skipped += 1;
+        } finally {
+          await parser.destroy();
+        }
+        continue;
       }
-      continue;
-    }
 
-    if (!isCsv) {
+      if (!isCsv) {
+        skipped += 1;
+        continue;
+      }
+
+      const text = await file.text();
+      const rows = parseCsv(text);
+      if (rows.length === 0) {
+        skipped += 1;
+        continue;
+      }
+
+      for (const row of rows) {
+        try {
+          const contactName = pickCsvValue(row, ["client name", "customer name", "name", "client"]);
+          const phone = pickCsvValue(row, ["phone", "phone number", "client phone"]);
+          const email = pickCsvValue(row, ["email", "client email"]);
+          const address = pickCsvValue(row, ["address", "job address", "client address"]);
+          const serviceType = pickCsvValue(row, ["title", "project", "description", "service"]);
+          const statusRaw = pickCsvValue(row, ["status", "estimate status", "invoice status"]);
+          const estimateNumber = pickCsvValue(row, ["estimate number", "estimate #", "estimate id", "id"]);
+          const invoiceNumber = pickCsvValue(row, ["invoice number", "invoice #"]);
+          const externalRefBase = estimateNumber || invoiceNumber;
+          const stage = mapJoistStatusToLeadStage(statusRaw);
+          const externalRef = externalRefBase ? `joist:${externalRefBase}`.slice(0, 191) : "";
+          const notes = `Imported from Joist CSV (${file.name})${statusRaw ? ` - status: ${statusRaw}` : ""}`;
+
+          const result = await upsertJoistLead(auth, {
+            contactName,
+            phone,
+            email,
+            address,
+            serviceType,
+            stage,
+            externalRef,
+            notes,
+            rawPayload: row,
+          });
+          if (result === "imported") imported += 1;
+          if (result === "updated") updated += 1;
+          if (result === "skipped") skipped += 1;
+        } catch (error) {
+          skipped += 1;
+          importErrors.push({
+            file: file.name,
+            detail: error instanceof Error ? error.message : "CSV row failed",
+          });
+        }
+      }
+    } catch (error) {
       skipped += 1;
-      continue;
-    }
-
-    const text = await file.text();
-    const rows = parseCsv(text);
-    if (rows.length === 0) {
-      skipped += 1;
-      continue;
-    }
-
-    for (const row of rows) {
-      const contactName = pickCsvValue(row, ["client name", "customer name", "name", "client"]);
-      const phone = pickCsvValue(row, ["phone", "phone number", "client phone"]);
-      const email = pickCsvValue(row, ["email", "client email"]);
-      const address = pickCsvValue(row, ["address", "job address", "client address"]);
-      const serviceType = pickCsvValue(row, ["title", "project", "description", "service"]);
-      const statusRaw = pickCsvValue(row, ["status", "estimate status", "invoice status"]);
-      const estimateNumber = pickCsvValue(row, ["estimate number", "estimate #", "estimate id", "id"]);
-      const invoiceNumber = pickCsvValue(row, ["invoice number", "invoice #"]);
-      const externalRefBase = estimateNumber || invoiceNumber;
-      const stage = mapJoistStatusToLeadStage(statusRaw);
-      const externalRef = externalRefBase ? `joist:${externalRefBase}`.slice(0, 191) : "";
-      const notes = `Imported from Joist CSV (${file.name})${statusRaw ? ` - status: ${statusRaw}` : ""}`;
-
-      const result = await upsertJoistLead(auth, {
-        contactName,
-        phone,
-        email,
-        address,
-        serviceType,
-        stage,
-        externalRef,
-        notes,
-        rawPayload: row,
+      importErrors.push({
+        file: file.name,
+        detail: error instanceof Error ? error.message : "File import failed",
       });
-      if (result === "imported") imported += 1;
-      if (result === "updated") updated += 1;
-      if (result === "skipped") skipped += 1;
     }
   }
 
@@ -749,6 +766,8 @@ export async function importJoistCsvAction(formData: FormData) {
     imported,
     updated,
     skipped,
+    errors: importErrors.slice(0, 20),
+    errorCount: importErrors.length,
   });
 
   revalidatePath("/leads");

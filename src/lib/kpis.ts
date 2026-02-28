@@ -1,6 +1,7 @@
 import { endOfMonth, startOfMonth, subMonths } from "date-fns";
 import { isDemoMode } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
+import { getLaborCost } from "@/lib/time-entry";
 import { toNumber } from "@/lib/utils";
 
 export const KPI_KEYS = {
@@ -118,9 +119,7 @@ export async function computeDashboardKpis(orgId: string) {
     revenue += jobRevenue;
 
     for (const entry of job.timeEntries) {
-      if (!entry.end) continue;
-      const hours = (entry.end.getTime() - entry.start.getTime()) / 3600000;
-      labor += hours * toNumber(entry.hourlyRateLoaded);
+      labor += getLaborCost(entry);
     }
 
     for (const expense of job.expenses) {

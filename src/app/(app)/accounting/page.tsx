@@ -4,6 +4,7 @@ import { ExportByMonth } from "@/components/export-by-month";
 import { requireAuth } from "@/lib/auth";
 import { isDemoMode } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
+import { getLaborCost } from "@/lib/time-entry";
 import { currency, toNumber } from "@/lib/utils";
 
 export default async function AccountingPage() {
@@ -130,16 +131,13 @@ export default async function AccountingPage() {
         prisma.timeEntry
           .findMany({
             where: { job: { orgId: auth.orgId }, start: { gte: last30Start } },
-            select: { start: true, end: true, hourlyRateLoaded: true },
+            select: { start: true, end: true, breakMinutes: true, hourlyRateLoaded: true },
             take: 2000,
             orderBy: { start: "desc" },
           })
           .then((rows) =>
             rows.reduce((sum, entry) => {
-              if (!entry.end) return sum;
-              const minutes = (entry.end.getTime() - entry.start.getTime()) / 60000;
-              const hours = Math.max(0, minutes / 60);
-              return sum + hours * toNumber(entry.hourlyRateLoaded);
+              return sum + getLaborCost(entry);
             }, 0),
           ),
         prisma.invoice.findMany({
@@ -162,7 +160,7 @@ export default async function AccountingPage() {
         }),
       ]);
 
-  const unpaidInvoices: InvoicePreview[] = unpaidInvoicesRaw.map((invoice: any) => ({
+  const unpaidInvoices: InvoicePreview[] = unpaidInvoicesRaw.map((invoice) => ({
     id: invoice.id,
     status: invoice.status,
     total: toNumber(invoice.total),
@@ -171,14 +169,14 @@ export default async function AccountingPage() {
     createdAt: invoice.createdAt ?? now,
     job: { id: invoice.job.id, jobName: invoice.job.jobName, customer: { name: invoice.job.customer.name } },
   }));
-  const recentPayments: PaymentPreview[] = recentPaymentsRaw.map((payment: any) => ({
+  const recentPayments: PaymentPreview[] = recentPaymentsRaw.map((payment) => ({
     id: payment.id,
     amount: toNumber(payment.amount),
     date: payment.date,
     method: payment.method,
     invoice: { job: { id: payment.invoice.job.id, jobName: payment.invoice.job.jobName, customer: { name: payment.invoice.job.customer.name } } },
   }));
-  const recentExpenses: ExpensePreview[] = recentExpensesRaw.map((expense: any) => ({
+  const recentExpenses: ExpensePreview[] = recentExpensesRaw.map((expense) => ({
     id: expense.id,
     vendor: expense.vendor,
     amount: toNumber(expense.amount),

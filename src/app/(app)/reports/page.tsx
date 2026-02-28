@@ -1,15 +1,18 @@
 import Link from "next/link";
-import { subDays } from "date-fns";
+import { endOfWeek, format, startOfWeek, subDays } from "date-fns";
 import { requireAuth } from "@/lib/auth";
 import { computeJobCosting } from "@/lib/costing";
 import { demoCustomers, demoJobs, isDemoMode } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
+import { getLaborCost, getWorkedHours } from "@/lib/time-entry";
 import { currency, percent } from "@/lib/utils";
 
 export default async function ReportsPage() {
   const auth = await requireAuth();
   const now = new Date();
   const last30Cutoff = subDays(now, 30);
+  const weekStart = startOfWeek(now, { weekStartsOn: 1 });
+  const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
 
   const jobs = isDemoMode()
     ? [
@@ -61,8 +64,7 @@ export default async function ReportsPage() {
   const last30Labor = jobs.reduce((acc, job) => {
     const labor = job.timeEntries.reduce((sum, entry) => {
       if (!entry.end || entry.start < last30Cutoff) return sum;
-      const hours = (entry.end.getTime() - entry.start.getTime()) / 3600000;
-      return sum + hours * Number(entry.hourlyRateLoaded ?? 0);
+      return sum + getLaborCost(entry);
     }, 0);
     return acc + labor;
   }, 0);
@@ -80,6 +82,52 @@ export default async function ReportsPage() {
     .filter((row) => row.costing.revenue > 0)
     .sort((a, b) => a.costing.grossMarginPercent - b.costing.grossMarginPercent)
     .slice(0, 8);
+
+  const weeklyPayrollEntries = isDemoMode()
+    ? []
+    : await prisma.timeEntry.findMany({
+        where: {
+          job: { orgId: auth.orgId },
+          start: { gte: weekStart, lte: weekEnd },
+          end: { not: null },
+        },
+        select: {
+          workerId: true,
+          start: true,
+          end: true,
+          breakMinutes: true,
+          hourlyRateLoaded: true,
+          worker: { select: { fullName: true } },
+        },
+      });
+
+  const weeklyPayrollByWorker = new Map<
+    string,
+    { workerName: string; hours: number; pay: number; latestRate: number }
+  >();
+  for (const entry of weeklyPayrollEntries) {
+    const row = weeklyPayrollByWorker.get(entry.workerId) ?? {
+      workerName: entry.worker.fullName,
+      hours: 0,
+      pay: 0,
+      latestRate: 0,
+    };
+    row.hours += getWorkedHours(entry);
+    row.pay += getLaborCost(entry);
+    row.latestRate = Number(entry.hourlyRateLoaded ?? 0);
+    weeklyPayrollByWorker.set(entry.workerId, row);
+  }
+  const weeklyPayrollRows = [...weeklyPayrollByWorker.entries()]
+    .map(([workerId, row]) => ({ workerId, ...row }))
+    .sort((a, b) => b.pay - a.pay);
+  const weeklyPayrollTotals = weeklyPayrollRows.reduce(
+    (acc, row) => {
+      acc.hours += row.hours;
+      acc.pay += row.pay;
+      return acc;
+    },
+    { hours: 0, pay: 0 },
+  );
 
   return (
     <div className="space-y-4">
@@ -120,6 +168,38 @@ export default async function ReportsPage() {
             <p className="text-[11px] uppercase tracking-wide text-slate-500">Materials (30d)</p>
             <p className="mt-1 text-lg font-semibold text-slate-900">{currency(last30Materials)}</p>
           </article>
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-slate-900">Payroll Week (By Employee)</h2>
+          <Link href="/time" className="rounded-lg border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50">
+            Open Payroll
+          </Link>
+        </div>
+        <p className="mt-1 text-xs text-slate-500">
+          {format(weekStart, "MMM d")} - {format(weekEnd, "MMM d, yyyy")}.
+        </p>
+        <div className="mt-3 space-y-2">
+          {weeklyPayrollRows.map((row) => (
+            <article key={row.workerId} className="flex items-center justify-between rounded-xl border border-slate-200 p-3 text-sm">
+              <div>
+                <p className="font-medium text-slate-900">{row.workerName}</p>
+                <p className="text-xs text-slate-500">{currency(row.latestRate)}/hr</p>
+              </div>
+              <div className="text-right">
+                <p className="font-semibold text-slate-900">{row.hours.toFixed(2)}h</p>
+                <p className="text-xs text-slate-500">{currency(row.pay)}</p>
+              </div>
+            </article>
+          ))}
+          {weeklyPayrollRows.length === 0 ? (
+            <p className="text-sm text-slate-500">No completed time entries this week yet.</p>
+          ) : null}
+        </div>
+        <div className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-700">
+          Week total: {weeklyPayrollTotals.hours.toFixed(2)}h - {currency(weeklyPayrollTotals.pay)}
         </div>
       </section>
 

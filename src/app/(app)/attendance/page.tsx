@@ -28,6 +28,7 @@ import {
 } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
 import { createRoutePerf } from "@/lib/route-perf";
+import { getWorkedHours } from "@/lib/time-entry";
 import { toNumber } from "@/lib/utils";
 
 function parseClockTime(value?: string | null) {
@@ -177,6 +178,7 @@ async function AttendancePageContent({
               jobId: true,
               start: true,
               end: true,
+              breakMinutes: true,
               job: { select: { id: true, jobName: true } },
             },
             orderBy: { start: "asc" },
@@ -523,10 +525,8 @@ async function AttendancePageContent({
                   <ul className="mt-1 space-y-1">
                     {row.entries.map((entry) => {
                       const end = entry.end;
-                      const minutes = end
-                        ? (end.getTime() - entry.start.getTime()) / 60000
-                        : null;
-                      const hoursStr = minutes !== null ? ` (${(minutes / 60).toFixed(1)}h)` : "";
+                      const hours = getWorkedHours(entry);
+                      const hoursStr = end ? ` (${hours.toFixed(1)}h)` : "";
                       return (
                         <li key={entry.id} className="flex items-center justify-between gap-2 rounded bg-slate-100 px-2 py-1 text-xs">
                           <span className="font-medium text-slate-800">{entry.job.jobName}</span>

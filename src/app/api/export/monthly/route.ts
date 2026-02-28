@@ -6,6 +6,7 @@ import { computeJobCosting } from "@/lib/costing";
 import { requireAuth } from "@/lib/auth";
 import { demoJobs, demoCustomers, demoUsers, isDemoMode } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
+import { getLaborCost, getWorkedHours } from "@/lib/time-entry";
 import { toNumber } from "@/lib/utils";
 
 function csvLine(header: string[], rows: Array<Array<string | number>>): string {
@@ -57,7 +58,7 @@ export async function GET(request: NextRequest) {
       .filter((e) => e.end != null)
       .map((entry) => {
         const endTime = entry.end as Date;
-        const hours = (endTime.getTime() - entry.start.getTime()) / (1000 * 60 * 60);
+        const hours = getWorkedHours(entry);
         const rate = toNumber(entry.hourlyRateLoaded);
         return [
           format(entry.date, "yyyy-MM-dd"),
@@ -69,7 +70,7 @@ export async function GET(request: NextRequest) {
           format(endTime, "HH:mm"),
           hours.toFixed(4),
           rate.toFixed(2),
-          (hours * rate).toFixed(2),
+          getLaborCost(entry).toFixed(2),
           entry.notes ?? "",
           entry.id,
           entry.jobId,

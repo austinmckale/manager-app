@@ -4,7 +4,7 @@ import { requireAuth } from "@/lib/auth";
 import { csvResponse } from "@/lib/csv";
 import { demoJobs, demoUsers, isDemoMode } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
-import { toNumber } from "@/lib/utils";
+import { getLaborCost, getWorkedHours } from "@/lib/time-entry";
 
 export async function GET(request: NextRequest) {
   const auth = await requireAuth();
@@ -47,9 +47,8 @@ export async function GET(request: NextRequest) {
     .filter((e) => e.end != null)
     .map((entry) => {
       const end = entry.end as Date;
-      const hours = (end.getTime() - entry.start.getTime()) / (1000 * 60 * 60);
-      const rate = toNumber(entry.hourlyRateLoaded);
-      const total = hours * rate;
+      const hours = getWorkedHours(entry);
+      const total = getLaborCost(entry);
       return [
         format(entry.date, "yyyy-MM-dd"),
         entry.worker.fullName,
@@ -59,7 +58,7 @@ export async function GET(request: NextRequest) {
         format(entry.start, "HH:mm"),
         format(end, "HH:mm"),
         hours.toFixed(4),
-        rate.toFixed(2),
+        Number(entry.hourlyRateLoaded ?? 0).toFixed(2),
         total.toFixed(2),
         entry.notes ?? "",
         entry.id,

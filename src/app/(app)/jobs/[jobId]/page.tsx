@@ -27,6 +27,7 @@ import { getJobById, getOrgUsers } from "@/lib/data";
 import { isDemoMode } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
 import { SERVICE_TAG_OPTIONS, normalizeServiceTags } from "@/lib/service-tags";
+import { getLaborCost, getWorkedHours } from "@/lib/time-entry";
 import { buildAbsoluteUrl, currency, getStoragePublicUrl, percent, toNumber } from "@/lib/utils";
 
 function toGoogleCalendarDate(date: Date) {
@@ -128,9 +129,8 @@ export default async function JobDetailPage({
   for (const entry of job.timeEntries) {
     if (!entry.end) continue;
     if (entry.start < weekStart || entry.start > weekEnd) continue;
-    const minutes = (entry.end.getTime() - entry.start.getTime()) / 60000;
-    const hours = minutes / 60;
-    const pay = hours * toNumber(entry.hourlyRateLoaded);
+    const hours = getWorkedHours(entry);
+    const pay = getLaborCost(entry);
     const row = weeklyLaborByWorker.get(entry.workerId) ?? {
       workerName: entry.worker.fullName,
       hours: 0,
