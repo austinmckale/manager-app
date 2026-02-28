@@ -37,7 +37,7 @@ export default async function TodayPage() {
         prisma.timeEntry.findMany({
           where: {
             job: { orgId: auth.orgId },
-            start: { gte: startOfDay(new Date()) },
+            start: { gte: startOfDay(new Date()), lte: endOfDay(new Date()) },
           },
           select: { workerId: true, start: true },
         }),
@@ -68,28 +68,24 @@ export default async function TodayPage() {
 
       const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
       const weekEnd = endOfWeek(new Date(), { weekStartsOn: 1 });
-      const entries = await prisma.timeEntry.findMany({
-        where: {
-          job: { orgId: auth.orgId },
-          start: { gte: weekStart, lte: weekEnd },
-          end: { not: null },
-        },
-        select: {
-          start: true,
-          end: true,
-          breakMinutes: true,
-          hourlyRateLoaded: true,
-        },
-      });
-
-      let totalGrossPay = 0;
-      for (const entry of entries) {
-        const end = entry.end as Date;
-        const workedMinutes = Math.max(0, (end.getTime() - entry.start.getTime()) / 60000 - entry.breakMinutes);
-        const hours = workedMinutes / 60;
-        const grossPay = hours * Number(entry.hourlyRateLoaded);
-        totalGrossPay += grossPay;
-      }
+      const rows = await prisma.$queryRaw<Array<{ totalGrossPay: number | string | null }>>`
+        SELECT COALESCE(
+          SUM(
+            (
+              (EXTRACT(EPOCH FROM ("TimeEntry"."end" - "TimeEntry"."start")) / 60 - "TimeEntry"."breakMinutes")
+              / 60.0
+            ) * "TimeEntry"."hourlyRateLoaded"
+          ),
+          0
+        ) AS "totalGrossPay"
+        FROM "TimeEntry"
+        INNER JOIN "Job" ON "Job"."id" = "TimeEntry"."jobId"
+        WHERE "Job"."orgId" = ${auth.orgId}
+          AND "TimeEntry"."start" >= ${weekStart}
+          AND "TimeEntry"."start" <= ${weekEnd}
+          AND "TimeEntry"."end" IS NOT NULL
+      `;
+      const totalGrossPay = Number(rows[0]?.totalGrossPay ?? 0);
 
       return {
         totalGrossPay,
