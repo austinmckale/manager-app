@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { endOfWeek, format, startOfWeek } from "date-fns";
 import { JobStatus } from "@prisma/client";
-import { createJobAction } from "@/app/(app)/actions";
+import { createJobAction, importJoistCsvAction } from "@/app/(app)/actions";
 import { JobStatusBadge } from "@/components/job-status-badge";
 import { RoutePanelSkeleton } from "@/components/route-panel-skeleton";
 import { requireAuth } from "@/lib/auth";
@@ -30,7 +30,18 @@ const viewOptions = [
 ] as const;
 
 export default function JobsPage(props: {
-  searchParams: Promise<{ status?: string; q?: string; view?: "today" | "week" | "all"; customerId?: string; focus?: "visits" }>;
+  searchParams: Promise<{
+    status?: string;
+    q?: string;
+    view?: "today" | "week" | "all";
+    customerId?: string;
+    focus?: "visits";
+    joist?: string;
+    imported?: string;
+    updated?: string;
+    skipped?: string;
+    errors?: string;
+  }>;
 }) {
   return (
     <Suspense fallback={<RoutePanelSkeleton cards={4} sections={4} />}>
@@ -42,7 +53,18 @@ export default function JobsPage(props: {
 async function JobsPageContent({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; q?: string; view?: "today" | "week" | "all"; customerId?: string; focus?: "visits" }>;
+  searchParams: Promise<{
+    status?: string;
+    q?: string;
+    view?: "today" | "week" | "all";
+    customerId?: string;
+    focus?: "visits";
+    joist?: string;
+    imported?: string;
+    updated?: string;
+    skipped?: string;
+    errors?: string;
+  }>;
 }) {
   const perf = createRoutePerf("/jobs");
   let orgId = "";
@@ -58,6 +80,14 @@ async function JobsPageContent({
   const view = params.view ?? "week";
   const preselectedCustomerId = params.customerId ?? "";
   const focus = params.focus ?? "";
+  const joistSummary = params.joist
+    ? {
+        imported: Number(params.imported ?? 0) || 0,
+        updated: Number(params.updated ?? 0) || 0,
+        skipped: Number(params.skipped ?? 0) || 0,
+        errors: Number(params.errors ?? 0) || 0,
+      }
+    : null;
 
     const [customers, jobs, alerts] = await perf.time("data", () =>
       Promise.all([
@@ -80,6 +110,35 @@ async function JobsPageContent({
 
     return (
     <div className="space-y-4">
+      <section id="joist-import" className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4">
+        <h2 className="text-sm font-semibold text-emerald-900">Joist Import (CSV or PDF)</h2>
+        <p className="mt-1 text-xs text-emerald-800">
+          Upload Joist exports here from a secured jobs view. Imported rows create/update leads and can be converted into jobs.
+        </p>
+        <form action={importJoistCsvAction} className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
+          <input
+            name="csvFile"
+            type="file"
+            accept=".csv,text/csv,.pdf,application/pdf"
+            multiple
+            required
+            className="rounded-xl border border-emerald-300 px-3 py-2 text-sm"
+          />
+          <button
+            type="submit"
+            className="rounded-xl border border-emerald-400 bg-emerald-600 px-3 py-2 text-sm font-semibold text-white"
+          >
+            Import Joist Files
+          </button>
+        </form>
+        {joistSummary ? (
+          <p className="mt-2 text-xs text-emerald-900">
+            Last import: {joistSummary.imported} imported, {joistSummary.updated} updated, {joistSummary.skipped} skipped
+            {joistSummary.errors > 0 ? `, ${joistSummary.errors} errors` : ""}.
+          </p>
+        ) : null}
+      </section>
+
       {(hasOverdue || hasMissingReceipts) ? (
         <section className="rounded-2xl border border-amber-200 bg-amber-50/50 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">

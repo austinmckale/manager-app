@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { LeadSource, LeadStage } from "@prisma/client";
 import { endOfDay, format, startOfDay, subDays } from "date-fns";
-import { convertLeadToJobAction, createLeadAction, importJoistCsvAction, updateLeadStageAction } from "@/app/(app)/actions";
+import { convertLeadToJobAction, createLeadAction, updateLeadStageAction } from "@/app/(app)/actions";
 import { RoutePanelSkeleton } from "@/components/route-panel-skeleton";
 import { requireAuth } from "@/lib/auth";
 import { isDemoMode } from "@/lib/demo";
@@ -132,31 +132,17 @@ async function LeadsPageContent() {
 
     return (
     <div className="space-y-4">
-      <section
-        id="joist-import"
-        className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4"
-      >
-        <h3 className="text-sm font-semibold text-emerald-900">Upload from Joist (CSV or PDF)</h3>
+      <section className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4">
+        <h3 className="text-sm font-semibold text-emerald-900">Joist Import Moved</h3>
         <p className="mt-2 text-xs text-emerald-800">
-          Upload Joist exports here (CSV bulk exports or estimate/invoice PDFs). We auto-create or update leads from each
-          document.
+          Import now lives on the Jobs page so invoice/estimate imports happen inside the secured operations board.
         </p>
-        <form action={importJoistCsvAction} className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
-          <input
-            name="csvFile"
-            type="file"
-            accept=".csv,text/csv,.pdf,application/pdf"
-            multiple
-            required
-            className="rounded-xl border border-emerald-300 px-3 py-2 text-sm"
-          />
-          <button
-            type="submit"
-            className="rounded-xl border border-emerald-400 bg-emerald-600 px-3 py-2 text-sm font-semibold text-white"
-          >
-            Import Joist Files
-          </button>
-        </form>
+        <Link
+          href="/jobs#joist-import"
+          className="mt-3 inline-flex rounded-xl border border-emerald-400 bg-emerald-600 px-3 py-2 text-sm font-semibold text-white"
+        >
+          Open Joist Import
+        </Link>
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4">

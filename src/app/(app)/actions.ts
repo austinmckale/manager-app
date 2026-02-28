@@ -771,7 +771,11 @@ export async function importJoistCsvAction(formData: FormData) {
   });
 
   revalidatePath("/leads");
+  revalidatePath("/jobs");
   revalidatePath("/dashboard");
+  redirect(
+    `/jobs?joist=1&imported=${imported}&updated=${updated}&skipped=${skipped}&errors=${importErrors.length}`,
+  );
 }
 
 export async function createJobAction(formData: FormData) {

@@ -340,8 +340,8 @@ export default async function AccountingPage() {
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-slate-900">Joist import</h3>
-        <p className="mt-1 text-xs text-slate-500">Export from Joist and upload on the Leads page to update pipeline status.</p>
-        <a href="/leads" className="mt-3 inline-block rounded-xl border border-slate-300 px-3 py-2 text-sm">Open Leads Import</a>
+        <p className="mt-1 text-xs text-slate-500">Export from Joist and upload on the Jobs page to update pipeline status.</p>
+        <Link href="/jobs#joist-import" className="mt-3 inline-block rounded-xl border border-slate-300 px-3 py-2 text-sm">Open Joist Import</Link>
       </section>
     </div>
   );

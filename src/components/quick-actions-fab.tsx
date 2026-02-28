@@ -8,7 +8,7 @@ const actions = [
   { href: "/leads#new-lead-form", label: "New Lead (estimate)", icon: PhoneIncoming },
   { href: "/jobs#new-job", label: "New Job (already sold)", icon: BriefcaseBusiness },
   { href: "/attendance", label: "Clock Employees", icon: Plus },
-  { href: "/leads#joist-import", label: "Joist Import (from CSV)", icon: FileText },
+  { href: "/jobs#joist-import", label: "Joist Import (CSV/PDF)", icon: FileText },
 ];
 
 export function QuickActionsFab() {
