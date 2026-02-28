@@ -160,6 +160,7 @@ model UserProfile {
   jobAssignments     JobAssignment[]
 
   @@index([orgId])
+  @@index([orgId, isActive])
   @@unique([orgId, email])
 }
 
@@ -218,6 +219,8 @@ model Job {
   @@index([orgId])
   @@index([status])
   @@index([customerId])
+  @@index([orgId, status, updatedAt])
+  @@index([orgId, updatedAt])
 }
 
 model Lead {
@@ -253,6 +256,8 @@ model Lead {
   @@index([stage])
   @@index([source])
   @@index([createdAt])
+  @@index([orgId, stage, createdAt])
+  @@index([orgId, createdAt])
   @@index([utmSource])
   @@unique([orgId, externalRef])
 }
@@ -382,6 +387,9 @@ model TimeEntry {
   @@index([jobId])
   @@index([workerId])
   @@index([date])
+  @@index([start])
+  @@index([workerId, start])
+  @@index([jobId, start])
 }
 
 model Expense {
@@ -524,6 +532,7 @@ model ActivityLog {
   @@index([orgId])
   @@index([jobId])
   @@index([createdAt])
+  @@index([orgId, action, createdAt])
 }
 
 model AuditLog {
