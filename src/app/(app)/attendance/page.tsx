@@ -329,6 +329,9 @@ async function AttendancePageContent({
       return { user, first, running, status, clockInOptions, defaultJobId, todaysAssignedJobs, todaysBlocks: scheduleBlocksDeduped, entries };
     });
 
+    const crewRows = rows.filter((r) => r.user.role === Role.WORKER);
+    const ownerRows = rows.filter((r) => r.user.role === Role.OWNER || r.user.role === Role.ADMIN);
+
     const weeklyScheduledMinutesByUser = new Map<string, number>();
     const nextWeekScheduledMinutesByUser = new Map<string, number>();
     for (const assignment of assignmentRows) {
@@ -349,7 +352,7 @@ async function AttendancePageContent({
     }
 
     const scheduleBoardDays = Array.from({ length: 14 }, (_, index) => addDays(thisWeekStart, index));
-    const scheduleBoardRows = rows.map((row) => ({
+    const scheduleBoardRows = crewRows.map((row) => ({
       userId: row.user.id,
       fullName: row.user.fullName,
       weeklyHoursThisWeek: (weeklyScheduledMinutesByUser.get(row.user.id) ?? 0) / 60,
@@ -425,114 +428,89 @@ async function AttendancePageContent({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-semibold text-slate-900">Today Roster</h3>
             <p className="text-xs text-slate-500">
-              All employees ({rows.length}) | {rows.filter((r) => r.status === "on_time").length} on time, {rows.filter((r) => r.status === "late").length} late, {rows.filter((r) => r.status === "missing").length} missing
+              {crewRows.length} crew | {crewRows.filter((r) => r.status === "on_time").length} on time, {crewRows.filter((r) => r.status === "late").length} late, {crewRows.filter((r) => r.status === "missing").length} missing
             </p>
           </div>
           {jobs.length === 0 ? (
-            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-              No jobs available. Create a job first, then return here to clock employees in.
-            </div>
+            <p className="mt-2 text-xs text-amber-700">No jobs yet — create one first to clock employees in.</p>
           ) : null}
-          <div className="mt-3 space-y-2">
-            {rows.map((row) => (
-              <article key={row.user.id} className="rounded-xl border border-slate-200 p-3 text-sm">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="font-medium text-slate-900">{row.user.fullName}</p>
-                  <span className={`rounded-full px-2 py-0.5 text-[11px] ${row.status === "missing" ? "bg-rose-100 text-rose-700" : row.status === "late" ? "bg-amber-100 text-amber-700" : row.status === "pending" ? "bg-slate-100 text-slate-700" : "bg-emerald-100 text-emerald-700"}`}>
-                    {row.status.replaceAll("_", " ")}
-                  </span>
-                </div>
-                {(() => {
-                  const minutes = weeklyScheduledMinutesByUser.get(row.user.id) ?? 0;
-                  if (minutes <= 0) return null;
-                  const hours = minutes / 60;
-                  return (
-                    <p className="mt-0.5 text-[11px] text-slate-500">
-                      Scheduled this week: {hours.toFixed(1)}h
-                    </p>
-                  );
-                })()}
+          {crewRows.length === 0 ? (
+            <p className="mt-3 text-sm text-slate-500">No crew members added yet. Add workers below.</p>
+          ) : (
+            <div className="mt-3 space-y-2">
+              {crewRows.map((row) => (
+                <article key={row.user.id} className="rounded-xl border border-slate-200 p-3 text-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-medium text-slate-900">{row.user.fullName}</p>
+                      {row.todaysBlocks.length > 0 ? (
+                        <p className="mt-0.5 text-[11px] text-teal-700 truncate">
+                          {row.todaysBlocks.map((b) => `${b.jobName} ${format(b.startAt, "h:mm a")}–${format(b.endAt, "h:mm a")}`).join(" · ")}
+                        </p>
+                      ) : row.todaysAssignedJobs.length > 0 && row.entries.length === 0 ? (
+                        <p className="mt-0.5 text-[11px] text-slate-500 truncate">
+                          Assigned: {row.todaysAssignedJobs.map((j) => j.jobName).join(", ")}
+                        </p>
+                      ) : null}
+                    </div>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${row.status === "missing" ? "bg-rose-100 text-rose-700" : row.status === "late" ? "bg-amber-100 text-amber-700" : row.status === "pending" ? "bg-slate-100 text-slate-600" : "bg-emerald-100 text-emerald-700"}`}>
+                      {row.status === "on_time" ? "on time" : row.status}
+                    </span>
+                  </div>
 
-                {/* Time logged today - actual punch in/out */}
-                <div className="mt-2">
-                  <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Time logged today</p>
-                  {row.entries.length === 0 ? (
-                    <p className="mt-0.5 text-xs text-slate-500">No time logged yet.</p>
-                  ) : (
-                    <ul className="mt-1 space-y-1">
+                  {row.entries.length > 0 ? (
+                    <ul className="mt-2 space-y-1">
                       {row.entries.map((entry) => {
                         const end = entry.end;
                         const hours = getWorkedHours(entry);
-                        const hoursStr = end ? ` (${hours.toFixed(1)}h)` : "";
+                        const hoursStr = end ? ` · ${hours.toFixed(1)}h` : "";
                         return (
-                          <li key={entry.id} className="flex items-center justify-between gap-2 rounded bg-slate-100 px-2 py-1 text-xs">
+                          <li key={entry.id} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs">
                             <span className="font-medium text-slate-800">{entry.job.jobName}</span>
-                            <span className="text-slate-600">
-                              {format(entry.start, "h:mm a")}
-                              {" -> "}
-                              {end ? format(end, "h:mm a") : "... running"}
-                              {hoursStr}
+                            <span className="text-slate-500">
+                              {format(entry.start, "h:mm a")}{" → "}{end ? format(end, "h:mm a") : "running"}{hoursStr}
                             </span>
                           </li>
                         );
                       })}
                     </ul>
+                  ) : null}
+
+                  {row.running ? (
+                    <form action={ownerClockOutEmployeeAction} className="mt-2">
+                      <input type="hidden" name="workerId" value={row.user.id} />
+                      <button type="submit" className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">Clock Out</button>
+                    </form>
+                  ) : (
+                    <form action={ownerClockInEmployeeAction} className="mt-2 flex items-center gap-2">
+                      <input type="hidden" name="workerId" value={row.user.id} />
+                      <select
+                        name="jobId"
+                        required
+                        defaultValue={row.defaultJobId}
+                        disabled={row.clockInOptions.length === 0}
+                        className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+                      >
+                        <option value="">Select job</option>
+                        {row.clockInOptions.map((job) => (
+                          <option key={job.id} value={job.id}>{job.jobName}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="submit"
+                        disabled={jobs.length === 0 || row.clockInOptions.length === 0}
+                        className="shrink-0 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 disabled:opacity-40 hover:bg-slate-50"
+                      >
+                        Clock In
+                      </button>
+                    </form>
                   )}
-                </div>
+                </article>
+              ))}
+            </div>
+          )}
 
-                {/* Scheduled today - planned blocks (for context) */}
-                {row.todaysBlocks.length > 0 ? (
-                  <div className="mt-2 border-t border-slate-200 pt-2">
-                    <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Scheduled today</p>
-                    <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1">
-                      {row.todaysBlocks.map((block) => (
-                        <span key={block.id} className="rounded bg-teal-50 px-1.5 py-0.5 text-[11px] text-teal-800">
-                          {block.jobName}: {format(block.startAt, "h:mm a")} - {format(block.endAt, "h:mm a")}
-                          {block.count > 1 ? ` (x${block.count})` : ""}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
 
-                {row.todaysAssignedJobs.length > 0 && row.entries.length === 0 ? (
-                  <p className="mt-1.5 text-xs text-teal-700">
-                    Assigned: {row.todaysAssignedJobs.map((j) => j.jobName).join(", ")}
-                  </p>
-                ) : null}
-
-                {row.running ? (
-                  <form action={ownerClockOutEmployeeAction} className="mt-2">
-                    <input type="hidden" name="workerId" value={row.user.id} />
-                    <button type="submit" className="w-full rounded-lg border border-slate-300 px-2 py-2 text-sm sm:w-auto sm:py-1 sm:text-xs">Clock Out</button>
-                  </form>
-                ) : (
-                  <form action={ownerClockInEmployeeAction} className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                    <input type="hidden" name="workerId" value={row.user.id} />
-                    <select
-                      name="jobId"
-                      required
-                      defaultValue={row.defaultJobId}
-                      disabled={row.clockInOptions.length === 0}
-                      className="min-w-0 w-full rounded-lg border border-slate-300 px-2 py-2 text-sm sm:py-1 sm:text-xs"
-                    >
-                      <option value="">Select job</option>
-                      {row.clockInOptions.map((job) => (
-                        <option key={job.id} value={job.id}>{job.jobName}</option>
-                      ))}
-                    </select>
-                    <button
-                      type="submit"
-                      disabled={jobs.length === 0 || row.clockInOptions.length === 0}
-                      className="w-full rounded-lg border border-slate-300 px-2 py-2 text-sm disabled:opacity-50 sm:w-auto sm:py-1 sm:text-xs"
-                    >
-                      Clock In
-                    </button>
-                  </form>
-                )}
-              </article>
-            ))}
-          </div>
         </section>
 
         <section className="rounded-2xl border border-slate-200 bg-white p-4" id="add-worker-form">
@@ -551,10 +529,10 @@ async function AttendancePageContent({
         </section>
 
         <section className="rounded-2xl border border-slate-200 bg-white p-4">
-          <h3 className="text-sm font-semibold text-slate-900">Active workers</h3>
-          <p className="mt-1 text-xs text-slate-500">Edit to change details; confirm before deactivating.</p>
+          <h3 className="text-sm font-semibold text-slate-900">Manage Team</h3>
+          <p className="mt-1 text-xs text-slate-500">Edit details or deactivate members.</p>
           <div className="mt-3 space-y-2 text-sm">
-            {allUsers.map((worker) => {
+            {allUsers.filter((w) => w.isActive).map((worker) => {
               const isEditing = editingWorkerId === worker.id;
               return (
                 <article key={worker.id} className="rounded-xl border border-slate-200 p-2">
@@ -575,33 +553,21 @@ async function AttendancePageContent({
                       </div>
                     </form>
                   ) : (
-                    <>
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                        <span className="font-medium text-slate-900">{worker.fullName || "-"}</span>
-                        <span className="flex items-center gap-2">
-                          <Link href={`/attendance?edit=${encodeURIComponent(worker.id)}`} className="text-xs text-teal-600 underline">Edit</Link>
-                          <ConfirmDeactivateForm
-                            workerId={worker.id}
-                            isActive={worker.isActive}
-                            action={setWorkerActiveAction}
-                            confirmMessage={`${worker.isActive ? "Deactivate" : "Activate"} ${worker.fullName || "this worker"}?`}
-                            label={worker.isActive ? "Deactivate" : "Activate"}
-                            className="inline-block"
-                          />
-                        </span>
-                      </div>
-                      <details className="mt-1.5">
-                        <summary className="cursor-pointer text-xs text-slate-500 underline">Phone, role, pay</summary>
-                        <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-xs text-slate-600">
-                          <dt>Phone</dt>
-                          <dd>{worker.phone || "-"}</dd>
-                          <dt>Role</dt>
-                          <dd>{roleLabel(worker.role)}</dd>
-                          <dt>Rate</dt>
-                          <dd>{worker.hourlyRateDefault != null ? `$${Number(worker.hourlyRateDefault).toFixed(2)}/hr` : "-"}</dd>
-                        </dl>
-                      </details>
-                    </>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <span className="font-medium text-slate-900">{worker.fullName || "-"}</span>
+                      <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-500">{roleLabel(worker.role)}</span>
+                      <span className="flex items-center gap-2 ml-auto">
+                        <Link href={`/attendance?edit=${encodeURIComponent(worker.id)}`} className="text-xs text-teal-600 underline">Edit</Link>
+                        <ConfirmDeactivateForm
+                          workerId={worker.id}
+                          isActive={worker.isActive}
+                          action={setWorkerActiveAction}
+                          confirmMessage={`Deactivate ${worker.fullName || "this worker"}?`}
+                          label="Deactivate"
+                          className="inline-block"
+                        />
+                      </span>
+                    </div>
                   )}
                   {isEditing ? (
                     <ConfirmDeactivateForm
