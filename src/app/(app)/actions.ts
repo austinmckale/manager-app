@@ -2924,6 +2924,7 @@ export async function updateOrgSettingsAction(formData: FormData) {
       discordScheduleDigestEnabled,
       discordScheduleDigestWebhookUrl,
       discordScheduleDigestTime,
+      discordScheduleDigestLastSentAt: null,
       defaultClockInTime,
       clockGraceMinutes,
     },
