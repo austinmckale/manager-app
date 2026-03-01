@@ -6,8 +6,6 @@ import {
   createWorkerAction,
   ownerClockInEmployeeAction,
   ownerClockOutEmployeeAction,
-  ownerClockInCrewForJobAction,
-  saveJobAssignmentsAction,
   setWorkerActiveAction,
   updateWorkerAction,
 } from "@/app/(app)/actions";
@@ -372,12 +370,7 @@ async function AttendancePageContent({
       <div className="space-y-4">
         <TeamTabs active="attendance" />
 
-        <section className="rounded-2xl border border-teal-200 bg-teal-50 p-4">
-          <h2 className="text-base font-semibold text-teal-900">Attendance Dashboard</h2>
-          <p className="mt-1 text-sm text-teal-800">
-            See each employee&apos;s week, then clock everyone in/out in Today Roster. Add and manage workers at the bottom.
-          </p>
-        </section>
+
 
         <section className="rounded-2xl border border-slate-200 bg-white p-4">
           <AttendanceScheduleBoard
@@ -390,39 +383,7 @@ async function AttendancePageContent({
           />
         </section>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-4">
-          <h3 className="text-sm font-semibold text-slate-900">Quick Clock-In by Job</h3>
-          <p className="mt-1 text-xs text-slate-500">
-            Start timers for an entire crew at once. Manage crew assignments from each job&apos;s Schedule tab.
-          </p>
-          <div className="mt-3 space-y-2">
-            {ongoingJobs.map((job) => {
-              const crewNames = job.assignments
-                ?.map((a) => users.find((u) => u.id === a.userId)?.fullName)
-                .filter(Boolean) ?? [];
-              return (
-                <article key={job.id} className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2 text-sm">
-                  <div className="min-w-0">
-                    <p className="font-medium text-slate-900 truncate">{job.jobName}</p>
-                    <p className="text-[11px] text-slate-500">{crewNames.length > 0 ? crewNames.join(", ") : "No crew assigned"}</p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2 ml-2">
-                    <Link href={`/jobs/${job.id}`} className="text-[11px] text-slate-500 hover:text-slate-900">Schedule</Link>
-                    {job.assignments && job.assignments.length > 0 ? (
-                      <form action={ownerClockInCrewForJobAction} className="inline">
-                        <input type="hidden" name="jobId" value={job.id} />
-                        <button type="submit" className="rounded-lg bg-slate-900 px-2.5 py-1 text-[11px] font-medium text-white">
-                          Clock in crew
-                        </button>
-                      </form>
-                    ) : null}
-                  </div>
-                </article>
-              );
-            })}
-            {ongoingJobs.length === 0 ? <p className="text-sm text-slate-500">No jobs with upcoming visits this week.</p> : null}
-          </div>
-        </section>
+
 
         <section className="rounded-2xl border border-slate-200 bg-white p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -514,25 +475,27 @@ async function AttendancePageContent({
         </section>
 
         <section className="rounded-2xl border border-slate-200 bg-white p-4" id="add-worker-form">
-          <h3 className="text-sm font-semibold text-slate-900">Add worker</h3>
-          <form action={createWorkerAction} className="mt-3 grid gap-2 sm:grid-cols-2">
-            <input name="fullName" required placeholder="Full name" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
-            <input name="email" type="email" required placeholder="Email" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
-            <input name="phone" placeholder="Phone" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
-            <select name="role" defaultValue="WORKER" className="rounded-xl border border-slate-300 px-3 py-2 text-sm">
-              <option value="WORKER">Worker</option>
-              <option value="ADMIN">Admin</option>
-            </select>
-            <input name="hourlyRateDefault" type="number" step="0.01" placeholder="Hourly rate" className="rounded-xl border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
-            <button type="submit" className="rounded-xl bg-teal-600 px-4 py-2 text-sm font-semibold text-white sm:col-span-2">+ Add worker</button>
-          </form>
+          <details>
+            <summary className="cursor-pointer text-sm font-semibold text-slate-900 hover:text-teal-700">+ Add worker</summary>
+            <form action={createWorkerAction} className="mt-3 grid gap-2 sm:grid-cols-2">
+              <input name="fullName" required placeholder="Full name" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+              <input name="email" type="email" required placeholder="Email" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+              <input name="phone" placeholder="Phone" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+              <select name="role" defaultValue="WORKER" className="rounded-xl border border-slate-300 px-3 py-2 text-sm">
+                <option value="WORKER">Worker</option>
+                <option value="ADMIN">Admin</option>
+              </select>
+              <input name="hourlyRateDefault" type="number" step="0.01" placeholder="Hourly rate" className="rounded-xl border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
+              <button type="submit" className="rounded-xl bg-teal-600 px-4 py-2 text-sm font-semibold text-white sm:col-span-2">Add worker</button>
+            </form>
+          </details>
         </section>
 
         <section className="rounded-2xl border border-slate-200 bg-white p-4">
           <h3 className="text-sm font-semibold text-slate-900">Manage Team</h3>
           <p className="mt-1 text-xs text-slate-500">Edit details or deactivate members.</p>
           <div className="mt-3 space-y-2 text-sm">
-            {allUsers.filter((w) => w.isActive).map((worker) => {
+            {allUsers.filter((w) => w.isActive && w.role === "WORKER").map((worker) => {
               const isEditing = editingWorkerId === worker.id;
               return (
                 <article key={worker.id} className="rounded-xl border border-slate-200 p-2">
