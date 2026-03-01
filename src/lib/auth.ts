@@ -66,6 +66,27 @@ async function ensureUserForSessionUser(sessionUser: { id: string; email?: strin
       return existingByEmail;
     }
   }
+
+  // Auto-provision a profile for allowed emails that don't have one yet
+  if (normalizedEmail && isEmailAllowed(normalizedEmail)) {
+    const orgId = await ensureBaseOrg();
+    const displayName =
+      (sessionUser.user_metadata?.full_name as string) ??
+      (sessionUser.user_metadata?.name as string) ??
+      normalizedEmail.split("@")[0];
+    const created = await prisma.userProfile.create({
+      data: {
+        id: sessionUser.id,
+        orgId,
+        fullName: displayName,
+        email: normalizedEmail,
+        role: Role.OWNER,
+        isActive: true,
+      },
+    });
+    return created;
+  }
+
   throw new Error("Unauthorized");
 }
 
