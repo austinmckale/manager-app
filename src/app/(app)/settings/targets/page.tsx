@@ -2,6 +2,7 @@ import {
   createTargetAction,
   createWorkerAction,
   sendDiscordScheduleDigestNowAction,
+  sendDiscordEodDigestNowAction,
   updateOrgSettingsAction,
 } from "@/app/(app)/actions";
 import { format } from "date-fns";
@@ -90,16 +91,7 @@ export default async function TargetSettingsPage() {
                 className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
               />
             </div>
-            <div className="grid gap-1 sm:grid-cols-2">
-              <label className="block text-xs text-slate-600">Grace minutes (before marked late)</label>
-              <input
-                type="number"
-                min={0}
-                name="clockGraceMinutes"
-                defaultValue={settings?.clockGraceMinutes ?? 10}
-                className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
-              />
-            </div>
+
             <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-4 mt-2">
               <h3 className="text-sm font-semibold text-indigo-900">Discord Integrations</h3>
               <p className="mt-1 text-xs text-indigo-700">Connect your workspace to Discord for automated team updates.</p>
@@ -108,15 +100,25 @@ export default async function TargetSettingsPage() {
                 <label className="flex items-start gap-2 text-xs">
                   <input
                     type="checkbox"
-                    name="discordClockInAlertsEnabled"
-                    defaultChecked={settings?.gpsTimeTrackingEnabled ?? false}
+                    name="discordEodDigestEnabled"
+                    defaultChecked={settings?.discordEodDigestEnabled ?? false}
                     className="mt-0.5"
                   />
                   <div>
-                    <span className="font-medium text-slate-900">Live Clock-in Alerts</span>
-                    <p className="text-slate-500">Post a message when crew members clock in or out.</p>
+                    <span className="font-medium text-slate-900">End of Day Wrap-up</span>
+                    <p className="text-slate-500">Send an evening reminder to clock out and log material receipts.</p>
                   </div>
                 </label>
+
+                <div className="ml-5 grid gap-1 sm:max-w-xs">
+                  <label className="block text-xs text-slate-600">EOD Digest time</label>
+                  <input
+                    type="time"
+                    name="discordEodDigestTime"
+                    defaultValue={settings?.discordEodDigestTime ?? "17:00"}
+                    className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                  />
+                </div>
 
                 <div className="h-px w-full bg-indigo-200/50" />
 
@@ -160,18 +162,33 @@ export default async function TargetSettingsPage() {
               Save Rules
             </button>
           </form>
-          {settings?.discordScheduleDigestEnabled && settings?.discordScheduleDigestWebhookUrl ? (
-            <form action={sendDiscordScheduleDigestNowAction} className="mt-2">
-              <button
-                type="submit"
-                className="rounded-xl border border-indigo-300 bg-indigo-50 px-3 py-2 text-xs text-indigo-700 hover:bg-indigo-100"
-              >
-                Send Discord schedule digest now
-              </button>
-            </form>
-          ) : (
-            <p className="mt-2 text-[11px] text-slate-500">Enable digest + add webhook URL, then save rules to unlock &quot;Send now&quot;.</p>
-          )}
+          <div className="flex flex-wrap gap-2 mt-2">
+            {settings?.discordScheduleDigestEnabled && settings?.discordScheduleDigestWebhookUrl ? (
+              <form action={sendDiscordScheduleDigestNowAction}>
+                <button
+                  type="submit"
+                  className="rounded-xl border border-indigo-300 bg-indigo-50 px-3 py-2 text-xs text-indigo-700 hover:bg-indigo-100"
+                >
+                  Send Morning schedule digest now
+                </button>
+              </form>
+            ) : null}
+
+            {settings?.discordEodDigestEnabled && settings?.discordScheduleDigestWebhookUrl ? (
+              <form action={sendDiscordEodDigestNowAction}>
+                <button
+                  type="submit"
+                  className="rounded-xl border border-fuchsia-300 bg-fuchsia-50 px-3 py-2 text-xs text-fuchsia-700 hover:bg-fuchsia-100"
+                >
+                  Send EOD Wrap-up digest now
+                </button>
+              </form>
+            ) : null}
+
+            {!settings?.discordScheduleDigestWebhookUrl || (!settings?.discordScheduleDigestEnabled && !settings?.discordEodDigestEnabled) ? (
+              <p className="mt-2 text-[11px] text-slate-500">Enable a digest + add webhook URL, then save rules to unlock &quot;Send now&quot; buttons.</p>
+            ) : null}
+          </div>
         </section>
       ) : null}
 

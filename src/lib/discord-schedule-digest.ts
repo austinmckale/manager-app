@@ -28,85 +28,13 @@ function splitClock(value: string) {
   };
 }
 
-function taskStatusLabel(status: TaskStatus) {
-  if (status === TaskStatus.IN_PROGRESS) return "In Progress";
-  if (status === TaskStatus.BLOCKED) return "Blocked";
-  return "Todo";
-}
-
-function buildTasksText(
-  tasks: Array<{
-    title: string;
-    status: TaskStatus;
-    dueDate: Date | null;
-    notes: string | null;
-    assignee: { fullName: string } | null;
-  }>,
-) {
-  if (tasks.length === 0) return [];
-
-  const lines: string[] = ["Tasks:"];
-  const shownTasks = tasks.slice(0, 4);
-  for (const task of shownTasks) {
-    const due = task.dueDate ? `, due ${format(task.dueDate, "MMM d")}` : "";
-    const assignee = task.assignee?.fullName ? `, ${task.assignee.fullName}` : "";
-    const notes = truncateText(task.notes, 100);
-    lines.push(`- [${taskStatusLabel(task.status)}] ${task.title}${assignee}${due}${notes ? ` | ${notes}` : ""}`);
-  }
-  if (tasks.length > shownTasks.length) {
-    lines.push(`- +${tasks.length - shownTasks.length} more open task(s)`);
-  }
-
-  return lines;
-}
-
 function buildCrewText(assignments: Array<{ user: { fullName: string } }>) {
   const names = [...new Set(assignments.map((assignment) => assignment.user.fullName.trim()).filter(Boolean))];
   if (names.length === 0) return "Unassigned";
   return names.join(", ");
 }
 
-function buildEventBlock(
-  index: number,
-  event: {
-    startAt: Date;
-    endAt: Date;
-    notes: string | null;
-    job: {
-      jobName: string;
-      address: string;
-      customer: { name: string; notes: string | null };
-      assignments: Array<{ user: { fullName: string } }>;
-      tasks: Array<{
-        title: string;
-        status: TaskStatus;
-        dueDate: Date | null;
-        notes: string | null;
-        assignee: { fullName: string } | null;
-      }>;
-      leads: Array<{ notes: string | null }>;
-    };
-  },
-) {
-  const scheduleWindow = `${format(event.startAt, "h:mm a")} - ${format(event.endAt, "h:mm a")}`;
-  const crewText = buildCrewText(event.job.assignments);
-  const eventNotes = truncateText(event.notes, 140);
-  const customerNotes = truncateText(event.job.customer.notes, 120);
-  const leadNotes = truncateText(event.job.leads[0]?.notes ?? "", 120);
-  const tasksText = buildTasksText(event.job.tasks);
 
-  const lines: string[] = [];
-  lines.push(`${index + 1}) ${scheduleWindow} | ${event.job.jobName}`);
-  lines.push(`Client: ${event.job.customer.name}`);
-  lines.push(`Location: ${event.job.address}`);
-  lines.push(`Crew: ${crewText}`);
-  if (eventNotes) lines.push(`Schedule details: ${eventNotes}`);
-  if (customerNotes) lines.push(`Client notes: ${customerNotes}`);
-  if (leadNotes) lines.push(`Lead notes: ${leadNotes}`);
-  lines.push(...tasksText);
-
-  return lines.join("\n");
-}
 
 function splitIntoDiscordMessages(header: string, blocks: string[]) {
   const messages: string[] = [];
@@ -170,6 +98,7 @@ export async function sendDiscordScheduleDigestForOrg(params: {
   const dayStart = startOfDay(digestDate);
   const dayEnd = endOfDay(digestDate);
 
+  // 1. Fetch Schedule Events
   const events = await prisma.jobScheduleEvent.findMany({
     where: {
       orgId: params.orgId,
@@ -187,18 +116,6 @@ export async function sendDiscordScheduleDigestForOrg(params: {
               user: { select: { fullName: true } },
             },
           },
-          tasks: {
-            where: { status: { in: OPEN_TASK_STATUSES } },
-            orderBy: [{ dueDate: "asc" }, { createdAt: "asc" }],
-            take: 6,
-            select: {
-              title: true,
-              status: true,
-              dueDate: true,
-              notes: true,
-              assignee: { select: { fullName: true } },
-            },
-          },
           leads: {
             where: { notes: { not: null } },
             orderBy: { updatedAt: "desc" },
@@ -210,14 +127,160 @@ export async function sendDiscordScheduleDigestForOrg(params: {
     },
   });
 
+  // 2. Fetch New Leads awaiting contact
+  const newLeads = await prisma.lead.findMany({
+    where: { orgId: params.orgId, stage: "NEW" },
+    orderBy: { createdAt: "desc" },
+    take: 10,
+    select: { contactName: true, serviceType: true, source: true },
+  });
+
+  // 3. Fetch Overdue Tasks
+  const overdueTasks = await prisma.task.findMany({
+    where: {
+      job: { orgId: params.orgId },
+      status: { in: OPEN_TASK_STATUSES },
+      dueDate: { lt: dayStart },
+    },
+    include: {
+      job: { select: { jobName: true } },
+      assignee: { select: { fullName: true } },
+    },
+    orderBy: { dueDate: "asc" },
+    take: 10,
+  });
+
   const header = `Crew Schedule Digest - ${format(digestDate, "EEE, MMM d, yyyy")}`;
+  const blocks: string[] = [];
+
+  // Write Schedule Section
+  blocks.push("🗂️ **Schedule Today**");
   if (events.length === 0) {
-    await postDiscordMessages(webhookUrl, [`${header}\n\nNo scheduled visits today.`]);
-    return { sent: true, eventCount: 0, messageCount: 1 };
+    blocks.push("**NOT SCHEDULED**\n");
+  } else {
+    // Re-use existing block builder but strip tasks out of it
+    events.forEach((event, index) => {
+      const scheduleWindow = `${format(event.startAt, "h:mm a")} - ${format(event.endAt, "h:mm a")}`;
+      const crewText = buildCrewText(event.job.assignments);
+      const eventNotes = truncateText(event.notes, 140);
+      const customerNotes = truncateText(event.job.customer.notes, 120);
+      const leadNotes = truncateText(event.job.leads[0]?.notes ?? "", 120);
+
+      const lines: string[] = [];
+      lines.push(`\n${index + 1}) ${scheduleWindow} | ${event.job.jobName}`);
+      lines.push(`Client: ${event.job.customer.name}`);
+      lines.push(`Location: ${event.job.address}`);
+      lines.push(`Crew: ${crewText}`);
+      if (eventNotes) lines.push(`Schedule details: ${eventNotes}`);
+      if (customerNotes) lines.push(`Client notes: ${customerNotes}`);
+      if (leadNotes) lines.push(`Lead notes: ${leadNotes}`);
+      blocks.push(lines.join("\n"));
+    });
+    blocks.push("\n");
   }
 
-  const eventBlocks = events.map((event, index) => buildEventBlock(index, event));
-  const messages = splitIntoDiscordMessages(header, eventBlocks);
+  // Write New Leads Section
+  blocks.push("🚨 **New Leads** (Awaiting Contact)");
+  if (newLeads.length === 0) {
+    blocks.push("No new leads waiting.\n");
+  } else {
+    newLeads.forEach((lead) => {
+      blocks.push(`- ${lead.contactName} (${lead.serviceType || "Unknown service"}) from ${lead.source.replaceAll("_", " ")}`);
+    });
+    blocks.push("\n");
+  }
+
+  // Write Overdue Tasks Section
+  blocks.push("✓ **Overdue Tasks**");
+  if (overdueTasks.length === 0) {
+    blocks.push("No tasks overdue!");
+  } else {
+    overdueTasks.forEach((task) => {
+      const assignee = task.assignee?.fullName ? ` (${task.assignee.fullName})` : "";
+      const due = task.dueDate ? ` - Due ${format(task.dueDate, "MMM d")}` : "";
+      blocks.push(`- [${task.job.jobName}] ${task.title}${assignee}${due}`);
+    });
+  }
+
+  // Chunk blocks into valid Discord message sizes
+  const messages = splitIntoDiscordMessages(header, blocks);
   await postDiscordMessages(webhookUrl, messages);
+
   return { sent: true, eventCount: events.length, messageCount: messages.length };
+}
+
+export async function sendDiscordEodDigestForOrg(params: {
+  orgId: string;
+  webhookUrl: string;
+  forDate?: Date;
+}) {
+  const webhookUrl = params.webhookUrl.trim();
+  if (!webhookUrl) return { sent: false, entriesCount: 0, messageCount: 0 };
+
+  const digestDate = params.forDate ?? new Date();
+  const dayStart = startOfDay(digestDate);
+  const dayEnd = endOfDay(digestDate);
+
+  // 1. Fetch Active Timers (where end is null)
+  const activeTimers = await prisma.timeEntry.findMany({
+    where: {
+      job: { orgId: params.orgId },
+      end: null, // Check for active clock-ins
+    },
+    include: {
+      worker: { select: { fullName: true } },
+      job: { select: { jobName: true } },
+    },
+    orderBy: { start: "asc" },
+  });
+
+  // 2. Fetch missing receipts (expenses from today where receipt is null)
+  const receiptlessExpenses = await prisma.expense.findMany({
+    where: {
+      job: { orgId: params.orgId },
+      date: { gte: dayStart, lte: dayEnd },
+      receipt: null,
+    },
+    include: {
+      job: { select: { jobName: true } },
+    },
+    orderBy: { date: "asc" },
+  });
+
+  const header = `EOD Wrap-up Digest - ${format(digestDate, "EEE, MMM d, yyyy")}`;
+  const blocks: string[] = [];
+
+  // Write Active Timers Section
+  blocks.push("⏰ **Clock-outs**");
+  if (activeTimers.length === 0) {
+    blocks.push("Everyone is clocked out!\n");
+  } else {
+    blocks.push("WARNING - The following team members are still clocked in:");
+    activeTimers.forEach((entry) => {
+      const durationHours = Math.floor((new Date().getTime() - entry.start.getTime()) / (1000 * 60 * 60));
+      blocks.push(`- **${entry.worker.fullName}** on ${entry.job.jobName} (Clocked in ${format(entry.start, "h:mm a")} - ${durationHours}h ago)`);
+    });
+    blocks.push("\n");
+  }
+
+  // Write Receipts Section
+  blocks.push("🧾 **Receipts & Materials**");
+  if (receiptlessExpenses.length === 0) {
+    blocks.push("No missing receipts for today's expenses. Great job!\n");
+  } else {
+    blocks.push("The following expenses need a receipt upload:");
+    receiptlessExpenses.forEach((exp) => {
+      blocks.push(`- $${Number(exp.amount).toFixed(2)} at ${exp.vendor} for ${exp.job.jobName}`);
+    });
+    blocks.push("\n");
+  }
+
+  // Final reminder note
+  blocks.push("*Did you order any materials today that aren't logged yet? Don't forget to add them to the job's Costs tab!*");
+
+  // Chunk blocks into valid Discord message sizes
+  const messages = splitIntoDiscordMessages(header, blocks);
+  await postDiscordMessages(webhookUrl, messages);
+
+  return { sent: true, entriesCount: activeTimers.length + receiptlessExpenses.length, messageCount: messages.length };
 }

@@ -2898,35 +2898,35 @@ export async function updateOrgSettingsAction(formData: FormData) {
   }
 
   const defaultClockInTime = String(formData.get("defaultClockInTime") ?? "07:00");
-  const clockGraceRaw = Number(formData.get("clockGraceMinutes") ?? 10);
-  const clockGraceMinutes = Number.isFinite(clockGraceRaw) ? Math.max(0, Math.min(120, Math.trunc(clockGraceRaw))) : 10;
-  const discordClockInAlertsEnabled =
-    formData.get("discordClockInAlertsEnabled") === "on" || formData.get("gpsTimeTrackingEnabled") === "on";
   const discordScheduleDigestEnabled = formData.get("discordScheduleDigestEnabled") === "on";
   const discordScheduleDigestWebhookUrl = String(formData.get("discordScheduleDigestWebhookUrl") ?? "").trim() || null;
   const discordScheduleDigestTime = sanitizeDigestClock(String(formData.get("discordScheduleDigestTime") ?? "06:00"), "06:00");
+
+  const discordEodDigestEnabled = formData.get("discordEodDigestEnabled") === "on";
+  const discordEodDigestTime = sanitizeDigestClock(String(formData.get("discordEodDigestTime") ?? "17:00"), "17:00");
 
   await prisma.organizationSetting.upsert({
     where: { orgId: auth.orgId },
     update: {
       workerCanEditOwnTimeSameDay: false,
-      gpsTimeTrackingEnabled: discordClockInAlertsEnabled,
       discordScheduleDigestEnabled,
       discordScheduleDigestWebhookUrl,
       discordScheduleDigestTime,
+      discordEodDigestEnabled,
+      discordEodDigestTime,
       defaultClockInTime,
-      clockGraceMinutes,
     },
     create: {
       orgId: auth.orgId,
       workerCanEditOwnTimeSameDay: false,
-      gpsTimeTrackingEnabled: discordClockInAlertsEnabled,
       discordScheduleDigestEnabled,
       discordScheduleDigestWebhookUrl,
       discordScheduleDigestTime,
       discordScheduleDigestLastSentAt: null,
+      discordEodDigestEnabled,
+      discordEodDigestTime,
+      discordEodDigestLastSentAt: null,
       defaultClockInTime,
-      clockGraceMinutes,
     },
   });
 
@@ -2970,6 +2970,48 @@ export async function sendDiscordScheduleDigestNowAction() {
   });
 
   await logActivity(auth.orgId, null, auth.userId, "ops.discord_schedule_digest.sent_now", {
+    sentAt: new Date().toISOString(),
+  });
+  revalidatePath("/settings/targets");
+  revalidatePath("/today");
+}
+
+export async function sendDiscordEodDigestNowAction() {
+  if (isDemoMode()) return;
+
+  const auth = await requireAuth();
+  if (!canManageOrg(auth.role)) {
+    throw new Error("Only owner/admin can send EOD digest.");
+  }
+
+  const settings = await prisma.organizationSetting.findUnique({
+    where: { orgId: auth.orgId },
+    select: {
+      discordEodDigestEnabled: true,
+      discordScheduleDigestWebhookUrl: true,
+    },
+  });
+
+  if (!settings?.discordEodDigestEnabled) {
+    throw new Error("Enable EOD wrap-up digest in Settings first.");
+  }
+  if (!settings.discordScheduleDigestWebhookUrl) {
+    throw new Error("Add a Discord webhook URL in Settings first.");
+  }
+
+  const { sendDiscordEodDigestForOrg } = await import("@/lib/discord-schedule-digest");
+  await sendDiscordEodDigestForOrg({
+    orgId: auth.orgId,
+    webhookUrl: settings.discordScheduleDigestWebhookUrl,
+    forDate: new Date(),
+  });
+
+  await prisma.organizationSetting.update({
+    where: { orgId: auth.orgId },
+    data: { discordEodDigestLastSentAt: new Date() },
+  });
+
+  await logActivity(auth.orgId, null, auth.userId, "ops.discord_eod_digest.sent_now", {
     sentAt: new Date().toISOString(),
   });
   revalidatePath("/settings/targets");
