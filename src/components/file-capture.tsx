@@ -9,11 +9,12 @@ import {
   updateQueuedUpload,
   type UploadQueueItem,
 } from "@/lib/client/offline-upload";
-import { SERVICE_TAG_OPTIONS } from "@/lib/service-tags";
 
 type FileCaptureProps = {
   jobId: string;
   fileType?: "PHOTO" | "DOCUMENT" | "RECEIPT";
+  photoOnly?: boolean;
+  vendorSuggestions?: string[];
   expenseId?: string;
   onUploaded?: () => void;
 };
@@ -34,20 +35,6 @@ const AREA_OPTIONS = [
   "Other",
 ] as const;
 
-const EXTRA_CAPTURE_TAGS: Array<{ slug: string; label: string }> = [
-  { slug: "tear-out", label: "Tear-out" },
-  { slug: "framing", label: "Framing" },
-  { slug: "plumbing", label: "Plumbing" },
-  { slug: "electrical", label: "Electrical" },
-  { slug: "paint", label: "Paint" },
-  { slug: "inspection", label: "Inspection" },
-];
-
-const CONTROLLED_TAG_OPTIONS = [
-  ...SERVICE_TAG_OPTIONS.map((tag) => ({ slug: tag.slug, label: tag.label })),
-  ...EXTRA_CAPTURE_TAGS,
-];
-
 async function fileToDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -57,15 +44,35 @@ async function fileToDataUrl(file: File) {
   });
 }
 
-export function FileCapture({ jobId, fileType = "PHOTO", expenseId, onUploaded }: FileCaptureProps) {
+function toTagToken(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function buildAutoCaptureTags(input: { area: string; stage: "BEFORE" | "DURING" | "AFTER" }) {
+  const areaToken = toTagToken(input.area);
+  const stageToken = toTagToken(input.stage);
+  const tags: string[] = [];
+  if (areaToken) tags.push(`area:${areaToken}`);
+  if (stageToken) tags.push(`stage:${stageToken}`);
+  return tags;
+}
+
+export function FileCapture({
+  jobId,
+  fileType = "PHOTO",
+  photoOnly = false,
+  vendorSuggestions = [],
+  expenseId,
+  onUploaded,
+}: FileCaptureProps) {
   const router = useRouter();
-  const modeLocked = fileType !== "PHOTO";
-  const [captureMode, setCaptureMode] = useState<CaptureMode>(fileType === "RECEIPT" ? "RECEIPT" : "PHOTO");
+  const lockedType: "PHOTO" | "RECEIPT" | "DOCUMENT" = photoOnly ? "PHOTO" : fileType;
+  const modeLocked = photoOnly || fileType !== "PHOTO";
+  const [captureMode, setCaptureMode] = useState<CaptureMode>(lockedType === "RECEIPT" ? "RECEIPT" : "PHOTO");
 
   const [stage, setStage] = useState<"BEFORE" | "DURING" | "AFTER">("DURING");
   const [areaOption, setAreaOption] = useState("");
   const [areaCustom, setAreaCustom] = useState("");
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [description, setDescription] = useState("");
   const [isClientVisible, setIsClientVisible] = useState(false);
 
@@ -78,8 +85,8 @@ export function FileCapture({ jobId, fileType = "PHOTO", expenseId, onUploaded }
   const [queueItems, setQueueItems] = useState<UploadQueueItem[]>([]);
   const [isOnline, setIsOnline] = useState(true);
 
-  const activeFileType: "PHOTO" | "RECEIPT" | "DOCUMENT" = modeLocked ? fileType : captureMode;
-  const isDocumentMode = modeLocked && fileType === "DOCUMENT";
+  const activeFileType: "PHOTO" | "RECEIPT" | "DOCUMENT" = modeLocked ? lockedType : captureMode;
+  const isDocumentMode = modeLocked && lockedType === "DOCUMENT";
   const selectedArea = areaOption === "Other" ? areaCustom.trim() : areaOption;
 
   const refreshQueue = useCallback(async () => {
@@ -152,12 +159,18 @@ export function FileCapture({ jobId, fileType = "PHOTO", expenseId, onUploaded }
 
   const scopedQueueItems = useMemo(() => queueItems.filter((item) => item.jobId === jobId), [queueItems, jobId]);
   const queuedErrors = scopedQueueItems.filter((item) => (item.retryCount ?? 0) > 0).length;
-
-  const toggleTag = (slug: string) => {
-    setSelectedTags((current) =>
-      current.includes(slug) ? current.filter((value) => value !== slug) : [...current, slug],
-    );
-  };
+  const normalizedVendorSuggestions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          vendorSuggestions
+            .map((value) => value.trim())
+            .filter((value) => value.length > 0),
+        ),
+      ).slice(0, 200),
+    [vendorSuggestions],
+  );
+  const vendorDatalistId = `receipt-vendors-${jobId}`;
 
   const onFilesSelected = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -204,7 +217,7 @@ export function FileCapture({ jobId, fileType = "PHOTO", expenseId, onUploaded }
           fileType: activeFileType,
           stage: activeFileType === "PHOTO" ? stage : undefined,
           area: activeFileType === "PHOTO" ? selectedArea : undefined,
-          tags: selectedTags,
+          tags: activeFileType === "PHOTO" ? buildAutoCaptureTags({ area: selectedArea, stage }) : [],
           description: description.trim() || undefined,
           isPortfolio: false,
           isClientVisible: activeFileType === "PHOTO" ? isClientVisible : false,
@@ -272,25 +285,12 @@ export function FileCapture({ jobId, fileType = "PHOTO", expenseId, onUploaded }
 
       {isDocumentMode ? (
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-2 text-xs text-slate-600">
-          Upload the Joist PDF. We auto-extract estimate/invoice number, customer, address, and total to show under this job.
+          Upload the Joist PDF. We auto-extract estimate/invoice number, customer, address, total, and scope summary for this job.
         </div>
       ) : null}
 
       {activeFileType === "PHOTO" ? (
         <>
-          <label className="block text-xs text-slate-600">
-            Stage
-            <select
-              value={stage}
-              onChange={(event) => setStage(event.target.value as typeof stage)}
-              className="mt-1 w-full rounded-xl border border-slate-300 px-2 py-2 text-sm"
-            >
-              <option value="BEFORE">Before</option>
-              <option value="DURING">During</option>
-              <option value="AFTER">After</option>
-            </select>
-          </label>
-
           <label className="block text-xs text-slate-600">
             Area (required)
             <select
@@ -318,6 +318,34 @@ export function FileCapture({ jobId, fileType = "PHOTO", expenseId, onUploaded }
               />
             </label>
           ) : null}
+
+          <details className="rounded-xl border border-slate-200 bg-slate-50/60">
+            <summary className="cursor-pointer list-none px-3 py-2 text-xs font-medium text-slate-700">
+              Advanced photo options
+            </summary>
+            <div className="space-y-2 border-t border-slate-200 px-3 py-2">
+              <label className="block text-xs text-slate-600">
+                Stage
+                <select
+                  value={stage}
+                  onChange={(event) => setStage(event.target.value as typeof stage)}
+                  className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-2 py-2 text-sm"
+                >
+                  <option value="BEFORE">Before</option>
+                  <option value="DURING">During</option>
+                  <option value="AFTER">After</option>
+                </select>
+              </label>
+              <label className="inline-flex items-center gap-2 text-xs text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={isClientVisible}
+                  onChange={(event) => setIsClientVisible(event.target.checked)}
+                />
+                Client visible
+              </label>
+            </div>
+          </details>
         </>
       ) : null}
 
@@ -325,14 +353,22 @@ export function FileCapture({ jobId, fileType = "PHOTO", expenseId, onUploaded }
         <div className="grid gap-2 sm:grid-cols-2">
           <label className="block text-xs text-slate-600">
             Vendor (required)
-            <input
-              value={expenseVendor}
-              onChange={(event) => setExpenseVendor(event.target.value)}
-              className="mt-1 w-full rounded-xl border border-slate-300 px-2 py-2 text-sm"
-              placeholder="Home Depot / Lowe's / Sub"
-              required
-            />
-          </label>
+              <input
+                value={expenseVendor}
+                onChange={(event) => setExpenseVendor(event.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-300 px-2 py-2 text-sm"
+                placeholder="Home Depot / Lowe's / Sub"
+                list={normalizedVendorSuggestions.length > 0 ? vendorDatalistId : undefined}
+                required
+              />
+              {normalizedVendorSuggestions.length > 0 ? (
+                <datalist id={vendorDatalistId}>
+                  {normalizedVendorSuggestions.map((vendor) => (
+                    <option key={vendor} value={vendor} />
+                  ))}
+                </datalist>
+              ) : null}
+            </label>
           <label className="block text-xs text-slate-600">
             Amount (required)
             <input
@@ -374,30 +410,13 @@ export function FileCapture({ jobId, fileType = "PHOTO", expenseId, onUploaded }
         </div>
       ) : null}
 
-      {!isDocumentMode ? (
-        <div className="space-y-2">
-          <p className="text-xs text-slate-600">Tags (optional)</p>
-          <div className="flex flex-wrap gap-1.5">
-            {CONTROLLED_TAG_OPTIONS.map((tag) => {
-              const selected = selectedTags.includes(tag.slug);
-              return (
-                <button
-                  key={tag.slug}
-                  type="button"
-                  onClick={() => toggleTag(tag.slug)}
-                  className={`rounded-full border px-2 py-1 text-[11px] ${selected ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 text-slate-700"}`}
-                >
-                  {tag.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+      {activeFileType === "PHOTO" ? (
+        <p className="text-[11px] text-slate-500">Tags are auto-generated from area and stage.</p>
       ) : null}
 
       {!isDocumentMode ? (
         <label className="block text-xs text-slate-600">
-          {activeFileType === "RECEIPT" ? "Receipt notes (optional)" : "Description (optional)"}
+          {activeFileType === "RECEIPT" ? "Receipt notes (optional)" : "Photo note (optional)"}
           <textarea
             value={description}
             onChange={(event) => setDescription(event.target.value)}
@@ -408,17 +427,10 @@ export function FileCapture({ jobId, fileType = "PHOTO", expenseId, onUploaded }
       ) : null}
 
       {activeFileType === "PHOTO" ? (
-        <>
-          <label className="inline-flex items-center gap-2 text-xs text-slate-700">
-            <input
-              type="checkbox"
-              checked={isClientVisible}
-              onChange={(event) => setIsClientVisible(event.target.checked)}
-            />
-            Client visible
-          </label>
-          <p className="text-[11px] text-slate-500">Portfolio can be set after upload from the photo grid.</p>
-        </>
+        <p className="text-[11px] text-slate-500">Portfolio can be set after upload from the photo grid.</p>
+      ) : null}
+      {activeFileType === "PHOTO" ? (
+        <p className="text-[11px] text-slate-500">Tip: JPG/PNG/WebP preview best on desktop. HEIC uploads are saved but may not render inline.</p>
       ) : null}
 
       {isDocumentMode ? (

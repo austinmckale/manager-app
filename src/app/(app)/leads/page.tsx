@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { LeadSource, LeadStage } from "@prisma/client";
 import { endOfDay, format, startOfDay, subDays } from "date-fns";
-import { convertLeadToJobAction, createLeadAction, updateLeadStageAction } from "@/app/(app)/actions";
+import { convertLeadToJobAction, createLeadAction, updateLeadDetailsAction, updateLeadStageAction } from "@/app/(app)/actions";
 import { RoutePanelSkeleton } from "@/components/route-panel-skeleton";
 import { requireAuth } from "@/lib/auth";
 import { isDemoMode } from "@/lib/demo";
@@ -17,8 +17,8 @@ const stageOrder: LeadStage[] = [
   LeadStage.WON,
   LeadStage.LOST,
 ];
-const openStages = [LeadStage.NEW, LeadStage.CONTACTED, LeadStage.SITE_VISIT_SET, LeadStage.ESTIMATE_SENT];
-const closedStages = [LeadStage.WON, LeadStage.LOST];
+const openStages: LeadStage[] = [LeadStage.NEW, LeadStage.CONTACTED, LeadStage.SITE_VISIT_SET, LeadStage.ESTIMATE_SENT];
+const closedStages: LeadStage[] = [LeadStage.WON, LeadStage.LOST];
 
 const sourceOptions: LeadSource[] = [
   LeadSource.WEBSITE_FORM,
@@ -106,8 +106,14 @@ async function LeadsPageContent() {
     leadsByStage.set(stage, []);
   }
   let openPipelineCount = 0;
+  let hiddenLinkedOpenCount = 0;
 
   for (const lead of leads) {
+    if (lead.jobId && openStages.includes(lead.stage)) {
+      hiddenLinkedOpenCount += 1;
+      continue;
+    }
+
     stageCounts.set(lead.stage, (stageCounts.get(lead.stage) ?? 0) + 1);
     const bucket = leadsByStage.get(lead.stage);
     if (bucket) {
@@ -132,19 +138,6 @@ async function LeadsPageContent() {
 
     return (
     <div className="space-y-4">
-      <section className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4">
-        <h3 className="text-sm font-semibold text-emerald-900">Joist Import Moved</h3>
-        <p className="mt-2 text-xs text-emerald-800">
-          Import now lives on the Jobs page so invoice/estimate imports happen inside the secured operations board.
-        </p>
-        <Link
-          href="/jobs#joist-import"
-          className="mt-3 inline-flex rounded-xl border border-emerald-400 bg-emerald-600 px-3 py-2 text-sm font-semibold text-white"
-        >
-          Open Joist Import
-        </Link>
-      </section>
-
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-slate-900">Pipeline Command</h3>
         <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
@@ -176,6 +169,11 @@ async function LeadsPageContent() {
       </section>
 
       <section className="space-y-3">
+        {hiddenLinkedOpenCount > 0 ? (
+          <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+            Hidden {hiddenLinkedOpenCount} imported lead{hiddenLinkedOpenCount === 1 ? "" : "s"} already linked to jobs.
+          </p>
+        ) : null}
         {openStages.map((stage) => {
           const stageLeads = leadsByStage.get(stage) ?? [];
           return (
@@ -199,10 +197,10 @@ async function LeadsPageContent() {
                             {lead.serviceType || "Service TBD"} - {lead.source.replaceAll("_", " ")}
                           </p>
                           <p className="text-xs text-slate-500">
-                            {lead.phone || "No phone"} {lead.email ? ` · ${lead.email}` : ""}
+                            {lead.phone || "No phone"} {lead.email ? ` | ${lead.email}` : ""}
                           </p>
                           {"address" in lead && lead.address ? (
-                            <p className="mt-1 text-xs text-slate-600">📍 {lead.address}</p>
+                            <p className="mt-1 text-xs text-slate-600">Address: {lead.address}</p>
                           ) : null}
                           {"notes" in lead && lead.notes ? (
                             <div className="mt-2 whitespace-pre-wrap rounded-lg bg-slate-50 px-2 py-1.5 text-xs text-slate-700">
@@ -225,6 +223,72 @@ async function LeadsPageContent() {
                           ) : null}
                         </div>
                       </div>
+
+                      <details className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
+                        <summary className="cursor-pointer text-xs font-medium text-slate-700">
+                          Edit details
+                        </summary>
+                        <form action={updateLeadDetailsAction} className="mt-2 grid gap-2">
+                          <input type="hidden" name="leadId" value={lead.id} />
+                          <input
+                            name="contactName"
+                            required
+                            defaultValue={lead.contactName}
+                            placeholder="Contact name"
+                            className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                          />
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            <input
+                              name="phone"
+                              defaultValue={lead.phone ?? ""}
+                              placeholder="Phone"
+                              className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                            />
+                            <input
+                              name="email"
+                              type="email"
+                              defaultValue={lead.email ?? ""}
+                              placeholder="Email"
+                              className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                            />
+                          </div>
+                          <input
+                            name="address"
+                            defaultValue={lead.address ?? ""}
+                            placeholder="Address"
+                            className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                          />
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            <input
+                              name="serviceType"
+                              defaultValue={lead.serviceType ?? ""}
+                              placeholder="Service type"
+                              className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                            />
+                            <select
+                              name="source"
+                              defaultValue={lead.source}
+                              className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                            >
+                              {sourceOptions.map((source) => (
+                                <option key={source} value={source}>
+                                  {source.replaceAll("_", " ")}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <textarea
+                            name="notes"
+                            rows={2}
+                            defaultValue={lead.notes ?? ""}
+                            placeholder="Notes"
+                            className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                          />
+                          <button type="submit" className="rounded-lg border border-slate-300 px-2 py-1 text-xs">
+                            Save Details
+                          </button>
+                        </form>
+                      </details>
 
                       <form action={updateLeadStageAction} className="mt-2 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
                         <input type="hidden" name="leadId" value={lead.id} />
@@ -368,7 +432,7 @@ async function LeadsPageContent() {
                 <li key={lead.id} className="flex items-center justify-between gap-2 text-sm">
                   <span className="font-medium text-slate-900">{lead.contactName}</span>
                   <span className="text-slate-500">
-                    {(lead as LeadRow).serviceType ?? "-"} · {format(lead.createdAt, "MMM d, yyyy")}
+                    {(lead as LeadRow).serviceType ?? "-"} - {format(lead.createdAt, "MMM d, yyyy")}
                   </span>
                 </li>
               ))}

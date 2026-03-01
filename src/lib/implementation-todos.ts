@@ -26,6 +26,16 @@ export const implementationTodoGroups: TodoGroup[] = [
         details: "Show post-submit confirmations for schedule save, clock in/out, invoice send, lead create/import, and expense save.",
       },
       {
+        id: "p0-job-archive-delete",
+        title: "Add archive + delete controls for bad/error jobs.",
+        details: "Archive should hide jobs from default boards while keeping history; delete should require explicit confirmation for true mistakes/fallthrough records.",
+      },
+      {
+        id: "p0-share-feature-prune",
+        title: "Prune unused share/gallery feature paths from the app.",
+        details: "Remove orphaned endpoints/routes and nav references now that share links are not part of operations workflow.",
+      },
+      {
         id: "p0-expense-traceability",
         title: "Improve expense traceability from reports to source records.",
         details: "Each exported row should be easy to find in app with job link, expense id, and receipt link.",
@@ -143,6 +153,16 @@ export const implementationTodoGroups: TodoGroup[] = [
         id: "finance-cost-health-calibration",
         title: "Calibrate cost health thresholds to real business tolerance.",
         details: "Tune labor/material/total warning bands to your margin expectations per job type.",
+      },
+      {
+        id: "finance-mobile-date-picker",
+        title: "Replace expense date picker with a mobile-first calendar input.",
+        details: "Use larger tap targets, quick-pick shortcuts (today/yesterday), and a reliable native-friendly fallback for Expense Ledger date selection.",
+      },
+      {
+        id: "finance-mobile-entry-simplify",
+        title: "Simplify estimate/change-order quick entry for mobile.",
+        details: "Use clearer labels/placeholders and reduce fields shown by default so creating line items is fast on one screen.",
       },
     ],
   },

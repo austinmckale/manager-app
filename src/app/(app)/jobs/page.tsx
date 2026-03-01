@@ -2,8 +2,9 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { endOfWeek, format, startOfWeek } from "date-fns";
 import { JobStatus } from "@prisma/client";
-import { createJobAction, importJoistCsvAction } from "@/app/(app)/actions";
+import { createJobAction } from "@/app/(app)/actions";
 import { JobStatusBadge } from "@/components/job-status-badge";
+import { JoistImportForm } from "@/components/joist-import-form";
 import { RoutePanelSkeleton } from "@/components/route-panel-skeleton";
 import { requireAuth } from "@/lib/auth";
 import { getCustomers, getJobs, getJobsPageAlerts } from "@/lib/data";
@@ -11,6 +12,9 @@ import { createRoutePerf } from "@/lib/route-perf";
 import { SERVICE_TAG_OPTIONS } from "@/lib/service-tags";
 import { getWorkedHours } from "@/lib/time-entry";
 import { currency, toNumber } from "@/lib/utils";
+
+export const runtime = "nodejs";
+export const maxDuration = 60;
 
 const statusOptions: Array<JobStatus | "ALL"> = [
   "ALL",
@@ -23,19 +27,9 @@ const statusOptions: Array<JobStatus | "ALL"> = [
   "PAID",
 ];
 
-const viewOptions = [
-  { value: "today", label: "Today" },
-  { value: "week", label: "This Week" },
-  { value: "all", label: "All" },
-] as const;
-
 export default function JobsPage(props: {
   searchParams: Promise<{
-    status?: string;
-    q?: string;
-    view?: "today" | "week" | "all";
     customerId?: string;
-    focus?: "visits";
     joist?: string;
     imported?: string;
     updated?: string;
@@ -56,11 +50,7 @@ async function JobsPageContent({
   searchParams,
 }: {
   searchParams: Promise<{
-    status?: string;
-    q?: string;
-    view?: "today" | "week" | "all";
     customerId?: string;
-    focus?: "visits";
     joist?: string;
     imported?: string;
     updated?: string;
@@ -78,14 +68,9 @@ async function JobsPageContent({
     orgId = auth.orgId;
     role = auth.role;
     const params = await perf.time("search_params", () => searchParams);
-  const status = params.status ?? "ALL";
-  const q = params.q ?? "";
-  // Default to "This Week" so the jobs list stays focused on active work.
-  const view = params.view ?? "week";
-  const preselectedCustomerId = params.customerId ?? "";
-  const focus = params.focus ?? "";
-  const joistSummary = params.joist
-    ? {
+    const preselectedCustomerId = params.customerId ?? "";
+    const joistSummary = params.joist
+      ? {
         imported: Number(params.imported ?? 0) || 0,
         updated: Number(params.updated ?? 0) || 0,
         skipped: Number(params.skipped ?? 0) || 0,
@@ -93,7 +78,7 @@ async function JobsPageContent({
         jobsLinked: Number(params.jobsLinked ?? 0) || 0,
         firstError: params.firstError ?? "",
       }
-    : null;
+      : null;
 
     const [customers, jobs, alerts] = await perf.time("data", () =>
       Promise.all([
@@ -102,379 +87,308 @@ async function JobsPageContent({
           orgId: auth.orgId,
           role: auth.role,
           userId: auth.userId,
-          status,
-          q,
-          view,
+          status: "ALL",
+          q: "",
+          view: "all",
         }),
         getJobsPageAlerts({ orgId: auth.orgId, role: auth.role, userId: auth.userId }),
       ]),
     );
 
-  const hasOverdue = alerts.overdueTasks.length > 0;
-  const hasMissingReceipts = alerts.jobIdsWithMissingReceipts.length > 0;
-  const jobNamesById = new Map(jobs.map((j) => [j.id, j.jobName]));
+    const hasOverdue = alerts.overdueTasks.length > 0;
+    const hasMissingReceipts = alerts.jobIdsWithMissingReceipts.length > 0;
+
+    const closedStatuses = new Set<JobStatus>([JobStatus.COMPLETED, JobStatus.PAID]);
+    const activeJobs = jobs.filter((job) => !closedStatuses.has(job.status));
+    const closedJobs = jobs.filter((job) => closedStatuses.has(job.status));
+    const jobNamesById = new Map(jobs.map((j) => [j.id, j.jobName]));
 
     return (
-    <div className="space-y-4">
-      <section id="joist-import" className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4">
-        <h2 className="text-sm font-semibold text-emerald-900">Joist Import (CSV or PDF)</h2>
-        <p className="mt-1 text-xs text-emerald-800">
-          Upload Joist exports here from a secured jobs view. Imported rows create/update leads and can be converted into jobs.
-        </p>
-        <form action={importJoistCsvAction} className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
-          <input
-            name="csvFile"
-            type="file"
-            accept=".csv,text/csv,.pdf,application/pdf"
-            multiple
-            required
-            className="rounded-xl border border-emerald-300 px-3 py-2 text-sm"
-          />
-          <button
-            type="submit"
-            className="rounded-xl border border-emerald-400 bg-emerald-600 px-3 py-2 text-sm font-semibold text-white"
-          >
-            Import Joist Files
-          </button>
-        </form>
-        {joistSummary ? (
-          <div className="mt-2 space-y-1 text-xs text-emerald-900">
-            <p>
-              Last import: {joistSummary.imported} imported, {joistSummary.updated} updated, {joistSummary.skipped} skipped
-              {joistSummary.errors > 0 ? `, ${joistSummary.errors} errors` : ""}. Jobs linked: {joistSummary.jobsLinked}.
-            </p>
-            {joistSummary.firstError ? <p>First error: {joistSummary.firstError}</p> : null}
-          </div>
-        ) : null}
-      </section>
-
-      {(hasOverdue || hasMissingReceipts) ? (
-        <section className="rounded-2xl border border-amber-200 bg-amber-50/50 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold text-slate-900">Needs attention</h2>
-            <div className="flex items-center gap-2 text-[11px] text-slate-600">
-              {hasOverdue ? (
-                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-800">
-                  Overdue {alerts.overdueTasks.length}
-                </span>
-              ) : null}
-              {hasMissingReceipts ? (
-                <span className="rounded-full bg-sky-100 px-2 py-0.5 text-sky-800">
-                  Missing receipts {alerts.jobIdsWithMissingReceipts.length}
-                </span>
-              ) : null}
-            </div>
-          </div>
-          {hasOverdue ? (
-            <div id="overdue-tasks" className="mt-3">
-              <p className="text-xs font-medium text-amber-800">Overdue tasks</p>
-              <ul className="mt-2 space-y-2">
-                {alerts.overdueTasks.map((task) => (
-                  <li key={task.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
-                    <Link href={`/jobs/${task.job.id}`} className="text-amber-900 underline hover:no-underline">
-                      {task.title} — {task.job.jobName}
-                    </Link>
-                    <span className="text-xs text-slate-500">
-                      Due {task.dueDate ? format(task.dueDate, "MMM d, yyyy") : "—"}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          {hasMissingReceipts ? (
-            <div id="missing-receipts" className="mt-3">
-              <p className="text-xs font-medium text-sky-800">Missing receipts (24h+)</p>
-              <ul className="mt-2 space-y-2">
-                {alerts.jobIdsWithMissingReceipts.map((jobId) => (
-                  <li key={jobId} className="flex flex-wrap items-center justify-between gap-2 text-sm">
-                    <Link href={`/jobs/${jobId}#finance`} className="text-sky-900 underline hover:no-underline">
-                      {jobNamesById.get(jobId) ?? "Job"}
-                    </Link>
-                    <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] text-sky-800">
-                      Add receipt
-                    </span>
-                  </li>
-                ))}
-              </ul>
+      <div className="space-y-4">
+        <section id="joist-import" className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4">
+          <h2 className="text-sm font-semibold text-emerald-900">Joist Import (CSV or PDF)</h2>
+          <p className="mt-1 text-xs text-emerald-800">
+            Upload Joist exports here from a secured jobs view. Imported rows create/update leads and can be converted into jobs.
+          </p>
+          <JoistImportForm />
+          {joistSummary ? (
+            <div className="mt-2 space-y-1 text-xs text-emerald-900">
+              <p>
+                Last import: {joistSummary.imported} imported, {joistSummary.updated} updated, {joistSummary.skipped} skipped
+                {joistSummary.errors > 0 ? `, ${joistSummary.errors} errors` : ""}. Jobs linked: {joistSummary.jobsLinked}.
+              </p>
+              {joistSummary.firstError ? <p>First error: {joistSummary.firstError}</p> : null}
             </div>
           ) : null}
         </section>
-      ) : null}
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-900">Jobs board</h2>
-            <p className="mt-0.5 text-xs text-slate-500">
-              {focus === "visits" && view === "today"
-                ? "Today visit board: scheduled blocks only."
-                : "Focus on this week&apos;s active work, but you can switch filters below."}
-            </p>
-          </div>
-          <div className="text-right text-xs text-slate-500">
-            <p>
-              Showing <span className="font-semibold">{jobs.length}</span> job{jobs.length === 1 ? "" : "s"}
-            </p>
-          </div>
-        </div>
-        <form className="mt-3 space-y-2 text-xs">
-          <div className="flex flex-wrap gap-2">
-            {viewOptions.map((option) => {
-              const active = view === option.value;
-              return (
-                <button
-                  key={option.value}
-                  type="submit"
-                  name="view"
-                  value={option.value}
-                  className={`rounded-full px-3 py-1 ${
-                    active ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700"
-                  }`}
-                >
-                  {option.label}
-                </button>
-              );
-            })}
-          </div>
-          <div className="mt-2 sm:hidden">
-            <label className="text-[11px] uppercase tracking-wide text-slate-500">Status</label>
-            <select name="status" defaultValue={status} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm">
-              {statusOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option === "ALL" ? "All" : option.replaceAll("_", " ")}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="mt-2 hidden flex-wrap items-center gap-2 sm:flex">
-            <span className="text-[11px] uppercase tracking-wide text-slate-500">Status</span>
-            <div className="flex flex-wrap gap-1">
-              {statusOptions.map((option) => {
-                const value = option;
-                const active = status === value;
-                return (
-                  <button
-                    key={value}
-                    type="submit"
-                    name="status"
-                    value={value}
-                    className={`rounded-full px-2.5 py-1 text-[11px] ${
-                      active ? "bg-teal-600 text-white" : "bg-slate-100 text-slate-700"
-                    }`}
-                  >
-                    {value === "ALL" ? "All" : value.replaceAll("_", " ")}
-                  </button>
-                );
-              })}
+        {(hasOverdue || hasMissingReceipts) ? (
+          <section className="rounded-2xl border border-amber-200 bg-amber-50/50 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-slate-900">Needs attention</h2>
+              <div className="flex items-center gap-2 text-[11px] text-slate-600">
+                {hasOverdue ? (
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-800">
+                    Overdue {alerts.overdueTasks.length}
+                  </span>
+                ) : null}
+                {hasMissingReceipts ? (
+                  <span className="rounded-full bg-sky-100 px-2 py-0.5 text-sky-800">
+                    Missing receipts {alerts.jobIdsWithMissingReceipts.length}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+            {hasOverdue ? (
+              <div id="overdue-tasks" className="mt-3">
+                <p className="text-xs font-medium text-amber-800">Overdue tasks</p>
+                <ul className="mt-2 space-y-2">
+                  {alerts.overdueTasks.map((task) => (
+                    <li key={task.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                      <Link href={`/jobs/${task.job.id}`} className="text-amber-900 underline hover:no-underline">
+                        {task.title} - {task.job.jobName}
+                      </Link>
+                      <span className="text-xs text-slate-500">
+                        Due {task.dueDate ? format(task.dueDate, "MMM d, yyyy") : "-"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {hasMissingReceipts ? (
+              <div id="missing-receipts" className="mt-3">
+                <p className="text-xs font-medium text-sky-800">Missing receipts (24h+)</p>
+                <ul className="mt-2 space-y-2">
+                  {alerts.jobIdsWithMissingReceipts.map((jobId) => (
+                    <li key={jobId} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                      <Link href={`/jobs/${jobId}#finance`} className="text-sky-900 underline hover:no-underline">
+                        {jobNamesById.get(jobId) ?? "Job"}
+                      </Link>
+                      <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] text-sky-800">
+                        Add receipt
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </section>
+        ) : null}
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">Jobs board</h2>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Showing all active jobs. Closed jobs are listed in a separate section below.
+              </p>
+            </div>
+            <div className="text-right text-xs text-slate-500">
+              <p>
+                Active <span className="font-semibold">{activeJobs.length}</span> | Closed{" "}
+                <span className="font-semibold">{closedJobs.length}</span>
+              </p>
             </div>
           </div>
-          <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-            <input
-              name="q"
-              defaultValue={q}
-              placeholder="Search jobs or customers"
-              className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
-            />
-            <button
-              type="submit"
-              className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
-            >
-              Apply filters
-            </button>
-          </div>
-        </form>
-      </section>
+        </section>
 
-      <section className="space-y-2">
-        {(() => {
-          const scopedJobs =
-            focus === "visits" && view === "today"
-              ? jobs.filter((job) => (job.scheduleEvents?.length ?? 0) > 0)
-              : jobs;
+        <section className="space-y-2">
+          {(() => {
+            const scheduledJobs = activeJobs
+              .map((job) => ({ job, nextEvent: job.scheduleEvents?.[0] ?? null }))
+              .filter((item) => item.nextEvent)
+              .sort((a, b) => (a.nextEvent!.startAt > b.nextEvent!.startAt ? 1 : -1));
 
-          const scheduledJobs = scopedJobs
-            .map((job) => ({ job, nextEvent: job.scheduleEvents?.[0] ?? null }))
-            .filter((item) => item.nextEvent)
-            .sort((a, b) => (a.nextEvent!.startAt > b.nextEvent!.startAt ? 1 : -1));
+            const unscheduledJobs = activeJobs
+              .filter((job) => !job.scheduleEvents || job.scheduleEvents.length === 0)
+              .sort((a, b) => (a.updatedAt > b.updatedAt ? -1 : 1));
 
-          const unscheduledJobs = scopedJobs
-            .filter((job) => !job.scheduleEvents || job.scheduleEvents.length === 0)
-            .sort((a, b) => (a.updatedAt > b.updatedAt ? -1 : 1));
+            const renderJobCard = (job: typeof jobs[number], options?: { closed?: boolean }) => {
+              const isClosed = options?.closed ?? false;
+              const invoiceTotal = job.invoices.reduce((acc, invoice) => acc + toNumber(invoice.total), 0);
+              const displayRevenue = invoiceTotal || toNumber(job.estimatedTotalBudget);
+              const expenseTotal = job.expenses.reduce((acc, expense) => acc + toNumber(expense.amount), 0);
+              const nextEvent = job.scheduleEvents?.[0];
+              const hasSchedule = !!nextEvent;
+              const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
+              const weekEnd = endOfWeek(new Date(), { weekStartsOn: 1 });
+              const hoursByWorker = new Map<string, { name: string; hours: number }>();
+              for (const entry of job.timeEntries) {
+                if (!entry.end) continue;
+                if (entry.start < weekStart || entry.start > weekEnd) continue;
+                const hours = getWorkedHours(entry);
+                const name = entry.worker?.fullName ?? "-";
+                const cur = hoursByWorker.get(entry.workerId) ?? { name, hours: 0 };
+                cur.hours += hours;
+                hoursByWorker.set(entry.workerId, cur);
+              }
+              const laborSummary = [...hoursByWorker.values()]
+                .sort((a, b) => b.hours - a.hours)
+                .map((w) => `${w.name} (${w.hours.toFixed(1)}h)`)
+                .join(", ");
 
-          const renderJobCard = (job: typeof jobs[number]) => {
-            const invoiceTotal = job.invoices.reduce((acc, invoice) => acc + toNumber(invoice.total), 0);
-            const expenseTotal = job.expenses.reduce((acc, expense) => acc + toNumber(expense.amount), 0);
-            const nextEvent = job.scheduleEvents?.[0];
-            const hasSchedule = !!nextEvent;
-            const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
-            const weekEnd = endOfWeek(new Date(), { weekStartsOn: 1 });
-            const hoursByWorker = new Map<string, { name: string; hours: number }>();
-            for (const entry of job.timeEntries) {
-              if (!entry.end) continue;
-              if (entry.start < weekStart || entry.start > weekEnd) continue;
-              const hours = getWorkedHours(entry);
-              const name = entry.worker?.fullName ?? "—";
-              const cur = hoursByWorker.get(entry.workerId) ?? { name, hours: 0 };
-              cur.hours += hours;
-              hoursByWorker.set(entry.workerId, cur);
-            }
-            const laborSummary = [...hoursByWorker.values()]
-              .sort((a, b) => b.hours - a.hours)
-              .map((w) => `${w.name} (${w.hours.toFixed(1)}h)`)
-              .join(", ");
+              return (
+                <article key={job.id} className="rounded-2xl border border-slate-200 bg-white p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <Link href={`/jobs/${job.id}`} className="text-base font-semibold text-slate-900 hover:underline">
+                        {job.jobName}
+                      </Link>
+                      <p className="text-sm text-slate-600">{job.customer.name}</p>
+                      <p className="text-xs text-slate-500">{job.address}</p>
+                      {nextEvent ? (
+                        <p className="mt-1 text-xs text-teal-700">Next: {format(nextEvent.startAt, "EEE MMM d, h:mm a")}</p>
+                      ) : null}
+                      {laborSummary ? (
+                        <p className="mt-1 text-xs text-slate-600">This week: {laborSummary}</p>
+                      ) : null}
+                    </div>
+                    <JobStatusBadge status={job.status} />
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
+                    <p>Revenue: {currency(displayRevenue)}</p>
+                    <p>Expenses: {currency(expenseTotal)}</p>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                    <Link href={`/jobs/${job.id}`} className="rounded-lg border border-slate-300 px-2 py-1 text-slate-700">
+                      Open hub
+                    </Link>
+                    {!isClosed && hasSchedule ? (
+                      <Link href={`/time?jobId=${job.id}`} className="rounded-lg border border-slate-300 px-2 py-1 text-slate-700">
+                        Time
+                      </Link>
+                    ) : null}
+                    {!isClosed && !hasSchedule ? (
+                      <Link href={`/jobs/${job.id}#schedule`} className="rounded-lg border border-teal-300 px-2 py-1 text-teal-700">
+                        Schedule first visit
+                      </Link>
+                    ) : null}
+                  </div>
+                  {job.categoryTags.length > 0 ? (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {job.categoryTags.slice(0, 4).map((tag) => (
+                        <span key={tag} className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600">{tag}</span>
+                      ))}
+                    </div>
+                  ) : null}
+
+                </article>
+              );
+            };
 
             return (
-              <article key={job.id} className="rounded-2xl border border-slate-200 bg-white p-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <Link href={`/jobs/${job.id}`} className="text-base font-semibold text-slate-900 hover:underline">
-                      {job.jobName}
-                    </Link>
-                    <p className="text-sm text-slate-600">{job.customer.name}</p>
-                    <p className="text-xs text-slate-500">{job.address}</p>
-                    {nextEvent ? (
-                      <p className="mt-1 text-xs text-teal-700">Next: {format(nextEvent.startAt, "EEE MMM d, h:mm a")}</p>
-                    ) : null}
-                    {laborSummary ? (
-                      <p className="mt-1 text-xs text-slate-600">This week: {laborSummary}</p>
-                    ) : null}
-                  </div>
-                  <JobStatusBadge status={job.status} />
-                </div>
-                <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
-                  <p>Revenue: {currency(invoiceTotal)}</p>
-                  <p>Expenses: {currency(expenseTotal)}</p>
-                </div>
-                <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                  <Link href={`/jobs/${job.id}`} className="rounded-lg border border-slate-300 px-2 py-1 text-slate-700">
-                    Open hub
-                  </Link>
-                  {hasSchedule ? (
-                    <Link href={`/time?jobId=${job.id}`} className="rounded-lg border border-slate-300 px-2 py-1 text-slate-700">
-                      Time
-                    </Link>
-                  ) : (
-                    <Link href={`/jobs/${job.id}#schedule`} className="rounded-lg border border-teal-300 px-2 py-1 text-teal-700">
-                      Schedule first visit
-                    </Link>
-                  )}
-                </div>
-                {job.categoryTags.length > 0 ? (
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {job.categoryTags.slice(0, 4).map((tag) => (
-                      <span key={tag} className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600">{tag}</span>
+              <>
+                {scheduledJobs.length > 0 ? (
+                  <>
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Scheduled (soonest first)
+                    </h3>
+                    {scheduledJobs.map(({ job }) => renderJobCard(job))}
+                  </>
+                ) : null}
+
+                {unscheduledJobs.length > 0 ? (
+                  <>
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Active, no schedule</h3>
+                    {unscheduledJobs.map((job) => renderJobCard(job))}
+                  </>
+                ) : null}
+
+                {closedJobs.length > 0 ? (
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-400 hover:text-slate-600">
+                      Archived ({closedJobs.length}) — click to show
+                    </summary>
+                    <div className="mt-2 space-y-2">
+                      {closedJobs
+                        .slice()
+                        .sort((a, b) => (a.updatedAt > b.updatedAt ? -1 : 1))
+                        .map((job) => renderJobCard(job, { closed: true }))}
+                    </div>
+                  </details>
+                ) : null}
+              </>
+            );
+          })()}
+          {(() => {
+            return activeJobs.length === 0 ? (
+              <p className="text-sm text-slate-500">
+                No active jobs found.
+              </p>
+            ) : null;
+          })()}
+        </section>
+
+        <section id="new-job" className="rounded-2xl border border-slate-200 bg-white p-3">
+          <details>
+            <summary className="cursor-pointer list-none">
+              <div className="rounded-xl border border-teal-300 bg-teal-50 px-4 py-3 text-center text-sm font-semibold text-teal-800 hover:bg-teal-100">
+                + New Job
+              </div>
+            </summary>
+            <div className="mt-3">
+              <p className="text-xs text-slate-500">
+                Create a job, then link an existing client or add a new one. Or{" "}
+                <Link href="/leads" className="text-teal-600 hover:underline">convert a lead to a job</Link> on Leads.
+              </p>
+              <form action={createJobAction} className="mt-3 grid gap-2 sm:grid-cols-2">
+                <input name="jobName" required placeholder="Job name" className="rounded-xl border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
+                <input name="address" required placeholder="Job address" className="rounded-xl border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
+                <select name="status" defaultValue={JobStatus.LEAD} className="rounded-xl border border-slate-300 px-3 py-2 text-sm">
+                  {statusOptions
+                    .filter((option) => option !== "ALL")
+                    .map((option) => (
+                      <option key={option} value={option}>
+                        {option.replaceAll("_", " ")}
+                      </option>
+                    ))}
+                </select>
+                <input name="tags" placeholder="Optional extra tags (legacy comma-separated)" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+                <fieldset className="rounded-xl border border-slate-200 p-3 text-sm sm:col-span-2">
+                  <legend className="px-1 text-xs font-medium text-slate-600">Service Tags (website routing)</legend>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                    {SERVICE_TAG_OPTIONS.map((tag) => (
+                      <label key={tag.slug} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                        <input type="checkbox" name="serviceTags" value={tag.slug} defaultChecked={tag.slug === "general-remodeling"} />
+                        {tag.label}
+                      </label>
                     ))}
                   </div>
-                ) : null}
-              </article>
-            );
-          };
+                </fieldset>
+                <input name="startDate" type="date" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+                <input name="endDate" type="date" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+                <input name="estimatedLaborBudget" type="number" step="0.01" placeholder="Labor target (optional)" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+                <input name="estimatedMaterialsBudget" type="number" step="0.01" placeholder="Materials target (optional)" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+                <input name="estimatedTotalBudget" type="number" step="0.01" placeholder="Contract total (optional override)" className="rounded-xl border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
+                <p className="text-[11px] text-slate-500 sm:col-span-2">If blank, cost health will use invoice/approved estimate totals as the contract baseline. Joist imports also auto-fill contract total when available.</p>
 
-          return (
-            <>
-              {scheduledJobs.length > 0 ? (
-                <>
-                  <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    {focus === "visits" && view === "today" ? "Today visits (soonest first)" : "Scheduled (soonest first)"}
-                  </h3>
-                  {scheduledJobs.map(({ job }) => renderJobCard(job))}
-                </>
-              ) : null}
+                <div className="mt-2 border-t border-slate-200 pt-3 sm:col-span-2">
+                  <p className="text-xs font-medium text-slate-600">Client (who is this job for?)</p>
+                  <select name="customerId" defaultValue={preselectedCustomerId} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm">
+                    <option value="">+ New client (fill in below)</option>
+                    {customers.map((customer) => (
+                      <option key={customer.id} value={customer.id}>
+                        {customer.name}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    <input name="newCustomerName" placeholder="New client name" className="rounded-xl border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
+                    <input name="newCustomerPhone" placeholder="Phone" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+                    <input name="newCustomerEmail" type="email" placeholder="Email" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+                    <input name="newCustomerAddress" placeholder="Client address (if different from job)" className="rounded-xl border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
+                  </div>
+                </div>
 
-              {focus === "visits" && view === "today" ? null : unscheduledJobs.length > 0 ? (
-                <>
-                  <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Active, no schedule</h3>
-                  {unscheduledJobs.map((job) => renderJobCard(job))}
-                </>
-              ) : null}
-            </>
-          );
-        })()}
-        {(() => {
-          const scopedCount =
-            focus === "visits" && view === "today"
-              ? jobs.filter((job) => (job.scheduleEvents?.length ?? 0) > 0).length
-              : jobs.length;
-          return scopedCount === 0 ? (
-            <p className="text-sm text-slate-500">
-              {focus === "visits" && view === "today"
-                ? "No visits scheduled today."
-                : "No jobs found for this view."}
-            </p>
-          ) : null;
-        })()}
-      </section>
-
-      <section id="new-job" className="rounded-2xl border border-slate-200 bg-white p-3">
-        <details>
-          <summary className="cursor-pointer list-none">
-            <div className="rounded-xl border border-teal-300 bg-teal-50 px-4 py-3 text-center text-sm font-semibold text-teal-800 hover:bg-teal-100">
-              + New Job
+                <button type="submit" className="rounded-xl bg-teal-600 px-4 py-2 text-sm font-semibold text-white sm:col-span-2">
+                  Create Job
+                </button>
+              </form>
             </div>
-          </summary>
-          <div className="mt-3">
-            <p className="text-xs text-slate-500">
-              Create a job, then link an existing client or add a new one. Or{" "}
-              <Link href="/leads" className="text-teal-600 hover:underline">convert a lead to a job</Link> on Leads.
-            </p>
-            <form action={createJobAction} className="mt-3 grid gap-2 sm:grid-cols-2">
-              <input name="jobName" required placeholder="Job name" className="rounded-xl border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
-              <input name="address" required placeholder="Job address" className="rounded-xl border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
-              <select name="status" defaultValue={JobStatus.LEAD} className="rounded-xl border border-slate-300 px-3 py-2 text-sm">
-                {statusOptions
-                  .filter((option) => option !== "ALL")
-                  .map((option) => (
-                    <option key={option} value={option}>
-                      {option.replaceAll("_", " ")}
-                    </option>
-                  ))}
-              </select>
-              <input name="tags" placeholder="Optional extra tags (legacy comma-separated)" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
-              <fieldset className="rounded-xl border border-slate-200 p-3 text-sm sm:col-span-2">
-                <legend className="px-1 text-xs font-medium text-slate-600">Service Tags (website routing)</legend>
-                <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                  {SERVICE_TAG_OPTIONS.map((tag) => (
-                    <label key={tag.slug} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1 text-xs">
-                      <input type="checkbox" name="serviceTags" value={tag.slug} defaultChecked={tag.slug === "general-remodeling"} />
-                      {tag.label}
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-              <input name="startDate" type="date" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
-              <input name="endDate" type="date" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
-              <input name="estimatedLaborBudget" type="number" step="0.01" placeholder="Labor budget" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
-              <input name="estimatedMaterialsBudget" type="number" step="0.01" placeholder="Materials budget" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
-              <input name="estimatedTotalBudget" type="number" step="0.01" placeholder="Total budget" className="rounded-xl border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
-              <p className="text-[11px] text-slate-500 sm:col-span-2">Budgets = your cost targets (drive the &quot;Labor vs Budget&quot; / &quot;Materials vs Budget&quot; bars on the job). Revenue comes from estimates &amp; invoices (section 4 on the job).</p>
-
-              <div className="mt-2 border-t border-slate-200 pt-3 sm:col-span-2">
-                <p className="text-xs font-medium text-slate-600">Client (who is this job for?)</p>
-                <select name="customerId" defaultValue={preselectedCustomerId} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm">
-                  <option value="">+ New client (fill in below)</option>
-                  {customers.map((customer) => (
-                    <option key={customer.id} value={customer.id}>
-                      {customer.name}
-                    </option>
-                  ))}
-                </select>
-                <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                  <input name="newCustomerName" placeholder="New client name" className="rounded-xl border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
-                  <input name="newCustomerPhone" placeholder="Phone" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
-                  <input name="newCustomerEmail" type="email" placeholder="Email" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
-                  <input name="newCustomerAddress" placeholder="Client address (if different from job)" className="rounded-xl border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
-                </div>
-              </div>
-
-              <button type="submit" className="rounded-xl bg-teal-600 px-4 py-2 text-sm font-semibold text-white sm:col-span-2">
-                Create Job
-              </button>
-            </form>
-          </div>
-        </details>
-      </section>
-    </div>
+          </details>
+        </section>
+      </div>
     );
   } finally {
     perf.flush({ orgId, role });

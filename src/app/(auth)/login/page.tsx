@@ -31,9 +31,13 @@ export default function LoginPage() {
       });
       if (error) throw error;
       try {
-        await fetch("/api/auth/session-cache", { method: "POST", credentials: "include" });
+        const cacheResponse = await fetch("/api/auth/session-cache", { method: "POST", credentials: "include" });
+        if (!cacheResponse.ok) {
+          await supabase.auth.signOut();
+          throw new Error("This account is not authorized for this dashboard.");
+        }
       } catch {
-        // Keep login resilient even if cache warmup fails.
+        throw new Error("This account is not authorized for this dashboard.");
       }
       router.replace("/today");
       router.refresh();

@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 
-const APP_ROUTES = ["/today", "/leads", "/jobs", "/reports", "/time", "/attendance", "/settings/targets"];
+const APP_ROUTES = ["/today", "/capture", "/leads", "/jobs", "/reports", "/time", "/attendance", "/settings/targets"];
 const PREFETCH_REFRESH_MS = 45_000;
 
 export function NavPrefetch() {

@@ -1,4 +1,9 @@
-import { createTargetAction, createWorkerAction, updateOrgSettingsAction } from "@/app/(app)/actions";
+import {
+  createTargetAction,
+  createWorkerAction,
+  sendDiscordScheduleDigestNowAction,
+  updateOrgSettingsAction,
+} from "@/app/(app)/actions";
 import { format } from "date-fns";
 import Link from "next/link";
 import { requireAuth } from "@/lib/auth";
@@ -98,23 +103,60 @@ export default async function TargetSettingsPage() {
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"
-                name="workerCanEditOwnTimeSameDay"
-                defaultChecked={settings?.workerCanEditOwnTimeSameDay ?? true}
-              />
-              Workers can edit own same-day entries
-            </label>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
                 name="discordClockInAlertsEnabled"
                 defaultChecked={settings?.gpsTimeTrackingEnabled ?? false}
               />
               Enable Discord clock-in alerts from Overview
             </label>
+            <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+              <p className="text-xs font-medium text-slate-900">Discord schedule digest</p>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Sends one morning digest with crew, client, location, schedule details, and open task notes.
+              </p>
+              <label className="mt-2 flex items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  name="discordScheduleDigestEnabled"
+                  defaultChecked={settings?.discordScheduleDigestEnabled ?? false}
+                />
+                Enable daily Discord crew digest
+              </label>
+              <div className="mt-2 grid gap-1 sm:grid-cols-2">
+                <label className="block text-xs text-slate-600">Digest time</label>
+                <input
+                  type="time"
+                  name="discordScheduleDigestTime"
+                  defaultValue={settings?.discordScheduleDigestTime ?? "06:00"}
+                  className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                />
+              </div>
+              <div className="mt-2 grid gap-1">
+                <label className="block text-xs text-slate-600">Discord webhook URL</label>
+                <input
+                  type="url"
+                  name="discordScheduleDigestWebhookUrl"
+                  placeholder="https://discord.com/api/webhooks/..."
+                  defaultValue={settings?.discordScheduleDigestWebhookUrl ?? ""}
+                  className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                />
+              </div>
+            </div>
             <button type="submit" className="rounded-xl border border-slate-300 px-3 py-2">
               Save Rules
             </button>
           </form>
+          {settings?.discordScheduleDigestEnabled && settings?.discordScheduleDigestWebhookUrl ? (
+            <form action={sendDiscordScheduleDigestNowAction} className="mt-2">
+              <button
+                type="submit"
+                className="rounded-xl border border-indigo-300 bg-indigo-50 px-3 py-2 text-xs text-indigo-700 hover:bg-indigo-100"
+              >
+                Send Discord schedule digest now
+              </button>
+            </form>
+          ) : (
+            <p className="mt-2 text-[11px] text-slate-500">Enable digest + add webhook URL, then save rules to unlock &quot;Send now&quot;.</p>
+          )}
         </section>
       ) : null}
 

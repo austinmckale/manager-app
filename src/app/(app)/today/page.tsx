@@ -145,7 +145,7 @@ async function TodayPageContent() {
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
         <h2 className="text-sm font-semibold text-slate-900">Daily Command</h2>
         <p className="mt-1 text-xs text-slate-500">Only today-critical actions for mobile use.</p>
-        <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+        <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
           <Link href="/jobs?view=today&focus=visits" className="rounded-xl border border-slate-200 bg-slate-50 p-3 hover:bg-slate-100">
             <p className="text-xs text-slate-500">Visits today</p>
             <p className="mt-1 text-xl font-semibold text-slate-900">{visitsTodayCount}</p>
@@ -161,6 +161,10 @@ async function TodayPageContent() {
           <Link href="/time" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 hover:bg-emerald-100">
             <p className="text-xs text-emerald-700">Payroll week</p>
             <p className="mt-1 text-xl font-semibold text-emerald-700">{currency(weeklyPayroll.totalGrossPay)}</p>
+          </Link>
+          <Link href="/capture" className="rounded-xl border border-cyan-200 bg-cyan-50 p-3 hover:bg-cyan-100">
+            <p className="text-xs text-cyan-700">Field capture</p>
+            <p className="mt-1 text-xl font-semibold text-cyan-700">Open</p>
           </Link>
         </div>
 

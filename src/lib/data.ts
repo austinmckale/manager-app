@@ -337,15 +337,6 @@ export async function getJobById(params: {
     where: {
       id: params.jobId,
       orgId: params.orgId,
-      ...(params.role === Role.WORKER
-        ? {
-            OR: [
-              { assignments: { some: { userId: params.userId } } },
-              { tasks: { some: { assignedTo: params.userId } } },
-              { timeEntries: { some: { workerId: params.userId } } },
-            ],
-          }
-        : {}),
     },
     include: {
       customer: true,

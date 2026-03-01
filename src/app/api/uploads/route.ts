@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { isDemoMode } from "@/lib/demo";
 import { combineDescriptions, extractJoistDocumentFromFileName, extractJoistDocumentFromText, type JoistDocumentExtract } from "@/lib/joist-document";
+import { extractPdfText } from "@/lib/pdf-parse-server";
 import { prisma } from "@/lib/prisma";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
@@ -11,6 +12,40 @@ function dataUrlToBuffer(dataUrl: string) {
   const [meta, data] = dataUrl.split(",");
   if (!meta || !data) throw new Error("Invalid data URL");
   return Buffer.from(data, "base64");
+}
+
+function parseMoneyText(value: string | null | undefined) {
+  if (!value) return 0;
+  const normalized = value.replace(/[^0-9.-]/g, "");
+  if (!normalized) return 0;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function sanitizeFileExtension(fileName: string) {
+  const raw = fileName.split(".").pop() ?? "";
+  const cleaned = raw.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return cleaned || "jpg";
+}
+
+function inferMimeType(fileName: string, mimeType?: string | null) {
+  const normalized = (mimeType ?? "").trim().toLowerCase();
+  if (normalized) return normalized;
+
+  const ext = sanitizeFileExtension(fileName);
+  const mimeByExt: Record<string, string> = {
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    png: "image/png",
+    webp: "image/webp",
+    gif: "image/gif",
+    avif: "image/avif",
+    bmp: "image/bmp",
+    heic: "image/heic",
+    heif: "image/heif",
+    pdf: "application/pdf",
+  };
+  return mimeByExt[ext] ?? "application/octet-stream";
 }
 
 export async function POST(request: Request) {
@@ -42,21 +77,22 @@ export async function POST(request: Request) {
 
   const job = await prisma.job.findFirst({
     where: { id: body.jobId, orgId: auth.orgId },
-    select: { id: true },
+    select: { id: true, address: true, jobName: true, customerId: true, customer: { select: { name: true } } },
   });
 
   if (!job) {
     return NextResponse.json({ error: "Job not found." }, { status: 404 });
   }
 
-  const ext = body.fileName.split(".").pop() || "jpg";
+  const ext = sanitizeFileExtension(body.fileName);
+  const normalizedMimeType = inferMimeType(body.fileName, body.mimeType);
   const storageKey = `${auth.orgId}/${body.jobId}/${Date.now()}-${crypto.randomUUID()}.${ext}`;
   const payload = dataUrlToBuffer(body.dataUrl);
   let joistExtract: JoistDocumentExtract | null = null;
 
   const bucket = process.env.SUPABASE_STORAGE_BUCKET ?? "job-assets";
   const upload = await supabaseAdmin.storage.from(bucket).upload(storageKey, payload, {
-    contentType: body.mimeType,
+    contentType: normalizedMimeType,
     upsert: false,
   });
 
@@ -71,14 +107,8 @@ export async function POST(request: Request) {
   if (body.fileType === "DOCUMENT") {
     if (isPdfDocument) {
       try {
-        const { PDFParse } = await import("pdf-parse");
-        const parser = new PDFParse({ data: payload });
-        try {
-          const extracted = await parser.getText();
-          joistExtract = extractJoistDocumentFromText(extracted.text || "");
-        } finally {
-          await parser.destroy();
-        }
+        const extractedText = await extractPdfText(payload);
+        joistExtract = extractJoistDocumentFromText(extractedText);
       } catch (error) {
         joistExtract = extractJoistDocumentFromFileName(
           body.fileName,
@@ -91,6 +121,37 @@ export async function POST(request: Request) {
   }
 
   const description = combineDescriptions(body.description, joistExtract?.summary);
+  if (joistExtract) {
+    const contractTotal = parseMoneyText(joistExtract.totalText);
+    const nextAddress = joistExtract.address.trim();
+    const nextCustomerName = joistExtract.customerName.trim();
+    const shouldFillPendingAddress = nextAddress.length > 0 && /^address pending$/i.test(job.address.trim());
+    const shouldRefreshAutoName = /^joist\s/i.test(job.jobName.trim()) || /^imported job$/i.test(job.jobName.trim());
+    const candidateJobName =
+      (nextAddress || job.address) && (nextCustomerName || job.customer.name)
+        ? `${nextAddress || job.address} - ${nextCustomerName || job.customer.name}`.slice(0, 191)
+        : "";
+
+    await prisma.$transaction(async (tx) => {
+      if (contractTotal > 0 || shouldFillPendingAddress || (shouldRefreshAutoName && candidateJobName)) {
+        await tx.job.update({
+          where: { id: job.id },
+          data: {
+            estimatedTotalBudget: contractTotal > 0 ? contractTotal : undefined,
+            address: shouldFillPendingAddress ? nextAddress : undefined,
+            jobName: shouldRefreshAutoName && candidateJobName ? candidateJobName : undefined,
+          },
+        });
+      }
+
+      if (nextCustomerName && /^imported lead$/i.test(job.customer.name.trim())) {
+        await tx.customer.update({
+          where: { id: job.customerId },
+          data: { name: nextCustomerName },
+        });
+      }
+    });
+  }
 
   let linkedExpenseId = body.expenseId || null;
   const numericAmount = Number(body.expenseAmount);
@@ -147,7 +208,7 @@ export async function POST(request: Request) {
       type: body.fileType,
       storageKey,
       fileName: body.fileName,
-      mimeType: body.mimeType,
+      mimeType: normalizedMimeType,
       fileSize: payload.byteLength,
       takenAt: new Date(),
       stage: body.stage,

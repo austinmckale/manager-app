@@ -39,5 +39,10 @@ export function getStoragePublicUrl(storageKey: string) {
   const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const bucket = process.env.SUPABASE_STORAGE_BUCKET ?? "job-assets";
   if (!base) return "";
-  return `${base}/storage/v1/object/public/${bucket}/${storageKey}`;
+  const encodedBucket = encodeURIComponent(bucket);
+  const encodedKey = storageKey
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  return `${base}/storage/v1/object/public/${encodedBucket}/${encodedKey}`;
 }

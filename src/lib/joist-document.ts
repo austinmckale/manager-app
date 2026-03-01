@@ -21,6 +21,40 @@ function firstRegexMatch(text: string, patterns: RegExp[]) {
   return "";
 }
 
+function parseMoneyText(value: string) {
+  const normalized = value.replace(/[^0-9.-]/g, "");
+  if (!normalized) return 0;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function extractLikelyJoistTotalText(text: string) {
+  const explicit = firstRegexMatch(text, [
+    /\b(?:Grand\s*)?Total(?:\s*Due)?\s*[:#-]?\s*\$?\s*([0-9][0-9,]*\.\d{2})/i,
+    /\bAmount\s*Due\s*[:#-]?\s*\$?\s*([0-9][0-9,]*\.\d{2})/i,
+  ]);
+  if (explicit) return explicit;
+
+  const descriptionTotalWindow = firstRegexMatch(text, [
+    /Description\s*Total[\s\S]{0,220}?\$?\s*([0-9][0-9,]*\.\d{2})/i,
+  ]);
+  if (descriptionTotalWindow) return descriptionTotalWindow;
+
+  const currencyMatches = [...text.matchAll(/\$\s*([0-9][0-9,]*\.\d{2})/g)].map((match) => match[1]);
+  if (currencyMatches.length === 0) return "";
+
+  let best = "";
+  let bestValue = 0;
+  for (const candidate of currencyMatches) {
+    const value = parseMoneyText(candidate);
+    if (value > bestValue) {
+      best = candidate;
+      bestValue = value;
+    }
+  }
+  return best;
+}
+
 function parseContactBlockAddress(block: string) {
   const lines = block
     .split("\n")
@@ -31,6 +65,32 @@ function parseContactBlockAddress(block: string) {
 
   if (lines.length <= 1) return "";
   return lines.slice(1).join(", ").slice(0, 191);
+}
+
+function extractScopeSummary(normalized: string) {
+  const scopeBlock = firstRegexMatch(normalized, [
+    /Scope of Work\s*\n([\s\S]{0,2600}?)(?:\nProject Timeline|\nCode Compliance|\nSubtotal|\nTotal|\nBy signing|\nScan to Pay|\nPage \d+ of \d+)/i,
+  ]);
+  if (!scopeBlock) return "";
+
+  const lines = scopeBlock
+    .split("\n")
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .map((line) => line.replace(/^\d+\.\s*/, ""))
+    .map((line) => line.replace(/^[•\-]\s*/, ""))
+    .filter(Boolean)
+    .filter((line) => !/^scope of work$/i.test(line));
+
+  if (lines.length === 0) return "";
+
+  const selected: string[] = [];
+  for (const line of lines) {
+    selected.push(line);
+    const merged = selected.join("; ");
+    if (selected.length >= 5 || merged.length >= 280) break;
+  }
+
+  return selected.join("; ").slice(0, 280);
 }
 
 function extractFromFileName(fileName: string) {
@@ -93,13 +153,14 @@ export function extractJoistDocumentFromText(text: string): JoistDocumentExtract
     /Description(?:\s*Total)?\s*\n([\s\S]{0,260}?)\n(?:Scope of Work|Subtotal|Total|--)/i,
     /Description(?:\s*Total)?\s*\n([^\n]+(?:\n[^\n]+){0,2})/i,
   ]);
-  const scopeSummary =
+  const descriptionSummary =
     descriptionBlock
       .split("\n")
       .map((line) => line.trim())
       .find((line) => line.length > 0 && !/\$\s*\d/.test(line) && !/^total$/i.test(line)) || "";
+  const scopeSummary = extractScopeSummary(normalized) || descriptionSummary;
 
-  const totalText = firstRegexMatch(normalized, [/\bTotal\s*\$?\s*([0-9,]+\.\d{2})/i]);
+  const totalText = extractLikelyJoistTotalText(normalized);
   const dateText = firstRegexMatch(normalized, [/\bDate\s*([0-9]{2}\/[0-9]{2}\/[0-9]{4})/i]);
 
   const extract: Omit<JoistDocumentExtract, "summary"> = {

@@ -28,6 +28,8 @@ import {
 import { ensureDefaultKpis } from "@/lib/kpis";
 import { canManageOrg } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
+import { sanitizeDigestClock, sendDiscordScheduleDigestForOrg } from "@/lib/discord-schedule-digest";
+import { extractPdfText } from "@/lib/pdf-parse-server";
 import { inferServiceTagFromText, normalizeServiceTags } from "@/lib/service-tags";
 import { toNumber } from "@/lib/utils";
 
@@ -117,12 +119,124 @@ function mapJoistStatusToLeadStage(statusRaw: string): LeadStage {
   return LeadStage.CONTACTED;
 }
 
+function buildJoistExternalRefCandidates(entries: Array<{ documentType?: string; documentNumber?: string }>) {
+  const refs: string[] = [];
+  for (const entry of entries) {
+    const type = (entry.documentType ?? "").trim().toLowerCase();
+    const raw = (entry.documentNumber ?? "").trim();
+    if (!raw) continue;
+    const compact = raw.replace(/\s+/g, "");
+    const normalized = compact.replace(/[^a-zA-Z0-9-]/g, "").toLowerCase();
+    const push = (value: string) => {
+      const ref = value.trim().slice(0, 191);
+      if (!ref) return;
+      if (!refs.includes(ref)) refs.push(ref);
+    };
+
+    if (type === "estimate" || type === "invoice") {
+      push(`joist:${type}:${raw}`);
+      if (compact !== raw) push(`joist:${type}:${compact}`);
+      if (normalized && normalized !== compact.toLowerCase()) push(`joist:${type}:${normalized}`);
+    }
+    push(`joist:${raw}`);
+    if (compact !== raw) push(`joist:${compact}`);
+    if (normalized && normalized !== compact.toLowerCase()) push(`joist:${normalized}`);
+  }
+  return refs;
+}
+
+const JOB_STATUS_PRIORITY: Record<JobStatus, number> = {
+  [JobStatus.LEAD]: 0,
+  [JobStatus.ESTIMATE]: 1,
+  [JobStatus.SCHEDULED]: 2,
+  [JobStatus.IN_PROGRESS]: 3,
+  [JobStatus.ON_HOLD]: 4,
+  [JobStatus.COMPLETED]: 5,
+  [JobStatus.PAID]: 6,
+};
+
+function pickHigherPriorityJobStatus(current: JobStatus, incoming?: JobStatus) {
+  if (!incoming) return current;
+  return JOB_STATUS_PRIORITY[incoming] > JOB_STATUS_PRIORITY[current] ? incoming : current;
+}
+
+function parseMoneyText(value: string) {
+  const normalized = value.replace(/[^0-9.-]/g, "");
+  if (!normalized) return 0;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function readNumberFromUnknown(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") return parseMoneyText(value);
+  return 0;
+}
+
+function readObject(value: Prisma.JsonValue | null | undefined) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, Prisma.JsonValue>;
+}
+
+function extractJoistContractTotal(rawPayload: Prisma.JsonValue | null | undefined) {
+  const record = readObject(rawPayload);
+  if (!record) return 0;
+
+  const directTotal = readNumberFromUnknown(record.total);
+  if (directTotal > 0) return directTotal;
+
+  const candidateKeys = [
+    "invoice total",
+    "estimate total",
+    "grand total",
+    "amount",
+    "total amount",
+    "invoice amount",
+    "estimate amount",
+  ];
+
+  for (const key of candidateKeys) {
+    const value = record[key];
+    const parsed = readNumberFromUnknown(value);
+    if (parsed > 0) return parsed;
+  }
+
+  return 0;
+}
+
 function firstRegexMatch(text: string, patterns: RegExp[]) {
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match?.[1]) return match[1].trim();
   }
   return "";
+}
+
+function extractLikelyJoistTotalText(text: string) {
+  const explicit = firstRegexMatch(text, [
+    /\b(?:Grand\s*)?Total(?:\s*Due)?\s*[:#-]?\s*\$?\s*([0-9][0-9,]*\.\d{2})/i,
+    /\bAmount\s*Due\s*[:#-]?\s*\$?\s*([0-9][0-9,]*\.\d{2})/i,
+  ]);
+  if (explicit) return explicit;
+
+  const descriptionTotalWindow = firstRegexMatch(text, [
+    /Description\s*Total[\s\S]{0,220}?\$?\s*([0-9][0-9,]*\.\d{2})/i,
+  ]);
+  if (descriptionTotalWindow) return descriptionTotalWindow;
+
+  const currencyMatches = [...text.matchAll(/\$\s*([0-9][0-9,]*\.\d{2})/g)].map((match) => match[1]);
+  if (currencyMatches.length === 0) return "";
+
+  let best = "";
+  let bestValue = 0;
+  for (const candidate of currencyMatches) {
+    const value = parseMoneyText(candidate);
+    if (value > bestValue) {
+      best = candidate;
+      bestValue = value;
+    }
+  }
+  return best;
 }
 
 function parseContactBlockAddress(block: string) {
@@ -137,58 +251,144 @@ function parseContactBlockAddress(block: string) {
   return lines.slice(1).join(", ").slice(0, 191);
 }
 
+function valueAfterLabelLine(text: string, labels: string[]) {
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  for (let i = 0; i < lines.length; i += 1) {
+    const current = lines[i];
+    for (const label of labels) {
+      const withInline = new RegExp(`^${label}\\s*:\\s*(.+)$`, "i");
+      const inlineMatch = current.match(withInline);
+      if (inlineMatch?.[1]) return inlineMatch[1].trim();
+
+      const plain = new RegExp(`^${label}\\s*$`, "i");
+      if (plain.test(current) && lines[i + 1]) {
+        return lines[i + 1].trim();
+      }
+    }
+  }
+  return "";
+}
+
 function extractJoistPdfLeadPayload(text: string, fileName: string) {
   const normalized = text.replace(/\r/g, "\n");
-  const estimateNumber = firstRegexMatch(normalized, [/Estimate\s*#\s*([A-Za-z0-9-]+)/i]);
-  const invoiceNumber = firstRegexMatch(normalized, [/Invoice\s*#\s*([A-Za-z0-9-]+)/i]);
+  const compact = normalized.replace(/\s+/g, " ").trim();
+  const estimateNumber =
+    firstRegexMatch(normalized, [/Estimate\s*#\s*([A-Za-z0-9-]+)/i, /Estimate(?:\s*Number)?\s*:?\s*([A-Za-z0-9-]+)/i]) ||
+    firstRegexMatch(compact, [/Estimate\s*#?\s*([A-Za-z0-9-]+)/i]) ||
+    valueAfterLabelLine(normalized, ["Estimate #", "Estimate Number"]);
+  const invoiceNumber =
+    firstRegexMatch(normalized, [/Invoice\s*#\s*([A-Za-z0-9-]+)/i, /Invoice(?:\s*Number)?\s*:?\s*([A-Za-z0-9-]+)/i]) ||
+    firstRegexMatch(compact, [/Invoice\s*#?\s*([A-Za-z0-9-]+)/i]) ||
+    valueAfterLabelLine(normalized, ["Invoice #", "Invoice Number"]);
   const documentType = estimateNumber ? "estimate" : invoiceNumber ? "invoice" : "document";
   const documentNumber = estimateNumber || invoiceNumber || "";
 
-  const contactBlock = firstRegexMatch(normalized, [
-    /Prepared For\s*\n([\s\S]{0,240}?)\nRHI SOLUTIONS/i,
-    /Bill To\s*\n([\s\S]{0,240}?)\nRHI SOLUTIONS/i,
+  const contactBlock =
+    firstRegexMatch(normalized, [
+      /Prepared For\s*\n([\s\S]{0,340}?)(?:\n(?:RHI SOLUTIONS|Service Address|Job Address|Project Address|Invoice|Estimate|Description|Date)\b)/i,
+      /Bill To\s*\n([\s\S]{0,340}?)(?:\n(?:RHI SOLUTIONS|Service Address|Job Address|Project Address|Invoice|Estimate|Description|Date)\b)/i,
+      /Customer\s*\n([\s\S]{0,340}?)(?:\n(?:Service Address|Job Address|Project Address|Invoice|Estimate|Description|Date)\b)/i,
+      /Client\s*\n([\s\S]{0,340}?)(?:\n(?:Service Address|Job Address|Project Address|Invoice|Estimate|Description|Date)\b)/i,
+    ]) ||
+    "";
+  const customerFromLabel = valueAfterLabelLine(normalized, [
+    "Prepared For",
+    "Bill To",
+    "Customer",
+    "Customer Name",
+    "Client",
+    "Client Name",
+    "Homeowner",
+    "Property Owner",
+  ]);
+  const customerFromInline = firstRegexMatch(compact, [
+    /\bPrepared For\s+([A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){0,4})(?=\s+\d{1,6}\s|\s+\(?\d{3}\)?\s*\d{3}[-.\s]?\d{4}|\s+RHI SOLUTIONS\b)/i,
+    /\bBill To\s+([A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){0,4})(?=\s+\d{1,6}\s|\s+\(?\d{3}\)?\s*\d{3}[-.\s]?\d{4}|\s+RHI SOLUTIONS\b)/i,
+    /\bCustomer(?:\s+Name)?\s+([A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){0,4})(?=\s+\d{1,6}\s|\s+\(?\d{3}\)?\s*\d{3}[-.\s]?\d{4}|\s+RHI SOLUTIONS\b)/i,
+    /\bClient(?:\s+Name)?\s+([A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){0,4})(?=\s+\d{1,6}\s|\s+\(?\d{3}\)?\s*\d{3}[-.\s]?\d{4}|\s+RHI SOLUTIONS\b)/i,
   ]);
   const contactName =
-    firstRegexMatch(normalized, [/Prepared For\s*\n([^\n]+)/i, /Bill To\s*\n([^\n]+)/i]) ||
+    customerFromLabel ||
+    customerFromInline ||
+    firstRegexMatch(normalized, [/Prepared For\s*\n([^\n]+)/i, /Bill To\s*\n([^\n]+)/i, /Customer\s*\n([^\n]+)/i, /Client\s*\n([^\n]+)/i]) ||
     contactBlock.split("\n")[0]?.trim() ||
     "Imported Lead";
 
-  const serviceAddressBlock = firstRegexMatch(normalized, [/Service Address\s*\n([\s\S]{0,180}?)\nPrepared For/i]);
-  const serviceAddress = serviceAddressBlock
-    ? serviceAddressBlock
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .join(", ")
-        .slice(0, 191)
-    : "";
+  const serviceAddressBlock = firstRegexMatch(normalized, [
+    /Service Address\s*\n([\s\S]{0,220}?)(?:\n(?:Prepared For|Bill To|Customer|Client|Invoice|Estimate|Description|Scope|Date)\b)/i,
+    /Job Address\s*\n([\s\S]{0,220}?)(?:\n(?:Prepared For|Bill To|Customer|Client|Invoice|Estimate|Description|Scope|Date)\b)/i,
+    /Project Address\s*\n([\s\S]{0,220}?)(?:\n(?:Prepared For|Bill To|Customer|Client|Invoice|Estimate|Description|Scope|Date)\b)/i,
+  ]);
+  const serviceAddressInline =
+    valueAfterLabelLine(normalized, ["Service Address", "Job Address", "Project Address", "Property Address", "Address"]) ||
+    firstRegexMatch(normalized, [/(?:Service|Job|Project|Property)\s+Address\s*:\s*([^\n]+)/i]) ||
+    firstRegexMatch(compact, [
+      /(?:Service|Job|Project|Property)\s+Address\s+(.+?)(?=\s+(?:Prepared For|Bill To|Customer|Client|RHI SOLUTIONS|Invoice|Estimate|Description|Scope|Date)\b)/i,
+    ]);
+  const serviceAddress = (serviceAddressBlock || serviceAddressInline || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(", ")
+    .replace(/\s{2,}/g, " ")
+    .slice(0, 191);
 
   const phone = firstRegexMatch(contactBlock || normalized, [
     /(\(\d{3}\)\s*\d{3}-\d{4})/,
     /(\d{3}[-.\s]\d{3}[-.\s]\d{4})/,
+    /(\+?1?\s*\(?\d{3}\)?\s*[-.\s]?\d{3}\s*[-.\s]?\d{4})/,
   ]);
-  const email = firstRegexMatch(contactBlock, [/([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i]);
+  const email = firstRegexMatch(contactBlock || normalized, [/([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i]);
   const descriptionBlock = firstRegexMatch(normalized, [
-    /Description(?:\s*Total)?\s*\n([\s\S]{0,220}?)\n(?:Scope of Work|Subtotal|Total|--)/i,
+    /Description(?:\s*Total)?\s*\n([\s\S]{0,600}?)\n(?:Scope of Work|Work Performed|Subtotal|Total|--|By signing|Page \d+ of \d+)/i,
     /Description(?:\s*Total)?\s*\n([^\n]+(?:\n[^\n]+){0,2})/i,
+    /Scope of Work\s*\n([\s\S]{0,420}?)\n(?:Project Timeline|Code Compliance|Subtotal|Total|By signing|Page \d+ of \d+)/i,
+    /Work Performed\s*\n([\s\S]{0,420}?)\n(?:Subtotal|Total|By signing|Page \d+ of \d+)/i,
   ]);
   const descriptionFromBlock = descriptionBlock
     .split("\n")
     .map((line) => line.trim())
-    .find((line) => line.length > 0 && !/\$\s*\d/.test(line) && !/^total$/i.test(line));
+    .find((line) => line.length > 0 && !/\$\s*\d/.test(line) && !/^total$/i.test(line) && !/^scope of work$/i.test(line));
   const description =
     descriptionFromBlock ||
+    valueAfterLabelLine(normalized, ["Project", "Title", "Description"]) ||
+    firstRegexMatch(compact, [
+      /Description(?:\s*Total)?\s+(.+?)(?=\s+(?:Scope of Work|Work Performed|Project Specifications|Subtotal|Total|By signing|Page \d+ of \d+)\b)/i,
+      /Project(?:\s+Specifications)?\s*:\s*(.+?)(?=\s+(?:Scope of Work|Work Performed|Subtotal|Total|Estimate #|Invoice #|Date)\b)/i,
+    ]) ||
     firstRegexMatch(normalized, [
       /Project:\s*([^\n]+)/i,
       /Scope of Work[^\n]*\n([^\n]+)/i,
+      /Work Performed[^\n]*\n([^\n]+)/i,
     ]);
-  const total = firstRegexMatch(normalized, [/\bTotal\s*\$([0-9,]+\.\d{2})/i]);
-  const docDate = firstRegexMatch(normalized, [/\bDate\s*([0-9]{2}\/[0-9]{2}\/[0-9]{4})/i]);
+  const total = extractLikelyJoistTotalText(normalized);
+  const docDate = firstRegexMatch(normalized, [
+    /\bDate\s*([0-9]{2}\/[0-9]{2}\/[0-9]{4})/i,
+    /\bDate\s*([0-9]{4}-[0-9]{2}-[0-9]{2})/i,
+    /\bDate\s*([A-Za-z]{3,9}\s+\d{1,2},\s+\d{4})/i,
+  ]);
 
-  const stage = documentType === "invoice" ? LeadStage.WON : LeadStage.ESTIMATE_SENT;
+  const stage =
+    documentType === "invoice"
+      ? LeadStage.WON
+      : documentType === "estimate"
+        ? LeadStage.ESTIMATE_SENT
+        : LeadStage.CONTACTED;
   const address = serviceAddress || parseContactBlockAddress(contactBlock);
-  const externalRef = documentNumber ? `joist:${documentType}:${documentNumber}`.slice(0, 191) : "";
-  const notes = `Imported from Joist PDF (${fileName})${documentNumber ? ` - ${documentType} #${documentNumber}` : ""}`;
+  const externalRefs = buildJoistExternalRefCandidates([
+    { documentType, documentNumber },
+    { documentNumber },
+  ]);
+  const externalRef = externalRefs[0] ?? "";
+  const notesExtras = [docDate ? `Date: ${docDate}` : "", total ? `Total: $${total}` : "", description ? `Scope: ${description}` : ""]
+    .filter(Boolean)
+    .join(" | ");
+  const notes =
+    `Imported from Joist PDF (${fileName})${documentNumber ? ` - ${documentType} #${documentNumber}` : ""}` +
+    (notesExtras ? `\n${notesExtras}` : "");
 
   return {
     contactName,
@@ -198,12 +398,18 @@ function extractJoistPdfLeadPayload(text: string, fileName: string) {
     serviceType: description,
     stage,
     externalRef,
+    externalRefs,
     notes,
     rawPayload: {
       importType: "joist_pdf",
       fileName,
       documentType,
       documentNumber,
+      customerName: contactName || null,
+      address: address || null,
+      phone: phone || null,
+      email: email || null,
+      scopeSummary: description || null,
       date: docDate || null,
       total: total || null,
     },
@@ -230,10 +436,12 @@ function buildFallbackJoistPdfPayload(fileName: string, reason: string) {
   const fallbackName = parsed.documentNumber
     ? `Joist ${parsed.documentType} ${parsed.documentNumber}`
     : `Joist import ${fileName.replace(/\.[a-z0-9]+$/i, "")}`;
-  const stage = parsed.documentType === "invoice" ? LeadStage.WON : LeadStage.ESTIMATE_SENT;
-  const externalRef = parsed.documentNumber
-    ? `joist:${parsed.documentType}:${parsed.documentNumber}`.slice(0, 191)
-    : "";
+  const stage = LeadStage.CONTACTED;
+  const externalRefs = buildJoistExternalRefCandidates([
+    { documentType: parsed.documentType, documentNumber: parsed.documentNumber },
+    { documentNumber: parsed.documentNumber },
+  ]);
+  const externalRef = externalRefs[0] ?? "";
 
   return {
     contactName: fallbackName,
@@ -243,6 +451,7 @@ function buildFallbackJoistPdfPayload(fileName: string, reason: string) {
     serviceType: "",
     stage,
     externalRef,
+    externalRefs,
     notes: `Imported from Joist PDF filename fallback (${fileName})`,
     rawPayload: {
       importType: "joist_pdf_filename_fallback",
@@ -252,6 +461,72 @@ function buildFallbackJoistPdfPayload(fileName: string, reason: string) {
       parseError: reason,
     },
   };
+}
+
+function isLowConfidenceParsedJoistPayload(payload: ReturnType<typeof extractJoistPdfLeadPayload>) {
+  const name = (payload.contactName ?? "").trim().toLowerCase();
+  const address = (payload.address ?? "").trim();
+  const phone = (payload.phone ?? "").trim();
+  const email = (payload.email ?? "").trim();
+  const serviceType = (payload.serviceType ?? "").trim();
+  const raw = (payload.rawPayload ?? {}) as Record<string, unknown>;
+  const documentNumber =
+    typeof raw.documentNumber === "string" && raw.documentNumber.trim().length > 0 ? raw.documentNumber.trim() : "";
+
+  const hasOnlyGenericName = !name || name === "imported lead";
+  const hasNoContactOrScope = !address && !phone && !email && !serviceType;
+  const hasNoDocNumber = !documentNumber;
+  return hasOnlyGenericName && hasNoContactOrScope && hasNoDocNumber;
+}
+
+function isNonActionableJoistPayload(payload: {
+  contactName?: string;
+  address?: string;
+  phone?: string;
+  email?: string;
+  serviceType?: string;
+  stage: LeadStage;
+  rawPayload?: Prisma.InputJsonValue;
+}) {
+  const name = (payload.contactName ?? "").trim().toLowerCase();
+  const address = (payload.address ?? "").trim();
+  const phone = (payload.phone ?? "").trim();
+  const email = (payload.email ?? "").trim();
+  const serviceType = (payload.serviceType ?? "").trim();
+  const raw = (payload.rawPayload ?? {}) as Record<string, unknown>;
+  const documentNumber =
+    typeof raw.documentNumber === "string" && raw.documentNumber.trim().length > 0 ? raw.documentNumber.trim() : "";
+
+  const genericName =
+    !name ||
+    name === "imported lead" ||
+    name.startsWith("joist import") ||
+    name.startsWith("joist invoice") ||
+    name.startsWith("joist estimate");
+  const hasNoContact = !address && !phone && !email;
+  const hasNoScope = !serviceType;
+  const noDocumentNumber = !documentNumber;
+
+  return genericName && hasNoContact && hasNoScope && noDocumentNumber && payload.stage === LeadStage.CONTACTED;
+}
+
+function shouldAutoConvertImportedLead(payload: {
+  stage: LeadStage;
+  contactName?: string;
+  address?: string;
+}) {
+  if (!(payload.stage === LeadStage.ESTIMATE_SENT || payload.stage === LeadStage.WON)) return false;
+
+  const address = (payload.address ?? "").trim();
+  if (!address) return false;
+
+  const name = (payload.contactName ?? "").trim().toLowerCase();
+  if (!name) return false;
+
+  const genericNames = ["imported lead", "joist invoice", "joist estimate", "joist import"];
+  if (genericNames.some((prefix) => name.startsWith(prefix))) return false;
+
+  return true;
 }
 
 function buildLeadJobNameFromLead(lead: {
@@ -270,6 +545,36 @@ function buildLeadJobNameFromLead(lead: {
   return "Imported Job";
 }
 
+async function findMatchingExistingJobForLead(orgId: string, lead: { contactName: string; address: string | null }) {
+  const address = (lead.address ?? "").trim();
+  const contactName = (lead.contactName ?? "").trim();
+  if (!address) return null;
+
+  if (contactName) {
+    const byAddressAndName = await prisma.job.findFirst({
+      where: {
+        orgId,
+        address: { equals: address, mode: "insensitive" },
+        customer: {
+          name: { equals: contactName, mode: "insensitive" },
+        },
+      },
+      select: { id: true, customerId: true, status: true },
+      orderBy: { updatedAt: "desc" },
+    });
+    if (byAddressAndName) return byAddressAndName;
+  }
+
+  return prisma.job.findFirst({
+    where: {
+      orgId,
+      address: { equals: address, mode: "insensitive" },
+    },
+    select: { id: true, customerId: true, status: true },
+    orderBy: { updatedAt: "desc" },
+  });
+}
+
 async function upsertJoistLead(
   auth: { orgId: string },
   payload: {
@@ -280,6 +585,7 @@ async function upsertJoistLead(
     serviceType?: string;
     stage: LeadStage;
     externalRef?: string;
+    externalRefs?: string[];
     notes?: string;
     rawPayload?: Prisma.InputJsonValue;
   },
@@ -292,29 +598,45 @@ async function upsertJoistLead(
     return { outcome: "skipped" as const };
   }
   const contactName = contactNameInput || phone || email || "Imported Lead";
+  const externalRefs = [...new Set([...(payload.externalRefs ?? []), payload.externalRef ?? ""].map((value) => value.trim().slice(0, 191)).filter(Boolean))];
+  const canonicalExternalRef = externalRefs[0] ?? "";
 
-  if (payload.externalRef) {
-    const result = await prisma.lead.upsert({
+  if (externalRefs.length > 0) {
+    const existingByRef = await prisma.lead.findFirst({
       where: {
-        orgId_externalRef: {
-          orgId: auth.orgId,
-          externalRef: payload.externalRef,
-        },
-      },
-      update: {
-        contactName,
-        phone: phone || null,
-        email: email || null,
-        address: payload.address || null,
-        serviceType: payload.serviceType || null,
-        source: LeadSource.OTHER,
-        stage: payload.stage,
-        notes: payload.notes || null,
-        rawPayload: payload.rawPayload,
-      },
-      create: {
         orgId: auth.orgId,
-        externalRef: payload.externalRef,
+        externalRef: { in: externalRefs },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    if (existingByRef) {
+      const result = await prisma.lead.update({
+        where: { id: existingByRef.id },
+        data: {
+          externalRef: existingByRef.externalRef ?? (canonicalExternalRef || null),
+          contactName,
+          phone: phone || null,
+          email: email || null,
+          address: payload.address || null,
+          serviceType: payload.serviceType || null,
+          source: LeadSource.OTHER,
+          stage: payload.stage,
+          notes: payload.notes || null,
+          rawPayload: payload.rawPayload,
+        },
+      });
+      return {
+        outcome: "updated" as const,
+        leadId: result.id,
+        stage: result.stage,
+      };
+    }
+
+    const result = await prisma.lead.create({
+      data: {
+        orgId: auth.orgId,
+        externalRef: canonicalExternalRef,
         contactName,
         phone: phone || null,
         email: email || null,
@@ -327,9 +649,44 @@ async function upsertJoistLead(
       },
     });
     return {
-      outcome: result.createdAt.getTime() === result.updatedAt.getTime() ? ("imported" as const) : ("updated" as const),
+      outcome: "imported" as const,
       leadId: result.id,
       stage: result.stage,
+    };
+  }
+
+  // Fallback dedupe for Joist rows missing stable refs: match by contact + address.
+  const existingByIdentity =
+    contactNameInput && payload.address
+      ? await prisma.lead.findFirst({
+        where: {
+          orgId: auth.orgId,
+          contactName: { equals: contactNameInput, mode: "insensitive" },
+          address: { equals: payload.address, mode: "insensitive" },
+        },
+        orderBy: { createdAt: "asc" },
+      })
+      : null;
+
+  if (existingByIdentity) {
+    const updated = await prisma.lead.update({
+      where: { id: existingByIdentity.id },
+      data: {
+        contactName,
+        phone: phone || null,
+        email: email || null,
+        address: payload.address || null,
+        serviceType: payload.serviceType || null,
+        source: LeadSource.OTHER,
+        stage: payload.stage,
+        notes: payload.notes || null,
+        rawPayload: payload.rawPayload,
+      },
+    });
+    return {
+      outcome: "updated" as const,
+      leadId: updated.id,
+      stage: updated.stage,
     };
   }
 
@@ -474,53 +831,116 @@ export async function createLeadAction(formData: FormData) {
   const dedupeCandidates =
     phone || email
       ? await prisma.lead.findMany({
-          where: {
-            orgId: auth.orgId,
-            createdAt: { gte: subHours(new Date(), 12) },
-            stage: { in: openStageFilter },
-            OR: [
-              ...(phone ? [{ phone }] : []),
-              ...(email ? [{ email }] : []),
-            ],
-          },
-          orderBy: { createdAt: "desc" },
-          take: 1,
-        })
+        where: {
+          orgId: auth.orgId,
+          createdAt: { gte: subHours(new Date(), 12) },
+          stage: { in: openStageFilter },
+          OR: [
+            ...(phone ? [{ phone }] : []),
+            ...(email ? [{ email }] : []),
+          ],
+        },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+      })
       : [];
 
   const existing = dedupeCandidates[0];
 
   const lead = existing
     ? await prisma.lead.update({
-        where: { id: existing.id },
-        data: {
-          contactName: parsed.contactName || existing.contactName,
-          phone: phone || existing.phone,
-          email: email || existing.email,
-          address: parsed.address || existing.address,
-          serviceType: parsed.serviceType || existing.serviceType,
-          source: parsed.source,
-          notes: parsed.notes ? `${existing.notes ? `${existing.notes}\n` : ""}${parsed.notes}` : existing.notes,
-        },
-      })
+      where: { id: existing.id },
+      data: {
+        contactName: parsed.contactName || existing.contactName,
+        phone: phone || existing.phone,
+        email: email || existing.email,
+        address: parsed.address || existing.address,
+        serviceType: parsed.serviceType || existing.serviceType,
+        source: parsed.source,
+        notes: parsed.notes ? `${existing.notes ? `${existing.notes}\n` : ""}${parsed.notes}` : existing.notes,
+      },
+    })
     : await prisma.lead.create({
-        data: {
-          orgId: auth.orgId,
-          contactName: parsed.contactName,
-          phone: phone || null,
-          email: email || null,
-          address: parsed.address || null,
-          serviceType: parsed.serviceType || null,
-          source: parsed.source,
-          notes: parsed.notes || null,
-          stage: LeadStage.NEW,
-        },
-      });
+      data: {
+        orgId: auth.orgId,
+        contactName: parsed.contactName,
+        phone: phone || null,
+        email: email || null,
+        address: parsed.address || null,
+        serviceType: parsed.serviceType || null,
+        source: parsed.source,
+        notes: parsed.notes || null,
+        stage: LeadStage.NEW,
+      },
+    });
 
   await logActivity(auth.orgId, null, auth.userId, existing ? "lead.deduped" : "lead.created", {
     leadId: lead.id,
     source: parsed.source,
   });
+  revalidatePath("/leads");
+  revalidatePath("/dashboard");
+}
+
+export async function updateLeadDetailsAction(formData: FormData) {
+  if (isDemoMode()) {
+    revalidatePath("/leads");
+    revalidatePath("/dashboard");
+    return;
+  }
+
+  const auth = await requireAuth();
+
+  const schema = z.object({
+    leadId: z.string().uuid(),
+    contactName: z.string().trim().min(1).max(191),
+    phone: z.string().optional().or(z.literal("")),
+    email: z.string().email().optional().or(z.literal("")),
+    address: z.string().optional().or(z.literal("")),
+    serviceType: z.string().optional().or(z.literal("")),
+    source: z.nativeEnum(LeadSource),
+    notes: z.string().optional().or(z.literal("")),
+  });
+
+  const parsed = schema.parse({
+    leadId: formData.get("leadId"),
+    contactName: formData.get("contactName"),
+    phone: formData.get("phone") ?? undefined,
+    email: formData.get("email") ?? undefined,
+    address: formData.get("address") ?? undefined,
+    serviceType: formData.get("serviceType") ?? undefined,
+    source: formData.get("source") ?? LeadSource.OTHER,
+    notes: formData.get("notes") ?? undefined,
+  });
+
+  const lead = await prisma.lead.findFirstOrThrow({
+    where: { id: parsed.leadId, orgId: auth.orgId },
+    select: { id: true, jobId: true },
+  });
+
+  const phone = normalizeLeadPhone(parsed.phone);
+  const email = (parsed.email ?? "").trim().toLowerCase();
+  const address = (parsed.address ?? "").trim();
+  const serviceType = (parsed.serviceType ?? "").trim();
+  const notes = (parsed.notes ?? "").trim();
+
+  await prisma.lead.update({
+    where: { id: lead.id },
+    data: {
+      contactName: parsed.contactName.trim(),
+      phone: phone || null,
+      email: email || null,
+      address: address || null,
+      serviceType: serviceType || null,
+      source: parsed.source,
+      notes: notes || null,
+    },
+  });
+
+  await logActivity(auth.orgId, lead.jobId ?? null, auth.userId, "lead.details.updated", {
+    leadId: lead.id,
+  });
+
   revalidatePath("/leads");
   revalidatePath("/dashboard");
 }
@@ -647,19 +1067,99 @@ async function convertLeadToJobInternal(
   const lead = await prisma.lead.findFirstOrThrow({
     where: { id: leadId, orgId: auth.orgId },
   });
+  const joistContractTotal = extractJoistContractTotal(lead.rawPayload);
+  const targetLeadStage = options?.stageAfterLink ?? LeadStage.WON;
 
   // If this lead already has a job linked, skip creating another one.
   if (lead.jobId) {
-    if (options?.stageAfterLink && lead.stage !== options.stageAfterLink) {
+    const leadUpdateData: Prisma.LeadUpdateInput = {};
+    if (lead.stage !== targetLeadStage) {
+      leadUpdateData.stage = targetLeadStage;
+      leadUpdateData.lostReason = null;
+    }
+    if (Object.keys(leadUpdateData).length > 0) {
       await prisma.lead.update({
         where: { id: lead.id },
-        data: {
-          stage: options.stageAfterLink,
-          lostReason: null,
-        },
+        data: leadUpdateData,
       });
     }
-    return prisma.job.findFirstOrThrow({ where: { id: lead.jobId, orgId: auth.orgId } });
+
+    const existingJob = await prisma.job.findFirstOrThrow({
+      where: { id: lead.jobId, orgId: auth.orgId },
+      select: {
+        id: true,
+        status: true,
+        jobName: true,
+        address: true,
+        customerId: true,
+        customer: { select: { name: true } },
+      },
+    });
+    const nextStatus = pickHigherPriorityJobStatus(existingJob.status, options?.jobStatus);
+    const jobUpdateData: Prisma.JobUpdateInput = {};
+    if (nextStatus !== existingJob.status) jobUpdateData.status = nextStatus;
+    if (joistContractTotal > 0) jobUpdateData.estimatedTotalBudget = joistContractTotal;
+    const leadAddress = (lead.address ?? "").trim();
+    const leadCustomerName = (lead.contactName ?? "").trim();
+    const shouldFillPendingAddress = Boolean(leadAddress) && /^address pending$/i.test(existingJob.address.trim());
+    const shouldRefreshAutoJobName = /^joist\s/i.test(existingJob.jobName.trim()) || /^imported job$/i.test(existingJob.jobName.trim());
+    const candidateJobName =
+      (leadAddress || existingJob.address) && (leadCustomerName || existingJob.customer.name)
+        ? `${leadAddress || existingJob.address} - ${leadCustomerName || existingJob.customer.name}`.slice(0, 191)
+        : "";
+    if (shouldFillPendingAddress) jobUpdateData.address = leadAddress;
+    if (shouldRefreshAutoJobName && candidateJobName) jobUpdateData.jobName = candidateJobName;
+    if (Object.keys(jobUpdateData).length > 0) {
+      await prisma.job.update({
+        where: { id: existingJob.id },
+        data: jobUpdateData,
+      });
+    }
+
+    const shouldRefreshImportedCustomer = Boolean(leadCustomerName) && /^imported lead$/i.test(existingJob.customer.name.trim());
+    if (shouldRefreshImportedCustomer) {
+      await prisma.customer.update({
+        where: { id: existingJob.customerId },
+        data: { name: leadCustomerName },
+      });
+    }
+
+    return prisma.job.findFirstOrThrow({ where: { id: existingJob.id, orgId: auth.orgId } });
+  }
+
+  const matchedJob = await findMatchingExistingJobForLead(auth.orgId, {
+    contactName: lead.contactName,
+    address: lead.address,
+  });
+  if (matchedJob) {
+    const nextStatus = pickHigherPriorityJobStatus(matchedJob.status, options?.jobStatus);
+    const jobUpdateData: Prisma.JobUpdateInput = {};
+    if (nextStatus !== matchedJob.status) jobUpdateData.status = nextStatus;
+    if (joistContractTotal > 0) jobUpdateData.estimatedTotalBudget = joistContractTotal;
+    if (Object.keys(jobUpdateData).length > 0) {
+      await prisma.job.update({
+        where: { id: matchedJob.id },
+        data: jobUpdateData,
+      });
+    }
+
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: {
+        stage: targetLeadStage,
+        customerId: matchedJob.customerId,
+        jobId: matchedJob.id,
+        convertedAt: lead.convertedAt ?? new Date(),
+        lostReason: null,
+      },
+    });
+
+    await logActivity(auth.orgId, matchedJob.id, auth.userId, "lead.linked_to_existing_job", {
+      leadId: lead.id,
+      matchedBy: "address",
+    });
+
+    return prisma.job.findFirstOrThrow({ where: { id: matchedJob.id, orgId: auth.orgId } });
   }
 
   const customer = await prisma.customer.create({
@@ -687,13 +1187,14 @@ async function convertLeadToJobInternal(
       categoryTags: [inferServiceTagFromText(lead.serviceType) ?? "general-remodeling", "lead-converted"],
       startDate: conversionDate,
       endDate: conversionEndDate,
+      estimatedTotalBudget: joistContractTotal > 0 ? joistContractTotal : undefined,
     },
   });
 
   await prisma.lead.update({
     where: { id: lead.id },
     data: {
-      stage: options?.stageAfterLink ?? LeadStage.WON,
+      stage: targetLeadStage,
       customerId: customer.id,
       jobId: job.id,
       convertedAt: new Date(),
@@ -715,7 +1216,7 @@ async function convertLeadToJobInternal(
       utmSource: lead.utmSource ?? null,
       utmMedium: lead.utmMedium ?? null,
       utmCampaign: lead.utmCampaign ?? null,
-    }).catch(() => {}),
+    }).catch(() => { }),
   );
 
   return job;
@@ -749,20 +1250,167 @@ export async function importJoistCsvAction(formData: FormData) {
   }
 
   const auth = await requireAuth();
-  if (!canManageOrg(auth.role)) {
-    throw new Error("Only owner/admin can import Joist data.");
+  type PreparedJoistImportEntry = {
+    kind: "pdf" | "csv";
+    fileName: string;
+    text: string;
+  };
+  const preparedRaw = String(formData.get("preparedJoistPayload") ?? "").trim();
+  let preparedEntries: PreparedJoistImportEntry[] = [];
+  if (preparedRaw) {
+    try {
+      const parsed = JSON.parse(preparedRaw) as unknown;
+      if (Array.isArray(parsed)) {
+        preparedEntries = parsed
+          .map((entry) => {
+            if (!entry || typeof entry !== "object") return null;
+            const record = entry as Record<string, unknown>;
+            const kind = record.kind === "pdf" || record.kind === "csv" ? record.kind : null;
+            const fileName = typeof record.fileName === "string" ? record.fileName.trim().slice(0, 191) : "";
+            const text = typeof record.text === "string" ? record.text : "";
+            if (!kind || !fileName) return null;
+            return { kind, fileName, text };
+          })
+          .filter((entry): entry is PreparedJoistImportEntry => Boolean(entry));
+      }
+    } catch {
+      // Handled below as a user-facing import error.
+    }
   }
-
   const files = formData.getAll("csvFile").filter((item): item is File => item instanceof File && item.size > 0);
-  if (files.length === 0) {
-    throw new Error("Upload at least one Joist CSV or PDF file.");
-  }
-
   let imported = 0;
   let updated = 0;
   let skipped = 0;
   let jobsLinked = 0;
   const importErrors: Array<{ file: string; detail: string }> = [];
+
+  if (preparedRaw && preparedEntries.length === 0) {
+    importErrors.push({ file: "upload", detail: "Invalid prepared Joist payload. Re-select files and try again." });
+  }
+
+  if (files.length === 0 && preparedEntries.length === 0) {
+    importErrors.push({ file: "upload", detail: "Upload at least one Joist CSV or PDF file." });
+  }
+
+  const processPdfPayload = async (
+    fileName: string,
+    payload: ReturnType<typeof extractJoistPdfLeadPayload> | ReturnType<typeof buildFallbackJoistPdfPayload>,
+  ) => {
+    if (isNonActionableJoistPayload(payload)) {
+      skipped += 1;
+      importErrors.push({
+        file: fileName,
+        detail: "Skipped this PDF because no usable customer/address/contact data could be extracted.",
+      });
+      return;
+    }
+
+    const result = await upsertJoistLead(auth, payload);
+    if (result.outcome === "imported") imported += 1;
+    if (result.outcome === "updated") updated += 1;
+    if (result.outcome === "skipped") skipped += 1;
+    if (result.leadId && shouldAutoConvertImportedLead(payload)) {
+      await convertLeadToJobInternal(auth, result.leadId, "", {
+        stageAfterLink: payload.stage,
+        jobStatus: payload.stage === LeadStage.WON ? JobStatus.SCHEDULED : JobStatus.ESTIMATE,
+      });
+      jobsLinked += 1;
+    }
+  };
+
+  const processCsvText = async (fileName: string, text: string) => {
+    const rows = parseCsv(text);
+    if (rows.length === 0) {
+      skipped += 1;
+      return;
+    }
+
+    for (const row of rows) {
+      try {
+        const contactName = pickCsvValue(row, ["client name", "customer name", "name", "client"]);
+        const phone = pickCsvValue(row, ["phone", "phone number", "client phone"]);
+        const email = pickCsvValue(row, ["email", "client email"]);
+        const address = pickCsvValue(row, ["address", "job address", "client address"]);
+        const serviceType = pickCsvValue(row, ["title", "project", "description", "service"]);
+        const statusRaw = pickCsvValue(row, ["status", "estimate status", "invoice status"]);
+        const estimateNumber = pickCsvValue(row, ["estimate number", "estimate #", "estimate id", "id"]);
+        const invoiceNumber = pickCsvValue(row, ["invoice number", "invoice #"]);
+        const stage = mapJoistStatusToLeadStage(statusRaw);
+        const joistRefCandidates = buildJoistExternalRefCandidates([
+          { documentType: "invoice", documentNumber: invoiceNumber },
+          { documentType: "estimate", documentNumber: estimateNumber },
+          { documentNumber: invoiceNumber || estimateNumber },
+        ]);
+        const externalRef = joistRefCandidates[0] ?? "";
+        const notes = `Imported from Joist CSV (${fileName})${statusRaw ? ` - status: ${statusRaw}` : ""}`;
+
+        const result = await upsertJoistLead(auth, {
+          contactName,
+          phone,
+          email,
+          address,
+          serviceType,
+          stage,
+          externalRef,
+          externalRefs: joistRefCandidates,
+          notes,
+          rawPayload: row,
+        });
+        if (result.outcome === "imported") imported += 1;
+        if (result.outcome === "updated") updated += 1;
+        if (result.outcome === "skipped") skipped += 1;
+        if (result.leadId && shouldAutoConvertImportedLead({ stage, contactName, address })) {
+          await convertLeadToJobInternal(auth, result.leadId, "", {
+            stageAfterLink: stage,
+            jobStatus: stage === LeadStage.WON ? JobStatus.SCHEDULED : JobStatus.ESTIMATE,
+          });
+          jobsLinked += 1;
+        }
+      } catch (error) {
+        skipped += 1;
+        importErrors.push({
+          file: fileName,
+          detail: error instanceof Error ? error.message : "CSV row failed",
+        });
+      }
+    }
+  };
+
+  for (const entry of preparedEntries) {
+    try {
+      if (entry.kind === "pdf") {
+        const text = entry.text.trim();
+        if (text) {
+          const parsed = extractJoistPdfLeadPayload(text, entry.fileName);
+          if (isLowConfidenceParsedJoistPayload(parsed)) {
+            await processPdfPayload(
+              entry.fileName,
+              buildFallbackJoistPdfPayload(entry.fileName, "Parsed text lacked usable customer/address details"),
+            );
+          } else {
+            await processPdfPayload(entry.fileName, parsed);
+          }
+        } else {
+          importErrors.push({ file: entry.fileName, detail: "Prepared PDF text was empty; used filename fallback." });
+          await processPdfPayload(entry.fileName, buildFallbackJoistPdfPayload(entry.fileName, "Prepared PDF text was empty"));
+        }
+        continue;
+      }
+
+      if (entry.kind === "csv") {
+        await processCsvText(entry.fileName, entry.text);
+        continue;
+      }
+
+      skipped += 1;
+    } catch (error) {
+      skipped += 1;
+      importErrors.push({
+        file: entry.fileName,
+        detail: error instanceof Error ? error.message : "Prepared import failed",
+      });
+    }
+  }
 
   for (const file of files) {
     try {
@@ -774,33 +1422,19 @@ export async function importJoistCsvAction(formData: FormData) {
         let payload:
           | ReturnType<typeof extractJoistPdfLeadPayload>
           | ReturnType<typeof buildFallbackJoistPdfPayload>;
-        const { PDFParse } = await import("pdf-parse");
-        const parser = new PDFParse({ data: Buffer.from(await file.arrayBuffer()) });
         try {
-          const extracted = await parser.getText();
-          payload = extractJoistPdfLeadPayload(extracted.text || "", file.name);
+          const extractedText = await extractPdfText(Buffer.from(await file.arrayBuffer()));
+          const parsed = extractJoistPdfLeadPayload(extractedText, file.name);
+          payload = isLowConfidenceParsedJoistPayload(parsed)
+            ? buildFallbackJoistPdfPayload(file.name, "Parsed text lacked usable customer/address details")
+            : parsed;
         } catch (error) {
           const message = error instanceof Error ? error.message : "PDF parse failed";
           importErrors.push({ file: file.name, detail: `PDF parsed by filename fallback: ${message}` });
           payload = buildFallbackJoistPdfPayload(file.name, message);
-        } finally {
-          await parser.destroy();
         }
 
-        const result = await upsertJoistLead(auth, payload);
-        if (result.outcome === "imported") imported += 1;
-        if (result.outcome === "updated") updated += 1;
-        if (result.outcome === "skipped") skipped += 1;
-        if (
-          result.leadId &&
-          (payload.stage === LeadStage.ESTIMATE_SENT || payload.stage === LeadStage.WON)
-        ) {
-          await convertLeadToJobInternal(auth, result.leadId, "", {
-            stageAfterLink: payload.stage,
-            jobStatus: payload.stage === LeadStage.WON ? JobStatus.SCHEDULED : JobStatus.ESTIMATE,
-          });
-          jobsLinked += 1;
-        }
+        await processPdfPayload(file.name, payload);
         continue;
       }
 
@@ -809,60 +1443,7 @@ export async function importJoistCsvAction(formData: FormData) {
         continue;
       }
 
-      const text = await file.text();
-      const rows = parseCsv(text);
-      if (rows.length === 0) {
-        skipped += 1;
-        continue;
-      }
-
-      for (const row of rows) {
-        try {
-          const contactName = pickCsvValue(row, ["client name", "customer name", "name", "client"]);
-          const phone = pickCsvValue(row, ["phone", "phone number", "client phone"]);
-          const email = pickCsvValue(row, ["email", "client email"]);
-          const address = pickCsvValue(row, ["address", "job address", "client address"]);
-          const serviceType = pickCsvValue(row, ["title", "project", "description", "service"]);
-          const statusRaw = pickCsvValue(row, ["status", "estimate status", "invoice status"]);
-          const estimateNumber = pickCsvValue(row, ["estimate number", "estimate #", "estimate id", "id"]);
-          const invoiceNumber = pickCsvValue(row, ["invoice number", "invoice #"]);
-          const externalRefBase = estimateNumber || invoiceNumber;
-          const stage = mapJoistStatusToLeadStage(statusRaw);
-          const externalRef = externalRefBase ? `joist:${externalRefBase}`.slice(0, 191) : "";
-          const notes = `Imported from Joist CSV (${file.name})${statusRaw ? ` - status: ${statusRaw}` : ""}`;
-
-          const result = await upsertJoistLead(auth, {
-            contactName,
-            phone,
-            email,
-            address,
-            serviceType,
-            stage,
-            externalRef,
-            notes,
-            rawPayload: row,
-          });
-          if (result.outcome === "imported") imported += 1;
-          if (result.outcome === "updated") updated += 1;
-          if (result.outcome === "skipped") skipped += 1;
-          if (
-            result.leadId &&
-            (stage === LeadStage.ESTIMATE_SENT || stage === LeadStage.WON)
-          ) {
-            await convertLeadToJobInternal(auth, result.leadId, "", {
-              stageAfterLink: stage,
-              jobStatus: stage === LeadStage.WON ? JobStatus.SCHEDULED : JobStatus.ESTIMATE,
-            });
-            jobsLinked += 1;
-          }
-        } catch (error) {
-          skipped += 1;
-          importErrors.push({
-            file: file.name,
-            detail: error instanceof Error ? error.message : "CSV row failed",
-          });
-        }
-      }
+      await processCsvText(file.name, await file.text());
     } catch (error) {
       skipped += 1;
       importErrors.push({
@@ -880,7 +1461,7 @@ export async function importJoistCsvAction(formData: FormData) {
     jobsLinked,
     errors: importErrors.slice(0, 20),
     errorCount: importErrors.length,
-  });
+  }).catch(() => { });
 
   revalidatePath("/leads");
   revalidatePath("/jobs");
@@ -964,9 +1545,9 @@ export async function createJobAction(formData: FormData) {
     .filter(Boolean);
   const fallbackCsvTags = parsed.tags
     ? parsed.tags
-        .split(",")
-        .map((tag) => tag.trim())
-        .filter(Boolean)
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter(Boolean)
     : [];
   const tags = normalizeServiceTags([...selectedServiceTags, ...fallbackCsvTags]);
   const finalTags = tags.length > 0 ? tags : ["general-remodeling"];
@@ -1251,6 +1832,65 @@ function parseTimeHHMM(value: string): { hour: number; minute: number } {
   return { hour: Number.isNaN(h) ? 8 : Math.max(0, Math.min(23, h)), minute: Number.isNaN(m) ? 0 : Math.max(0, Math.min(59, m)) };
 }
 
+export async function updateJobCrewAction(formData: FormData) {
+  const jobId = String(formData.get("jobId") ?? "");
+  if (!jobId) return;
+
+  const workerIds = formData
+    .getAll("workerIds")
+    .map((value) => String(value))
+    .filter(Boolean);
+
+  if (isDemoMode()) {
+    demoAssignWorkersToJob({
+      orgId: getDemoOrgId(),
+      jobId,
+      workerIds,
+    });
+    revalidatePath(`/jobs/${jobId}`);
+    revalidatePath("/jobs");
+    revalidatePath("/today");
+    revalidatePath("/attendance");
+    revalidatePath("/team");
+    return;
+  }
+
+  const auth = await requireAuth();
+  if (!canManageOrg(auth.role)) {
+    throw new Error("Only owner/admin can update crew.");
+  }
+
+  // Full sync: remove anyone not in the new list, add anyone new
+  await prisma.jobAssignment.deleteMany({
+    where: {
+      jobId,
+      orgId: auth.orgId,
+      userId: { notIn: workerIds },
+    },
+  });
+
+  if (workerIds.length > 0) {
+    await prisma.jobAssignment.createMany({
+      data: workerIds.map((userId) => ({
+        orgId: auth.orgId,
+        jobId,
+        userId,
+      })),
+      skipDuplicates: true,
+    });
+  }
+
+  await logActivity(auth.orgId, jobId, auth.userId, "job.crew.updated", {
+    workersCount: workerIds.length,
+  });
+
+  revalidatePath(`/jobs/${jobId}`);
+  revalidatePath("/jobs");
+  revalidatePath("/today");
+  revalidatePath("/attendance");
+  revalidatePath("/team");
+}
+
 export async function quickScheduleCrewAction(formData: FormData) {
   const jobId = String(formData.get("jobId") ?? "");
   const slot = String(formData.get("slot") ?? "FULL");
@@ -1274,10 +1914,10 @@ export async function quickScheduleCrewAction(formData: FormData) {
   const slotHours =
     slot === "CUSTOM"
       ? (() => {
-          const s = parseTimeHHMM(startTime);
-          const e = parseTimeHHMM(endTime);
-          return { startHour: s.hour, startMinute: s.minute, endHour: e.hour, endMinute: e.minute };
-        })()
+        const s = parseTimeHHMM(startTime);
+        const e = parseTimeHHMM(endTime);
+        return { startHour: s.hour, startMinute: s.minute, endHour: e.hour, endMinute: e.minute };
+      })()
       : slot === "AM"
         ? { startHour: 8, startMinute: 0, endHour: 12, endMinute: 0 }
         : slot === "PM"
@@ -1316,7 +1956,7 @@ export async function quickScheduleCrewAction(formData: FormData) {
 
   const auth = await requireAuth();
   if (!canManageOrg(auth.role)) {
-    throw new Error("Only owner/admin can schedule crew.");
+    redirect(`/jobs/${jobId}#schedule`);
   }
 
   // Guardrail: prevent double-booking workers across jobs for the same time window.
@@ -1737,6 +2377,47 @@ export async function updateJobStatusAction(formData: FormData) {
   revalidatePath("/today");
 }
 
+export async function quickCloseJobAction(formData: FormData) {
+  const jobId = String(formData.get("jobId") ?? "");
+  if (!jobId) return;
+
+  if (isDemoMode()) {
+    revalidatePath("/jobs");
+    revalidatePath(`/jobs/${jobId}`);
+    revalidatePath("/today");
+    return;
+  }
+
+  const auth = await requireAuth();
+  if (!canManageOrg(auth.role)) return;
+
+  const job = await prisma.job.findFirst({
+    where: { id: jobId, orgId: auth.orgId },
+    select: { id: true, status: true },
+  });
+  if (!job) return;
+
+  await prisma.job.update({
+    where: { id: job.id },
+    data: {
+      status: JobStatus.COMPLETED,
+      ...(job.status !== JobStatus.COMPLETED ? { endDate: new Date() } : {}),
+    },
+  });
+
+  await logActivity(auth.orgId, job.id, auth.userId, "job.closed.quick", {
+    fromStatus: job.status,
+    toStatus: JobStatus.COMPLETED,
+  });
+
+  revalidatePath(`/jobs/${job.id}`);
+  revalidatePath("/jobs");
+  revalidatePath("/today");
+  revalidatePath("/attendance");
+  revalidatePath("/dashboard");
+  redirect("/jobs");
+}
+
 export async function updateTaskStatusAction(formData: FormData) {
   if (isDemoMode()) {
     return;
@@ -2130,17 +2811,14 @@ export async function updateTimeEntryAction(formData: FormData) {
   const breakMinutes = Number(formData.get("breakMinutes") ?? 0);
   const notes = String(formData.get("notes") ?? "");
 
-  const [entry, settings] = await Promise.all([
-    prisma.timeEntry.findUniqueOrThrow({ where: { id: timeEntryId } }),
-    prisma.organizationSetting.findUnique({ where: { orgId: auth.orgId } }),
-  ]);
+  const entry = await prisma.timeEntry.findUniqueOrThrow({ where: { id: timeEntryId } });
 
   const { canEditTimeEntry } = await import("@/lib/permissions");
   const canEdit = canEditTimeEntry({
     role: auth.role,
     actorUserId: auth.userId,
     entry,
-    workerCanEditOwnSameDay: settings?.workerCanEditOwnTimeSameDay ?? true,
+    workerCanEditOwnSameDay: false,
   });
 
   if (!canEdit) {
@@ -2224,19 +2902,28 @@ export async function updateOrgSettingsAction(formData: FormData) {
   const clockGraceMinutes = Number.isFinite(clockGraceRaw) ? Math.max(0, Math.min(120, Math.trunc(clockGraceRaw))) : 10;
   const discordClockInAlertsEnabled =
     formData.get("discordClockInAlertsEnabled") === "on" || formData.get("gpsTimeTrackingEnabled") === "on";
+  const discordScheduleDigestEnabled = formData.get("discordScheduleDigestEnabled") === "on";
+  const discordScheduleDigestWebhookUrl = String(formData.get("discordScheduleDigestWebhookUrl") ?? "").trim() || null;
+  const discordScheduleDigestTime = sanitizeDigestClock(String(formData.get("discordScheduleDigestTime") ?? "06:00"), "06:00");
 
   await prisma.organizationSetting.upsert({
     where: { orgId: auth.orgId },
     update: {
-      workerCanEditOwnTimeSameDay: formData.get("workerCanEditOwnTimeSameDay") === "on",
+      workerCanEditOwnTimeSameDay: false,
       gpsTimeTrackingEnabled: discordClockInAlertsEnabled,
+      discordScheduleDigestEnabled,
+      discordScheduleDigestWebhookUrl,
+      discordScheduleDigestTime,
       defaultClockInTime,
       clockGraceMinutes,
     },
     create: {
       orgId: auth.orgId,
-      workerCanEditOwnTimeSameDay: formData.get("workerCanEditOwnTimeSameDay") === "on",
+      workerCanEditOwnTimeSameDay: false,
       gpsTimeTrackingEnabled: discordClockInAlertsEnabled,
+      discordScheduleDigestEnabled,
+      discordScheduleDigestWebhookUrl,
+      discordScheduleDigestTime,
       defaultClockInTime,
       clockGraceMinutes,
     },
@@ -2244,6 +2931,48 @@ export async function updateOrgSettingsAction(formData: FormData) {
 
   revalidatePath("/settings/targets");
   revalidatePath("/attendance");
+  revalidatePath("/today");
+}
+
+export async function sendDiscordScheduleDigestNowAction() {
+  if (isDemoMode()) return;
+
+  const auth = await requireAuth();
+  if (!canManageOrg(auth.role)) {
+    throw new Error("Only owner/admin can send schedule digest.");
+  }
+
+  const settings = await prisma.organizationSetting.findUnique({
+    where: { orgId: auth.orgId },
+    select: {
+      discordScheduleDigestEnabled: true,
+      discordScheduleDigestWebhookUrl: true,
+    },
+  });
+
+  if (!settings?.discordScheduleDigestEnabled) {
+    throw new Error("Enable Discord schedule digest in Settings first.");
+  }
+  if (!settings.discordScheduleDigestWebhookUrl) {
+    throw new Error("Add a Discord webhook URL in Settings first.");
+  }
+
+  await sendDiscordScheduleDigestForOrg({
+    orgId: auth.orgId,
+    webhookUrl: settings.discordScheduleDigestWebhookUrl,
+    forDate: new Date(),
+  });
+
+  await prisma.organizationSetting.update({
+    where: { orgId: auth.orgId },
+    data: { discordScheduleDigestLastSentAt: new Date() },
+  });
+
+  await logActivity(auth.orgId, null, auth.userId, "ops.discord_schedule_digest.sent_now", {
+    sentAt: new Date().toISOString(),
+  });
+  revalidatePath("/settings/targets");
+  revalidatePath("/today");
 }
 
 export async function ownerClockInEmployeeAction(formData: FormData) {
@@ -2525,7 +3254,7 @@ export async function sendClockRemindersAction(formData: FormData) {
       body: JSON.stringify({
         text: `FieldFlow reminders sent: ${count} (${reminderType})`,
       }),
-    }).catch(() => {});
+    }).catch(() => { });
   }
 
   revalidatePath("/attendance");
@@ -2814,7 +3543,11 @@ export async function togglePortfolioAction(formData: FormData) {
   if (newValue) {
     const serviceTags = normalizeServiceTags(asset.job.categoryTags);
     if (serviceTags.length === 0) {
-      throw new Error("Add at least one controlled service tag on the job before portfolio publish.");
+      const mergedTags = Array.from(new Set([...(asset.job.categoryTags ?? []), "general-remodeling"]));
+      await prisma.job.update({
+        where: { id: asset.jobId },
+        data: { categoryTags: mergedTags },
+      });
     }
   }
 
@@ -2838,9 +3571,9 @@ export async function togglePortfolioAction(formData: FormData) {
 
   const { onPortfolioPublish, onPortfolioUnpublish } = await import("@/lib/portfolio-publish");
   if (newValue) {
-    onPortfolioPublish(assetId, asset.storageKey).catch(() => {});
+    onPortfolioPublish(assetId, asset.storageKey).catch(() => { });
   } else {
-    onPortfolioUnpublish(asset.storageKey).catch(() => {});
+    onPortfolioUnpublish(asset.storageKey).catch(() => { });
   }
 
   revalidatePath(`/jobs/${asset.jobId}`);

@@ -132,6 +132,10 @@ model OrganizationSetting {
   orgId                         String       @unique @db.Uuid
   workerCanEditOwnTimeSameDay   Boolean      @default(true)
   gpsTimeTrackingEnabled        Boolean      @default(false)
+  discordScheduleDigestEnabled  Boolean      @default(false)
+  discordScheduleDigestWebhookUrl String?
+  discordScheduleDigestTime     String       @default("06:00")
+  discordScheduleDigestLastSentAt DateTime?
   defaultClockInTime            String       @default("07:00")
   clockGraceMinutes             Int          @default(10)
   createdAt                     DateTime     @default(now())

@@ -50,7 +50,10 @@ async function ensureUserForSessionUser(sessionUser: { id: string; email?: strin
   const existingById = await prisma.userProfile.findUnique({
     where: { id: sessionUser.id },
   });
-  if (existingById) return existingById;
+  if (existingById) {
+    if (!existingById.isActive) throw new Error("Unauthorized");
+    return existingById;
+  }
 
   const normalizedEmail = (sessionUser.email ?? "").trim().toLowerCase();
   if (normalizedEmail) {
@@ -58,26 +61,12 @@ async function ensureUserForSessionUser(sessionUser: { id: string; email?: strin
       where: { email: normalizedEmail },
       orderBy: { createdAt: "asc" },
     });
-    if (existingByEmail) return existingByEmail;
+    if (existingByEmail) {
+      if (!existingByEmail.isActive) throw new Error("Unauthorized");
+      return existingByEmail;
+    }
   }
-
-  const orgId = await ensureBaseOrg();
-  const existingUsers = await prisma.userProfile.count({ where: { orgId } });
-  const fullName =
-    typeof sessionUser.user_metadata?.full_name === "string" && sessionUser.user_metadata.full_name.trim().length > 0
-      ? sessionUser.user_metadata.full_name.trim()
-      : "Owner";
-
-  return prisma.userProfile.create({
-    data: {
-      id: sessionUser.id,
-      orgId,
-      fullName,
-      email: normalizedEmail || `${sessionUser.id}@local.invalid`,
-      role: existingUsers === 0 ? Role.OWNER : Role.WORKER,
-      isActive: true,
-    },
-  });
+  throw new Error("Unauthorized");
 }
 
 async function resolveFallbackContext(): Promise<AuthContext> {

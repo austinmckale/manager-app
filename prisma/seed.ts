@@ -22,6 +22,8 @@ async function main() {
         create: {
           workerCanEditOwnTimeSameDay: true,
           gpsTimeTrackingEnabled: false,
+          discordScheduleDigestEnabled: false,
+          discordScheduleDigestTime: "06:00",
           defaultClockInTime: "07:00",
           clockGraceMinutes: 10,
         },

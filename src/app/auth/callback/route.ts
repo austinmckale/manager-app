@@ -49,7 +49,8 @@ export async function GET(request: Request) {
       response.cookies.set(AUTH_CONTEXT_COOKIE_NAME, cookieValue, getAuthContextCookieOptions());
     }
   } catch {
-    // Fall through without auth context cache.
+    await supabase.auth.signOut();
+    return NextResponse.redirect(`${origin}/login?error=unauthorized`);
   }
   return response;
 }

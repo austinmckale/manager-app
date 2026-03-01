@@ -70,13 +70,16 @@ export function computeJobCosting(input: JobCostingInput): JobCostingSummary {
     .filter((co) => co.status === "APPROVED")
     .reduce((acc, co) => acc + toNumber(co.total), 0);
 
-  const revenue = invoiceRevenue || estimateRevenue + approvedChangeOrders;
+  const derivedRevenue = invoiceRevenue || estimateRevenue + approvedChangeOrders;
+  const revenue = derivedRevenue || toNumber(input.estimatedTotalBudget);
   const grossProfit = revenue - totalCost;
   const grossMarginPercent = revenue > 0 ? (grossProfit / revenue) * 100 : 0;
 
-  const laborBudget = toNumber(input.estimatedLaborBudget);
-  const materialBudget = toNumber(input.estimatedMaterialsBudget);
-  const totalBudget = toNumber(input.estimatedTotalBudget);
+  // If explicit budgets are not set, treat the contract value (invoices/estimates)
+  // as the working budget baseline so cost health is still meaningful.
+  const totalBudget = toNumber(input.estimatedTotalBudget) || revenue;
+  const laborBudget = toNumber(input.estimatedLaborBudget) || totalBudget;
+  const materialBudget = toNumber(input.estimatedMaterialsBudget) || totalBudget;
 
   return {
     laborHours,

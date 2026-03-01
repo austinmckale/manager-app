@@ -382,7 +382,7 @@ async function TimePageContent({
               role: auth.role,
               actorUserId: auth.userId,
               entry,
-              workerCanEditOwnSameDay: settings?.workerCanEditOwnTimeSameDay ?? true,
+              workerCanEditOwnSameDay: false,
             });
             const hours = getWorkedHours(entry);
 

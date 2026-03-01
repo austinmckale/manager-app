@@ -99,6 +99,16 @@ What this means:
 - Share Link: `/share/[token]`
 - Client Portal: `/portal/[token]`
 
+## Discord Crew Digest
+
+- Configure in Settings -> Time Tracking & Alerts:
+  - `Enable daily Discord crew digest`
+  - `Digest time`
+  - `Discord webhook URL`
+- Optional scheduler endpoint (protected with `CRON_SECRET`):
+  - `GET /api/cron/discord-schedule-digest`
+  - Auth: `Authorization: Bearer <CRON_SECRET>` (or `?secret=` query param)
+
 ## Exports
 
 - Time CSV: `/api/export/time-entries`
