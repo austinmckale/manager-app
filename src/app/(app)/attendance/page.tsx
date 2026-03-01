@@ -504,11 +504,7 @@ async function AttendancePageContent({
                       <input type="hidden" name="workerId" value={worker.id} />
                       <input name="fullName" defaultValue={worker.fullName} placeholder="Full name" className="rounded-lg border border-slate-300 px-2 py-1 text-xs sm:col-span-2" />
                       <input name="phone" defaultValue={worker.phone ?? ""} placeholder="Phone" className="rounded-lg border border-slate-300 px-2 py-1 text-xs" />
-                      <select name="role" defaultValue={worker.role} className="rounded-lg border border-slate-300 px-2 py-1 text-xs">
-                        <option value="WORKER">Worker</option>
-                        <option value="ADMIN">Admin</option>
-                        <option value="OWNER">Owner</option>
-                      </select>
+                      <input type="hidden" name="role" value={worker.role} />
                       <input name="hourlyRateDefault" type="number" step="0.01" defaultValue={toNumber(worker.hourlyRateDefault) || ""} placeholder="Hourly rate" className="rounded-lg border border-slate-300 px-2 py-1 text-xs" />
                       <div className="flex items-center gap-2 sm:col-span-2">
                         <button type="submit" className="rounded-lg border border-slate-300 px-2 py-1 text-xs">Save</button>
