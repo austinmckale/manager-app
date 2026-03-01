@@ -26,9 +26,9 @@ export default async function TargetSettingsPage() {
   const [targets, settings] = isDemoMode()
     ? [[], null]
     : await Promise.all([
-        prisma.kpiTarget.findMany({ where: { orgId: auth.orgId }, orderBy: { effectiveDate: "desc" } }),
-        prisma.organizationSetting.findUnique({ where: { orgId: auth.orgId } }),
-      ]);
+      prisma.kpiTarget.findMany({ where: { orgId: auth.orgId }, orderBy: { effectiveDate: "desc" } }),
+      prisma.organizationSetting.findUnique({ where: { orgId: auth.orgId } }),
+    ]);
 
   const manage = canManageOrg(auth.role);
 
@@ -100,45 +100,60 @@ export default async function TargetSettingsPage() {
                 className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
               />
             </div>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                name="discordClockInAlertsEnabled"
-                defaultChecked={settings?.gpsTimeTrackingEnabled ?? false}
-              />
-              Enable Discord clock-in alerts from Overview
-            </label>
-            <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
-              <p className="text-xs font-medium text-slate-900">Discord schedule digest</p>
-              <p className="mt-1 text-[11px] text-slate-500">
-                Sends one morning digest with crew, client, location, schedule details, and open task notes.
-              </p>
-              <label className="mt-2 flex items-center gap-2 text-xs">
-                <input
-                  type="checkbox"
-                  name="discordScheduleDigestEnabled"
-                  defaultChecked={settings?.discordScheduleDigestEnabled ?? false}
-                />
-                Enable daily Discord crew digest
-              </label>
-              <div className="mt-2 grid gap-1 sm:grid-cols-2">
-                <label className="block text-xs text-slate-600">Digest time</label>
-                <input
-                  type="time"
-                  name="discordScheduleDigestTime"
-                  defaultValue={settings?.discordScheduleDigestTime ?? "06:00"}
-                  className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                />
-              </div>
-              <div className="mt-2 grid gap-1">
-                <label className="block text-xs text-slate-600">Discord webhook URL</label>
-                <input
-                  type="url"
-                  name="discordScheduleDigestWebhookUrl"
-                  placeholder="https://discord.com/api/webhooks/..."
-                  defaultValue={settings?.discordScheduleDigestWebhookUrl ?? ""}
-                  className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                />
+            <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-4 mt-2">
+              <h3 className="text-sm font-semibold text-indigo-900">Discord Integrations</h3>
+              <p className="mt-1 text-xs text-indigo-700">Connect your workspace to Discord for automated team updates.</p>
+
+              <div className="mt-4 space-y-4">
+                <label className="flex items-start gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    name="discordClockInAlertsEnabled"
+                    defaultChecked={settings?.gpsTimeTrackingEnabled ?? false}
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <span className="font-medium text-slate-900">Live Clock-in Alerts</span>
+                    <p className="text-slate-500">Post a message when crew members clock in or out.</p>
+                  </div>
+                </label>
+
+                <div className="h-px w-full bg-indigo-200/50" />
+
+                <label className="flex items-start gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    name="discordScheduleDigestEnabled"
+                    defaultChecked={settings?.discordScheduleDigestEnabled ?? false}
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <span className="font-medium text-slate-900">Daily Morning Digest</span>
+                    <p className="text-slate-500">Send a daily brief with crew assignments, locations, and tasks.</p>
+                  </div>
+                </label>
+
+                <div className="ml-5 grid gap-3 sm:grid-cols-2">
+                  <div className="grid gap-1">
+                    <label className="block text-xs text-slate-600">Digest time</label>
+                    <input
+                      type="time"
+                      name="discordScheduleDigestTime"
+                      defaultValue={settings?.discordScheduleDigestTime ?? "06:00"}
+                      className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div className="grid gap-1">
+                    <label className="block text-xs text-slate-600">Discord Webhook URL</label>
+                    <input
+                      type="url"
+                      name="discordScheduleDigestWebhookUrl"
+                      placeholder="https://discord.com/api/webhooks/..."
+                      defaultValue={settings?.discordScheduleDigestWebhookUrl ?? ""}
+                      className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                    />
+                  </div>
+                </div>
               </div>
             </div>
             <button type="submit" className="rounded-xl border border-slate-300 px-3 py-2">
