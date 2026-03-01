@@ -140,7 +140,7 @@ async function LeadsPageContent() {
             </div>
             <details className="relative">
               <summary className="cursor-pointer rounded-xl bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700">
-                + New Lead
+                New Lead
               </summary>
               <form action={createLeadAction} className="mt-3 grid gap-2 sm:grid-cols-2">
                 <input name="contactName" required placeholder="Contact name" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />

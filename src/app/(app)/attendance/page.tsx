@@ -476,7 +476,7 @@ async function AttendancePageContent({
 
         <section className="rounded-2xl border border-slate-200 bg-white p-4" id="add-worker-form">
           <details>
-            <summary className="cursor-pointer text-sm font-semibold text-slate-900 hover:text-teal-700">+ Add worker</summary>
+            <summary className="cursor-pointer text-sm font-semibold text-slate-900 hover:text-teal-700">Add worker</summary>
             <form action={createWorkerAction} className="mt-3 grid gap-2 sm:grid-cols-2">
               <input name="fullName" required placeholder="Full name" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
               <input name="email" type="email" required placeholder="Email" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
