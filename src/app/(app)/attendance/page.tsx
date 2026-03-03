@@ -87,7 +87,7 @@ async function AttendancePageContent({
     const ongoingStatuses: JobStatus[] = [JobStatus.SCHEDULED, JobStatus.IN_PROGRESS, JobStatus.ON_HOLD];
 
     type BootstrapTuple = [
-      { defaultClockInTime: string; clockGraceMinutes: number; workerCanEditOwnTimeSameDay: boolean; gpsTimeTrackingEnabled: boolean },
+      { defaultClockInTime: string; workerCanEditOwnTimeSameDay: boolean },
       Awaited<ReturnType<typeof getOrgUsers>>,
       Array<{ id: string; jobName: string }>,
       Array<{ id: string; workerId: string; jobId: string; start: Date; end: Date | null; job: { id: string; jobName: string } }>,
@@ -101,9 +101,7 @@ async function AttendancePageContent({
         Promise.all([
           Promise.resolve({
             defaultClockInTime: "07:00",
-            clockGraceMinutes: 10,
             workerCanEditOwnTimeSameDay: false,
-            gpsTimeTrackingEnabled: false,
           }),
           Promise.resolve(demoUsers),
           Promise.resolve(demoJobs),
@@ -164,9 +162,6 @@ async function AttendancePageContent({
             .then((value) =>
               value ?? {
                 defaultClockInTime: "07:00",
-                clockGraceMinutes: 10,
-                workerCanEditOwnTimeSameDay: false,
-                gpsTimeTrackingEnabled: false,
               },
             ),
           getOrgUsers(auth.orgId),
@@ -235,7 +230,7 @@ async function AttendancePageContent({
 
     const assignmentRows = assignmentRowsWithWeek;
     const clock = parseClockTime(settings?.defaultClockInTime);
-    const graceMinutes = settings?.clockGraceMinutes ?? 10;
+    const graceMinutes = 10;
     const missedAt = addMinutes(
       setSeconds(setMinutes(setHours(dayStart, clock.hour), clock.minute), 0),
       graceMinutes,

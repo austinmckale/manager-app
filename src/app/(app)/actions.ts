@@ -977,7 +977,7 @@ export async function sendDailyOpsDigestAction() {
         setMinutes(setHours(startOfDay(new Date()), Number(hourText || 7)), Number(minuteText || 0)),
         0,
       );
-      const cutoff = scheduled.getTime() + (settings?.clockGraceMinutes ?? 10) * 60000;
+      const cutoff = scheduled.getTime() + 10 * 60000;
 
       const workersWithOnTimeEntry = new Set(
         entries.filter((entry) => entry.start.getTime() <= cutoff).map((entry) => entry.workerId),
@@ -3150,7 +3150,7 @@ export async function sendMissingClockInsAlertAction() {
     setMinutes(setHours(startOfDay(new Date()), Number(hourText || 7)), Number(minuteText || 0)),
     0,
   );
-  const cutoff = scheduled.getTime() + (settings?.clockGraceMinutes ?? 10) * 60000;
+  const cutoff = scheduled.getTime() + 10 * 60000;
 
   const workersWithOnTimeEntry = new Set(
     entries.filter((entry) => entry.start.getTime() <= cutoff).map((entry) => entry.workerId),
@@ -3172,7 +3172,7 @@ export async function sendMissingClockInsAlertAction() {
   const content = [
     `⏰ Missing clock-ins for ${todayLabel}`,
     ``,
-    `Default clock-in: ${settings?.defaultClockInTime ?? "07:00"} (+${settings?.clockGraceMinutes ?? 10} min grace)`,
+    `Default clock-in: ${settings?.defaultClockInTime ?? "07:00"} (+10 min grace)`,
     `Missing (${missingWorkers.length}): ${names}`,
   ].join("\n");
 
