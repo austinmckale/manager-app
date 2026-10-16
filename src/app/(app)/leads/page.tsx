@@ -8,6 +8,7 @@ import { requireAuth } from "@/lib/auth";
 import { isDemoMode } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
 import { createRoutePerf } from "@/lib/route-perf";
+import { leadContactLinks, leadWaitAlert } from "@/lib/lead-contact";
 
 const stageOrder: LeadStage[] = [
   LeadStage.NEW,
@@ -181,12 +182,21 @@ async function LeadsPageContent() {
                   {stageLeads.map((lead) => {
                     const hasJob = !!lead.jobId;
                     const jobId = lead.jobId;
+                    const contact = leadContactLinks(lead);
+                    const waiting = lead.stage === LeadStage.NEW ? leadWaitAlert(lead.createdAt) : null;
                     return (
-                      <article key={lead.id} className="rounded-xl border border-slate-200 p-3">
+                      <article key={lead.id} id={`lead-${lead.id}`} className="scroll-mt-20 rounded-xl border border-slate-200 p-3">
                         {/* Lead info */}
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0 flex-1">
-                            <p className="text-sm font-semibold text-slate-900">{lead.contactName}</p>
+                            <p className="text-sm font-semibold text-slate-900">
+                              {lead.contactName}
+                              {waiting ? (
+                                <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 align-middle text-[10px] font-semibold text-red-700">
+                                  {waiting}
+                                </span>
+                              ) : null}
+                            </p>
                             <p className="text-xs text-slate-500">
                               {lead.serviceType || "Service TBD"} · {lead.source.replaceAll("_", " ")}
                             </p>
@@ -204,6 +214,40 @@ async function LeadsPageContent() {
                           <div className="mt-2 whitespace-pre-wrap rounded-lg bg-slate-50 px-2 py-1.5 text-xs text-slate-700">
                             {lead.notes}
                           </div>
+                        ) : null}
+
+                        {/* Reply in one tap: opens on Ryan's phone with a first message already written. */}
+                        <div className="mt-3 grid grid-cols-3 gap-2">
+                          {contact.call ? (
+                            <a href={contact.call} className="rounded-xl bg-teal-600 px-3 py-2.5 text-center text-sm font-semibold text-white hover:bg-teal-700">
+                              Call
+                            </a>
+                          ) : (
+                            <span className="rounded-xl bg-slate-100 px-3 py-2.5 text-center text-sm text-slate-400">No phone</span>
+                          )}
+                          {contact.text ? (
+                            <a href={contact.text} className="rounded-xl border border-teal-600 px-3 py-2.5 text-center text-sm font-semibold text-teal-700 hover:bg-teal-50">
+                              Text
+                            </a>
+                          ) : (
+                            <span className="rounded-xl bg-slate-100 px-3 py-2.5 text-center text-sm text-slate-400">No text</span>
+                          )}
+                          {contact.email ? (
+                            <a href={contact.email} className="rounded-xl border border-slate-300 px-3 py-2.5 text-center text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                              Email
+                            </a>
+                          ) : (
+                            <span className="rounded-xl bg-slate-100 px-3 py-2.5 text-center text-sm text-slate-400">No email</span>
+                          )}
+                        </div>
+                        {lead.stage === LeadStage.NEW ? (
+                          <form action={updateLeadStageAction} className="mt-2">
+                            <input type="hidden" name="leadId" value={lead.id} />
+                            <input type="hidden" name="stage" value={LeadStage.CONTACTED} />
+                            <button type="submit" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+                              Mark contacted
+                            </button>
+                          </form>
                         ) : null}
 
                         {/* Actions row — stage + convert inline */}
