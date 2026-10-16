@@ -6,7 +6,6 @@ import {
   updateOrgSettingsAction,
 } from "@/app/(app)/actions";
 import { format } from "date-fns";
-import Link from "next/link";
 import { requireAuth } from "@/lib/auth";
 import { isDemoMode } from "@/lib/demo";
 import { KPI_KEYS, ensureDefaultKpis } from "@/lib/kpis";
@@ -34,31 +33,10 @@ export default async function TargetSettingsPage() {
   const manage = canManageOrg(auth.role);
 
   return (
-    <div className="space-y-4">
-      <section className="rounded-2xl border border-teal-200 bg-teal-50 p-4">
-        <h2 className="text-base font-semibold text-teal-900">Team Setup</h2>
-        <p className="mt-1 text-sm text-teal-800">Add workers here first. Time tracking, payroll cost, assignments, and job accountability depend on this list.</p>
-      </section>
-
-      <section className="rounded-2xl border border-slate-200 bg-white p-4">
-        <h2 className="text-sm font-semibold text-slate-900">Where Margin + Cost Tracking Lives</h2>
-        <p className="mt-1 text-xs text-slate-500">Financial tracking was not removed — use these pages:</p>
-        <div className="mt-3 grid gap-2 sm:grid-cols-3">
-          <Link href="/jobs" className="rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-700 hover:bg-slate-50">
-            Jobs: per-job margin, labor, materials, receipts
-          </Link>
-          <Link href="/reports" className="rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-700 hover:bg-slate-50">
-            Reports: export time, expenses, profitability CSV
-          </Link>
-          <Link href="/accounting" className="rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-700 hover:bg-slate-50">
-            Accounting: unpaid invoices, labor/material snapshots
-          </Link>
-        </div>
-      </section>
-
+    <div className="flex flex-col gap-4">
       {manage ? (
-        <section className="rounded-2xl border border-slate-200 bg-white p-4" id="workers">
-          <h2 className="text-sm font-semibold text-slate-900">Add Worker</h2>
+        <details className="order-last rounded-2xl border border-slate-200 bg-white p-4" id="workers">
+          <summary className="cursor-pointer text-sm font-semibold text-slate-900">Crew tools (add a worker)</summary>
           <form action={createWorkerAction} className="mt-3 grid gap-2 sm:grid-cols-2" id="add-worker-form">
             <input name="fullName" required placeholder="Full name" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
             <input name="email" type="email" required placeholder="Email" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
@@ -72,31 +50,22 @@ export default async function TargetSettingsPage() {
               + Add Worker
             </button>
           </form>
-        </section>
+        </details>
       ) : null}
 
       {/* Worker list/edit lives on Attendance (Team). Keep this page focused on setup + rules. */}
 
       {manage ? (
         <section className="rounded-2xl border border-slate-200 bg-white p-4">
-          <h2 className="text-sm font-semibold text-slate-900">Time Tracking & Alerts</h2>
-          <p className="mt-1 text-xs text-slate-500">Controls attendance rules and optional Discord clock-in alerts.</p>
+          <h2 className="text-sm font-semibold text-slate-900">Phone reminders</h2>
+          <p className="mt-1 text-xs text-slate-500">Morning and evening messages to your phone through Discord.</p>
           <form action={updateOrgSettingsAction} className="mt-3 grid gap-3 text-sm">
-            <div className="grid gap-1 sm:grid-cols-2">
-              <label className="block text-xs text-slate-600">Default clock-in time</label>
-              <input
-                type="time"
-                name="defaultClockInTime"
-                defaultValue={settings?.defaultClockInTime ?? "07:00"}
-                className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
-              />
-            </div>
+            {/* Kept for the crew tools; not shown to a solo owner. */}
+            <input type="hidden" name="defaultClockInTime" value={settings?.defaultClockInTime ?? "07:00"} />
 
-            <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-4 mt-2">
-              <h3 className="text-sm font-semibold text-indigo-900">Discord Integrations</h3>
-              <p className="mt-1 text-xs text-indigo-700">Connect your workspace to Discord for automated team updates.</p>
+            <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-4">
 
-              <div className="mt-4 space-y-4">
+              <div className="space-y-4">
                 <label className="flex items-start gap-2 text-xs">
                   <input
                     type="checkbox"
@@ -105,13 +74,13 @@ export default async function TargetSettingsPage() {
                     className="mt-0.5"
                   />
                   <div>
-                    <span className="font-medium text-slate-900">End of Day Wrap-up</span>
-                    <p className="text-slate-500">Send an evening reminder to clock out and log material receipts.</p>
+                    <span className="font-medium text-slate-900">Evening wrap-up</span>
+                    <p className="text-slate-500">A reminder to log today&apos;s receipts and photos.</p>
                   </div>
                 </label>
 
                 <div className="ml-5 grid gap-1 sm:max-w-xs">
-                  <label className="block text-xs text-slate-600">EOD Digest time</label>
+                  <label className="block text-xs text-slate-600">Time</label>
                   <input
                     type="time"
                     name="discordEodDigestTime"
@@ -130,14 +99,14 @@ export default async function TargetSettingsPage() {
                     className="mt-0.5"
                   />
                   <div>
-                    <span className="font-medium text-slate-900">Daily Morning Digest</span>
-                    <p className="text-slate-500">Send a daily brief with crew assignments, locations, and tasks.</p>
+                    <span className="font-medium text-slate-900">Morning rundown</span>
+                    <p className="text-slate-500">Today&apos;s jobs, addresses and to-dos.</p>
                   </div>
                 </label>
 
                 <div className="ml-5 grid gap-3 sm:grid-cols-2">
                   <div className="grid gap-1">
-                    <label className="block text-xs text-slate-600">Digest time</label>
+                    <label className="block text-xs text-slate-600">Time</label>
                     <input
                       type="time"
                       name="discordScheduleDigestTime"
@@ -146,7 +115,7 @@ export default async function TargetSettingsPage() {
                     />
                   </div>
                   <div className="grid gap-1">
-                    <label className="block text-xs text-slate-600">Discord Webhook URL</label>
+                    <label className="block text-xs text-slate-600">Discord link (webhook)</label>
                     <input
                       type="url"
                       name="discordScheduleDigestWebhookUrl"
@@ -159,7 +128,7 @@ export default async function TargetSettingsPage() {
               </div>
             </div>
             <button type="submit" className="rounded-xl border border-slate-300 px-3 py-2">
-              Save Rules
+              Save
             </button>
           </form>
           <div className="flex flex-wrap gap-2 mt-2">
@@ -169,7 +138,7 @@ export default async function TargetSettingsPage() {
                   type="submit"
                   className="rounded-xl border border-indigo-300 bg-indigo-50 px-3 py-2 text-xs text-indigo-700 hover:bg-indigo-100"
                 >
-                  Send Morning schedule digest now
+                  Send morning rundown now
                 </button>
               </form>
             ) : null}
@@ -180,20 +149,20 @@ export default async function TargetSettingsPage() {
                   type="submit"
                   className="rounded-xl border border-fuchsia-300 bg-fuchsia-50 px-3 py-2 text-xs text-fuchsia-700 hover:bg-fuchsia-100"
                 >
-                  Send EOD Wrap-up digest now
+                  Send evening wrap-up now
                 </button>
               </form>
             ) : null}
 
             {!settings?.discordScheduleDigestWebhookUrl || (!settings?.discordScheduleDigestEnabled && !settings?.discordEodDigestEnabled) ? (
-              <p className="mt-2 text-[11px] text-slate-500">Enable a digest + add webhook URL, then save rules to unlock &quot;Send now&quot; buttons.</p>
+              <p className="mt-2 text-[11px] text-slate-500">Turn one on and add the Discord link, then save to test it.</p>
             ) : null}
           </div>
         </section>
       ) : null}
 
       <details className="rounded-2xl border border-slate-200 bg-white p-4">
-        <summary className="cursor-pointer text-sm font-semibold text-slate-900">Advanced: KPI Targets (Optional)</summary>
+        <summary className="cursor-pointer text-sm font-semibold text-slate-900">Profit targets</summary>
         {manage ? (
           <form action={createTargetAction} className="mt-3 grid gap-2 sm:grid-cols-4">
             <select name="kpiKey" required className="rounded-xl border border-slate-300 px-3 py-2 text-sm sm:col-span-2">

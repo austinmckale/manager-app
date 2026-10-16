@@ -2,13 +2,13 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Plus, FileText, PhoneIncoming, BriefcaseBusiness } from "lucide-react";
+import { Plus, FileText, PhoneIncoming, BriefcaseBusiness, Receipt } from "lucide-react";
 
 const actions = [
-  { href: "/leads#new-lead-form", label: "New Lead (estimate)", icon: PhoneIncoming },
-  { href: "/jobs#new-job", label: "New Job (already sold)", icon: BriefcaseBusiness },
-  { href: "/attendance", label: "Clock Employees", icon: Plus },
-  { href: "/jobs#joist-import", label: "Joist Import (CSV/PDF)", icon: FileText },
+  { href: "/leads#new-lead-form", label: "New lead", icon: PhoneIncoming },
+  { href: "/jobs#new-job", label: "New job (already sold)", icon: BriefcaseBusiness },
+  { href: "/capture", label: "Snap a receipt", icon: Receipt },
+  { href: "/jobs#joist-import", label: "Import from Joist", icon: FileText },
 ];
 
 export function QuickActionsFab() {

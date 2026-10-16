@@ -3,7 +3,6 @@ import {
   ChartColumnBig,
   BriefcaseBusiness,
   CalendarDays,
-  UsersRound,
   Settings,
   PhoneIncoming,
 } from "lucide-react";
@@ -18,11 +17,10 @@ type AppShellProps = {
 };
 
 const navItems = [
-  { href: "/today", label: "Overview", icon: CalendarDays },
+  { href: "/today", label: "Today", icon: CalendarDays },
   { href: "/leads", label: "Leads", icon: PhoneIncoming },
   { href: "/jobs", label: "Jobs", icon: BriefcaseBusiness },
-  { href: "/reports", label: "Reports", icon: ChartColumnBig },
-  { href: "/attendance", label: "Team", icon: UsersRound },
+  { href: "/reports", label: "Money", icon: ChartColumnBig },
   { href: "/settings/targets", label: "Settings", icon: Settings },
 ];
 
@@ -30,7 +28,7 @@ export function AppShell({ title, userName, children }: AppShellProps) {
   return (
     <div className="mx-auto min-h-dvh max-w-5xl bg-white pb-24">
       <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur">
-        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">FieldFlow Manager</p>
+        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Manager</p>
         <div className="mt-1 flex items-center justify-between">
           <h1 className="text-xl font-semibold text-slate-900">{title}</h1>
           <span className="rounded-full bg-teal-50 px-3 py-1 text-xs font-medium text-teal-700">{userName}</span>
@@ -41,7 +39,7 @@ export function AppShell({ title, userName, children }: AppShellProps) {
       <AuthSessionWarmup />
       <NavPrefetch />
       <nav className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto grid max-w-5xl grid-cols-6 gap-1 px-1 py-1">
+        <div className="mx-auto grid max-w-5xl grid-cols-5 gap-1 px-1 py-1">
           {navItems.map((item) => {
             const Icon = item.icon;
             return (

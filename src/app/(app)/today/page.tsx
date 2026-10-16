@@ -1,31 +1,35 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { endOfDay, endOfWeek, format, setHours, setMinutes, setSeconds, startOfDay, startOfWeek } from "date-fns";
+import { LeadStage } from "@prisma/client";
+import { endOfDay, format, startOfDay } from "date-fns";
 import { requireAuth } from "@/lib/auth";
 import { getTodayOpsSummary } from "@/lib/data";
 import { isDemoMode } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
 import { createRoutePerf } from "@/lib/route-perf";
 import { RoutePanelSkeleton } from "@/components/route-panel-skeleton";
-import { currency } from "@/lib/utils";
-import { sendMissingClockInsAlertAction } from "@/app/(app)/actions";
+import { leadContactLinks, leadWaitAlert } from "@/lib/lead-contact";
 
-type TeamSnapshot = {
-  missingClockIns: number;
-  discordClockInAlertsEnabled: boolean;
-};
-
-type WeeklyPayrollSnapshot = {
-  totalGrossPay: number;
-}
-
+/**
+ * Today, for an owner who runs the jobs himself: who to call back, where he's working,
+ * and what still needs a photo or a receipt. Crew tools (clock-ins, payroll) live off this screen.
+ */
 export default function TodayPage() {
   return (
-    <Suspense fallback={<RoutePanelSkeleton cards={4} sections={3} />}>
+    <Suspense fallback={<RoutePanelSkeleton cards={3} sections={3} />}>
       <TodayPageContent />
     </Suspense>
   );
 }
+
+type CallbackLead = {
+  id: string;
+  contactName: string;
+  phone: string | null;
+  email: string | null;
+  serviceType: string | null;
+  createdAt: Date;
+};
 
 async function TodayPageContent() {
   const perf = createRoutePerf("/today");
@@ -35,249 +39,173 @@ async function TodayPageContent() {
     const auth = await perf.time("auth", () => requireAuth());
     orgId = auth.orgId;
     role = auth.role;
-    const [ops, teamSnapshot, weeklyPayroll] = await perf.time("bootstrap", () => Promise.all([
-      getTodayOpsSummary({ orgId: auth.orgId, userId: auth.userId, role: auth.role }),
-      (async (): Promise<TeamSnapshot> => {
-        if (isDemoMode()) {
-          return {
-            missingClockIns: 1,
-            discordClockInAlertsEnabled: false,
-          };
-        }
 
-        const [settings, users, entries] = await Promise.all([
-          prisma.organizationSetting.findUnique({ where: { orgId: auth.orgId } }),
-          prisma.userProfile.findMany({
-            where: { orgId: auth.orgId, isActive: true },
-            select: { id: true },
-          }),
-          prisma.timeEntry.findMany({
-            where: {
-              job: { orgId: auth.orgId },
-              start: { gte: startOfDay(new Date()), lte: endOfDay(new Date()) },
-            },
-            select: { workerId: true, start: true },
-          }),
-        ]);
+    const [ops, callbacks] = await perf.time("bootstrap", () =>
+      Promise.all([
+        getTodayOpsSummary({ orgId: auth.orgId, userId: auth.userId, role: auth.role }),
+        isDemoMode()
+          ? Promise.resolve<CallbackLead[]>([
+              {
+                id: "demo-lead-new",
+                contactName: "Dana Miller",
+                phone: "555-303-4040",
+                email: "dana@example.com",
+                serviceType: "Bathroom remodel",
+                createdAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
+              },
+            ])
+          : prisma.lead.findMany({
+              where: { orgId: auth.orgId, stage: LeadStage.NEW, jobId: null },
+              orderBy: { createdAt: "asc" },
+              take: 5,
+              select: { id: true, contactName: true, phone: true, email: true, serviceType: true, createdAt: true },
+            }),
+      ]),
+    );
 
-        const [hourText, minuteText] = (settings?.defaultClockInTime ?? "07:00").split(":");
-        const scheduled = setSeconds(
-          setMinutes(setHours(startOfDay(new Date()), Number(hourText || 7)), Number(minuteText || 0)),
-          0,
-        );
-        const cutoff = scheduled.getTime() + 10 * 60000;
-
-        const workersWithEntryByCutoff = new Set(
-          entries.filter((entry) => entry.start.getTime() <= cutoff).map((entry) => entry.workerId),
-        );
-
-        return {
-          missingClockIns: users.filter((user) => !workersWithEntryByCutoff.has(user.id)).length,
-          discordClockInAlertsEnabled: false,
-        };
-      })(),
-      (async (): Promise<WeeklyPayrollSnapshot> => {
-        if (isDemoMode()) {
-          return {
-            totalGrossPay: 684.5,
-          };
-        }
-
-        const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
-        const weekEnd = endOfWeek(new Date(), { weekStartsOn: 1 });
-        const rows = await prisma.$queryRaw<Array<{ totalGrossPay: number | string | null }>>`
-        SELECT COALESCE(
-          SUM(
-            (
-              GREATEST((EXTRACT(EPOCH FROM ("TimeEntry"."end" - "TimeEntry"."start")) / 60 - "TimeEntry"."breakMinutes"), 0)
-              / 60.0
-            ) * "TimeEntry"."hourlyRateLoaded"
-          ),
-          0
-        ) AS "totalGrossPay"
-        FROM "TimeEntry"
-        INNER JOIN "Job" ON "Job"."id" = "TimeEntry"."jobId"
-        WHERE "Job"."orgId" = ${auth.orgId}::uuid
-          AND "TimeEntry"."start" >= ${weekStart}
-          AND "TimeEntry"."start" <= ${weekEnd}
-          AND "TimeEntry"."end" IS NOT NULL
-      `;
-        const totalGrossPay = Number(rows[0]?.totalGrossPay ?? 0);
-
-        return {
-          totalGrossPay,
-        };
-      })(),
-    ]));
-
-    const captureCountsByJob = await perf.time("capture", async () => {
-      if (isDemoMode()) return {} as Record<string, { photosToday: number; receiptsToday: number }>;
-
-      const todayJobIds = [...new Set(ops.todayEvents.map((event) => event.job.id))];
-      if (todayJobIds.length === 0) return {} as Record<string, { photosToday: number; receiptsToday: number }>;
-
-      const todayStart = startOfDay(new Date());
-      const todayEnd = endOfDay(new Date());
-      const assets = await prisma.fileAsset.findMany({
+    const todayJobIds = [...new Set(ops.todayEvents.map((event) => event.job.id))];
+    const photosToday = await perf.time("photos", async () => {
+      if (isDemoMode() || todayJobIds.length === 0) return new Map<string, number>();
+      const rows = await prisma.fileAsset.groupBy({
+        by: ["jobId"],
         where: {
           jobId: { in: todayJobIds },
-          createdAt: { gte: todayStart, lte: todayEnd },
-          type: { in: ["PHOTO", "RECEIPT"] },
+          type: "PHOTO",
+          createdAt: { gte: startOfDay(new Date()), lte: endOfDay(new Date()) },
         },
-        select: { jobId: true, type: true },
+        _count: { _all: true },
       });
-
-      const summary: Record<string, { photosToday: number; receiptsToday: number }> = {};
-      for (const asset of assets) {
-        const current = summary[asset.jobId] ?? { photosToday: 0, receiptsToday: 0 };
-        if (asset.type === "PHOTO") current.photosToday += 1;
-        if (asset.type === "RECEIPT") current.receiptsToday += 1;
-        summary[asset.jobId] = current;
-      }
-      return summary;
+      return new Map(rows.map((row) => [row.jobId, row._count._all]));
     });
 
-    const jobsTodayCount = new Set(ops.todayEvents.map((event) => event.job.id)).size;
-    const visitsTodayCount = ops.todayEvents.length;
+    const jobs = new Map<string, { id: string; name: string; address: string | null; events: typeof ops.todayEvents }>();
+    for (const event of ops.todayEvents) {
+      const existing = jobs.get(event.job.id) ?? {
+        id: event.job.id,
+        name: event.job.jobName,
+        address: "address" in event.job ? (event.job.address as string | null) : null,
+        events: [] as typeof ops.todayEvents,
+      };
+      existing.events.push(event);
+      jobs.set(event.job.id, existing);
+    }
 
     return (
       <div className="space-y-4">
         <section className="rounded-2xl border border-slate-200 bg-white p-4">
-          <h2 className="text-sm font-semibold text-slate-900">Daily Command</h2>
-          <p className="mt-1 text-xs text-slate-500">Only today-critical actions for mobile use.</p>
-          <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
-            <Link href="/jobs?view=today&focus=visits" className="rounded-xl border border-slate-200 bg-slate-50 p-3 hover:bg-slate-100">
-              <p className="text-xs text-slate-500">Visits today</p>
-              <p className="mt-1 text-xl font-semibold text-slate-900">{visitsTodayCount}</p>
-            </Link>
-            <Link href="/leads?stage=NEW" className="rounded-xl border border-rose-200 bg-rose-50 p-3 hover:bg-rose-100">
-              <p className="text-xs text-rose-700">New leads</p>
-              <p className="mt-1 text-xl font-semibold text-rose-700">{ops.newLeadsAwaitingContact}</p>
-            </Link>
-            <Link href="/attendance" className="rounded-xl border border-amber-200 bg-amber-50 p-3 hover:bg-amber-100">
-              <p className="text-xs text-amber-700">Missing clock-ins</p>
-              <p className="mt-1 text-xl font-semibold text-amber-700">{teamSnapshot.missingClockIns}</p>
-            </Link>
-            <Link href="/time" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 hover:bg-emerald-100">
-              <p className="text-xs text-emerald-700">Payroll week</p>
-              <p className="mt-1 text-xl font-semibold text-emerald-700">{currency(weeklyPayroll.totalGrossPay)}</p>
-            </Link>
-            <Link href="/capture" className="rounded-xl border border-cyan-200 bg-cyan-50 p-3 hover:bg-cyan-100">
-              <p className="text-xs text-cyan-700">Field capture</p>
-              <p className="mt-1 text-xl font-semibold text-cyan-700">Open</p>
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-semibold text-slate-900">Call back</h2>
+            <Link href="/leads" className="text-xs font-semibold text-teal-700">
+              All leads →
             </Link>
           </div>
-
-        </section>
-
-        <section className="rounded-2xl border border-slate-200 bg-white p-4">
-          <h2 className="text-sm font-semibold text-slate-900">Attention Queue</h2>
-          <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-            <Link href="/jobs#overdue-tasks" className="rounded-xl border border-amber-200 bg-amber-50 p-3">
-              <p className="text-xs text-amber-700">Overdue tasks</p>
-              <p className="mt-1 text-xl font-semibold text-amber-700">{ops.overdueTasksCount}</p>
-            </Link>
-            <Link href="/jobs#missing-receipts" className="rounded-xl border border-sky-200 bg-sky-50 p-3">
-              <p className="text-xs text-sky-700">Missing receipts</p>
-              <p className="mt-1 text-xl font-semibold text-sky-700">{ops.missingReceipts}</p>
-            </Link>
-          </div>
-          {teamSnapshot.discordClockInAlertsEnabled && teamSnapshot.missingClockIns > 0 ? (
-            <form action={sendMissingClockInsAlertAction} className="mt-3">
-              <button
-                type="submit"
-                className="w-full rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-700 hover:bg-rose-100"
-              >
-                Send Discord clock-in alert
-              </button>
-            </form>
-          ) : null}
-        </section>
-
-        <section className="rounded-2xl border border-slate-200 bg-white p-4">
-          <h2 className="text-sm font-semibold text-slate-900">Today Job Run Sheet</h2>
-          <p className="mt-1 text-xs text-slate-500">
-            All scheduled blocks today. For each row: Hub for scope, Time for hours, Capture for photos and receipts.
-          </p>
-          <p className="mt-1 text-xs font-semibold text-slate-700">
-            Today: {jobsTodayCount} job{jobsTodayCount === 1 ? "" : "s"} | {visitsTodayCount} visit
-            {visitsTodayCount === 1 ? "" : "s"} | {teamSnapshot.missingClockIns} missing clock-in
-            {teamSnapshot.missingClockIns === 1 ? "" : "s"}
-          </p>
-          <div className="mt-3 space-y-2 text-sm">
-            {(() => {
-              const seen = new Set<string>();
-              const todayDeduped = ops.todayEvents.filter((event) => {
-                const key = `${event.job.id}-${new Date(event.startAt).getTime()}-${new Date(event.endAt).getTime()}`;
-                if (seen.has(key)) return false;
-                seen.add(key);
-                return true;
-              });
-              const grouped = new Map<
-                string,
-                {
-                  jobId: string;
-                  jobName: string;
-                  events: typeof todayDeduped;
-                }
-              >();
-              for (const event of todayDeduped) {
-                const jobId = event.job.id;
-                const jobName = event.job.jobName;
-                const existing = grouped.get(jobId) ?? { jobId, jobName, events: [] as typeof todayDeduped };
-                existing.events = [...existing.events, event];
-                grouped.set(jobId, existing);
-              }
-              return [...grouped.values()].map((group) => {
-                const capture = captureCountsByJob[group.jobId];
+          {callbacks.length === 0 ? (
+            <p className="mt-2 text-sm text-slate-500">Nobody waiting. Nice.</p>
+          ) : (
+            <ul className="mt-3 space-y-2">
+              {callbacks.map((lead) => {
+                const links = leadContactLinks(lead);
+                const waiting = leadWaitAlert(lead.createdAt);
                 return (
-                  <article key={group.jobId} className="rounded-xl border border-slate-200 p-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="font-medium text-slate-900">{group.jobName}</p>
-                        {capture ? (
-                          <p className="mt-0.5 text-[11px] text-slate-500">
-                            Photos today: {capture.photosToday} | Receipts: {capture.receiptsToday}
-                          </p>
-                        ) : null}
-                        <ul className="mt-1 space-y-0.5 text-xs text-slate-600">
-                          {group.events.map((event) => (
-                            <li key={event.id}>
-                              <span className="font-medium">
-                                {format(event.startAt, "h:mm a")} - {format(event.endAt, "h:mm a")}
-                              </span>
-                              {event.notes ? <span className="text-slate-500"> | {event.notes}</span> : null}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                      <div className="flex shrink-0 gap-1">
-                        <Link href={`/jobs/${group.jobId}`} className="rounded-lg border border-slate-300 px-2 py-1 text-xs">
-                          Hub
-                        </Link>
-                        <Link
-                          href={`/time?jobId=${group.jobId}`}
-                          className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
-                        >
-                          Time
-                        </Link>
-                        <Link
-                          href={`/jobs/${group.jobId}#capture`}
-                          className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
-                        >
-                          Photos / Receipts
-                        </Link>
-                      </div>
+                  <li key={lead.id} className="rounded-xl border border-slate-200 p-3">
+                    <p className="text-sm font-semibold text-slate-900">
+                      {lead.contactName}
+                      {waiting ? (
+                        <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 align-middle text-[10px] font-semibold text-red-700">
+                          {waiting}
+                        </span>
+                      ) : null}
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      {lead.serviceType || "Service TBD"} · came in {format(lead.createdAt, "EEE h:mm a")}
+                    </p>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      {links.call ? (
+                        <a href={links.call} className="rounded-xl bg-teal-600 py-2.5 text-center text-sm font-semibold text-white">
+                          Call
+                        </a>
+                      ) : null}
+                      {links.text ? (
+                        <a href={links.text} className="rounded-xl border border-teal-600 py-2.5 text-center text-sm font-semibold text-teal-700">
+                          Text
+                        </a>
+                      ) : null}
                     </div>
-                  </article>
+                  </li>
                 );
-              });
-            })()}
-            {ops.todayEvents.length === 0 ? (
-              <p className="text-sm text-slate-500">No schedule blocks for today. Add blocks on each job hub.</p>
-            ) : null}
-          </div>
+              })}
+            </ul>
+          )}
         </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-4">
+          <h2 className="text-base font-semibold text-slate-900">Today&apos;s jobs</h2>
+          {jobs.size === 0 ? (
+            <p className="mt-2 text-sm text-slate-500">Nothing scheduled today. Add visits from a job&apos;s page.</p>
+          ) : (
+            <ul className="mt-3 space-y-2">
+              {[...jobs.values()].map((job) => {
+                const photos = photosToday.get(job.id) ?? 0;
+                return (
+                  <li key={job.id} className="rounded-xl border border-slate-200 p-3">
+                    <p className="text-sm font-semibold text-slate-900">{job.name}</p>
+                    {job.address ? <p className="text-xs text-slate-500">{job.address}</p> : null}
+                    <ul className="mt-1 space-y-0.5 text-xs text-slate-600">
+                      {job.events.map((event) => (
+                        <li key={event.id}>
+                          <span className="font-medium">
+                            {format(event.startAt, "h:mm a")}–{format(event.endAt, "h:mm a")}
+                          </span>
+                          {event.notes ? <span className="text-slate-500"> · {event.notes}</span> : null}
+                        </li>
+                      ))}
+                    </ul>
+                    {photos === 0 && !isDemoMode() ? (
+                      <p className="mt-2 rounded-lg bg-amber-50 px-2 py-1.5 text-xs text-amber-800">
+                        No photos yet today. Snap a few before you leave.
+                      </p>
+                    ) : null}
+                    <div className="mt-2 grid grid-cols-3 gap-2">
+                      <Link href={`/jobs/${job.id}`} className="rounded-xl border border-slate-300 py-2 text-center text-xs font-semibold text-slate-700">
+                        Open job
+                      </Link>
+                      <Link href={`/jobs/${job.id}/photos`} className="rounded-xl border border-slate-300 py-2 text-center text-xs font-semibold text-slate-700">
+                        Photos
+                      </Link>
+                      {job.address ? (
+                        <a
+                          href={`https://maps.google.com/?q=${encodeURIComponent(job.address)}`}
+                          className="rounded-xl border border-slate-300 py-2 text-center text-xs font-semibold text-slate-700"
+                        >
+                          Directions
+                        </a>
+                      ) : (
+                        <span />
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+
+        {ops.missingReceipts > 0 || ops.overdueTasksCount > 0 ? (
+          <section className="grid grid-cols-2 gap-2">
+            {ops.missingReceipts > 0 ? (
+              <Link href="/capture" className="rounded-2xl border border-sky-200 bg-sky-50 p-3">
+                <p className="text-xs text-sky-700">Expenses missing a receipt</p>
+                <p className="mt-1 text-xl font-semibold text-sky-800">{ops.missingReceipts}</p>
+              </Link>
+            ) : null}
+            {ops.overdueTasksCount > 0 ? (
+              <Link href="/jobs#overdue-tasks" className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
+                <p className="text-xs text-amber-700">Overdue to-dos</p>
+                <p className="mt-1 text-xl font-semibold text-amber-800">{ops.overdueTasksCount}</p>
+              </Link>
+            ) : null}
+          </section>
+        ) : null}
       </div>
     );
   } finally {
