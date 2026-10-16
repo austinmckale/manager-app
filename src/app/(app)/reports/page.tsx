@@ -27,6 +27,7 @@ export default async function ReportsPage() {
         },
       ]
     : await prisma.job.findMany({
+        relationLoadStrategy: "join",
         where: { orgId: auth.orgId },
         include: {
           estimates: true,

@@ -1,4 +1,5 @@
 import { endOfDay, endOfWeek, isAfter, isBefore, isSameDay, startOfDay, startOfWeek, subHours } from "date-fns";
+import { cache } from "react";
 import { notFound } from "next/navigation";
 import { JobStatus, LeadStage, Role } from "@prisma/client";
 import {
@@ -148,6 +149,7 @@ export async function getJobs(params: {
   };
 
   return prisma.job.findMany({
+    relationLoadStrategy: "join",
     where,
     orderBy: { updatedAt: "desc" },
     include: {
@@ -213,6 +215,7 @@ export async function getJobsPageAlerts(params: { orgId: string; role: Role; use
 
   const [overdueTasks, expensesNoReceipt] = await Promise.all([
     prisma.task.findMany({
+      relationLoadStrategy: "join",
       where: {
         job: { orgId: params.orgId, ...assignmentFilter },
         dueDate: { lt: todayStart },
@@ -310,6 +313,12 @@ export async function getJobById(params: {
   userId: string;
   jobId: string;
 }) {
+  return getJobByIdCached(params.orgId, params.jobId);
+}
+
+// The job hub layout and the active tab page both load the job; cache() shares one load per request.
+const getJobByIdCached = cache(async (orgId: string, jobId: string) => {
+  const params = { orgId, jobId };
   if (isDemoMode()) {
     const assignments = getMergedDemoAssignments();
     const scheduleEvents = getMergedDemoScheduleEvents();
@@ -334,6 +343,8 @@ export async function getJobById(params: {
   }
 
   const job = await prisma.job.findFirst({
+    // One SQL round trip for the job and all related rows, instead of one per relation.
+    relationLoadStrategy: "join",
     where: {
       id: params.jobId,
       orgId: params.orgId,
@@ -365,7 +376,7 @@ export async function getJobById(params: {
 
   if (!job) notFound();
   return job;
-}
+});
 
 export async function getRunningTimer(userId: string) {
   if (isDemoMode()) return null;

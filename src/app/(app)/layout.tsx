@@ -3,7 +3,8 @@ import { AppShell } from "@/components/app-shell";
 import { requireAuth } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
-export const preferredRegion = "sfo1";
+// The Supabase database is in AWS us-west-2 (Oregon); pdx1 runs in that same region.
+export const preferredRegion = "pdx1";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   let auth;

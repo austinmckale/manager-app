@@ -58,7 +58,8 @@ async function TimePageContent({
   const from = params.from ? new Date(params.from) : defaultFrom;
   const to = params.to ? new Date(params.to) : now;
 
-    const [users, jobs, settings] = await perf.time("bootstrap", () =>
+    // These four loads are independent; start them together instead of one after another.
+    const bootstrapPromise = perf.time("bootstrap", () =>
       Promise.all([
         getOrgUsers(auth.orgId),
         isDemoMode()
@@ -76,7 +77,7 @@ async function TimePageContent({
       ]),
     );
 
-    const rawEntries = await perf.time("entries", async () =>
+    const rawEntriesPromise = perf.time("entries", async () =>
       isDemoMode()
         ? listDemoRuntimeTimeEntries().map((entry) => ({
             ...entry,
@@ -109,11 +110,9 @@ async function TimePageContent({
           }),
     );
 
-  const entries = rawEntries.filter((e) => e.start >= from && e.start <= to);
-
-    const weeklyEntries = await perf.time("weekly_entries", async () =>
+    const weeklyEntriesPromise = perf.time("weekly_entries", async () =>
       isDemoMode()
-        ? rawEntries.filter((e) => e.start >= weekStart && e.start <= weekEnd)
+        ? (await rawEntriesPromise).filter((e) => e.start >= weekStart && e.start <= weekEnd)
         : await prisma.timeEntry.findMany({
             where: {
               job: { orgId: auth.orgId },
@@ -136,7 +135,7 @@ async function TimePageContent({
           }),
     );
 
-    const payrollWeekStateLogs = await perf.time("week_state", async () =>
+    const payrollWeekStateLogsPromise = perf.time("week_state", async () =>
       isDemoMode()
         ? []
         : await prisma.activityLog.findMany({
@@ -151,6 +150,14 @@ async function TimePageContent({
             take: 100,
           }),
     );
+
+    const [[users, jobs, settings], rawEntries, weeklyEntries, payrollWeekStateLogs] = await Promise.all([
+      bootstrapPromise,
+      rawEntriesPromise,
+      weeklyEntriesPromise,
+      payrollWeekStateLogsPromise,
+    ]);
+    const entries = rawEntries.filter((e) => e.start >= from && e.start <= to);
 
   const payrollByWorker = new Map<string, { workerName: string; hours: number; laborCost: number; entryCount: number }>();
   for (const entry of entries) {

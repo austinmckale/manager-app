@@ -41,6 +41,12 @@ export async function ensureDefaultKpis() {
     },
   ];
 
+  // Settings calls this on every page view; skip the writes once every default KPI exists.
+  const existingCount = await prisma.kpi.count({
+    where: { kpiKey: { in: defaults.map((kpi) => kpi.kpiKey) } },
+  });
+  if (existingCount === defaults.length) return;
+
   for (const kpi of defaults) {
     await prisma.kpi.upsert({
       where: { kpiKey: kpi.kpiKey },
