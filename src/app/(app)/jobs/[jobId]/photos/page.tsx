@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { addDays, startOfDay } from "date-fns";
 import { togglePortfolioAction } from "@/app/(app)/actions";
-import { FileCapture } from "@/components/file-capture";
+
 import { requireAuth } from "@/lib/auth";
 import { getJobById } from "@/lib/data";
 import { getStoragePublicUrl } from "@/lib/utils";
@@ -81,13 +81,13 @@ export default async function PhotosPage({
                                                         <input type="hidden" name="assetId" value={asset.id} />
                                                         <button
                                                             type="submit"
-                                                            title={asset.isPortfolio ? "Remove from portfolio" : "Add to portfolio"}
+                                                            title={asset.isPortfolio ? "Review website photo" : "Review for website"}
                                                             className={`rounded-lg px-1.5 py-0.5 text-[10px] font-semibold shadow-sm backdrop-blur-sm ${asset.isPortfolio
                                                                     ? "bg-teal-600/90 text-white"
-                                                                    : "bg-white/80 text-slate-600 opacity-0 group-hover:opacity-100"
+                                                                    : "bg-white/80 text-slate-600 "
                                                                 }`}
                                                         >
-                                                            {asset.isPortfolio ? "Portfolio On" : "Add Portfolio"}
+                                                            {asset.isPortfolio ? "On website" : "Review"}
                                                         </button>
                                                     </form>
                                                     {asset.stage ? (
@@ -130,13 +130,13 @@ export default async function PhotosPage({
                                                         <input type="hidden" name="assetId" value={asset.id} />
                                                         <button
                                                             type="submit"
-                                                            title={asset.isPortfolio ? "Remove from portfolio" : "Add to portfolio"}
+                                                            title={asset.isPortfolio ? "Review website photo" : "Review for website"}
                                                             className={`rounded-lg px-1.5 py-0.5 text-[10px] font-semibold shadow-sm backdrop-blur-sm ${asset.isPortfolio
                                                                     ? "bg-teal-600/90 text-white"
-                                                                    : "bg-white/80 text-slate-600 opacity-0 group-hover:opacity-100"
+                                                                    : "bg-white/80 text-slate-600 "
                                                                 }`}
                                                         >
-                                                            {asset.isPortfolio ? "Portfolio On" : "Add Portfolio"}
+                                                            {asset.isPortfolio ? "On website" : "Review"}
                                                         </button>
                                                     </form>
                                                     {asset.stage ? (

@@ -3,6 +3,7 @@
 import { useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { createClientSupabase } from "@/lib/supabase/client";
+import { CrewInstallHelp } from "@/components/crew-install-help";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -40,7 +41,7 @@ export default function LoginPage() {
       } catch {
         throw new Error("This account is not authorized for this dashboard.");
       }
-      router.replace("/today");
+      router.replace("/");
       router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Login failed");
@@ -58,6 +59,7 @@ export default function LoginPage() {
         provider: "google",
         options: {
           redirectTo: `${window.location.origin}/auth/callback`,
+          queryParams: { prompt: "select_account" },
         },
       });
       if (error) throw error;
@@ -70,9 +72,10 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-dvh items-center justify-center px-4 py-8">
       <div className="w-full max-w-sm rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="text-xs uppercase tracking-[0.2em] text-teal-600">FieldFlow</p>
+        <p className="text-xs uppercase tracking-[0.2em] text-teal-600">RHI Pros</p>
         <h1 className="mt-2 text-2xl font-semibold text-slate-900">Sign in</h1>
-        <p className="mt-1 text-sm text-slate-600">Use Google or your email and password to access your dashboard.</p>
+        <p className="mt-1 text-sm text-slate-600">Sign in to your workspace or photo portal. Your projects stay with your account.</p>
+        <CrewInstallHelp />
 
         <div className="mt-5 space-y-3">
           <button

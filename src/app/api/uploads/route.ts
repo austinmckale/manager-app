@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { ExpenseCategory } from "@prisma/client";
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
 import { isDemoMode } from "@/lib/demo";
 import { combineDescriptions, extractJoistDocumentFromFileName, extractJoistDocumentFromText, type JoistDocumentExtract } from "@/lib/joist-document";
@@ -83,6 +84,12 @@ export async function POST(request: Request) {
   if (!job) {
     return NextResponse.json({ error: "Job not found." }, { status: 404 });
   }
+
+  // The client keeps this id through retries, including a lost success response.
+  const uploadId = z.string().uuid().safeParse(body.id);
+  if (!uploadId.success) return NextResponse.json({ error: "Invalid upload id." }, { status: 400 });
+  const existing = await prisma.fileAsset.findFirst({ where: { id: uploadId.data, jobId: job.id } });
+  if (existing) return NextResponse.json({ ok: true, id: existing.id });
 
   const ext = sanitizeFileExtension(body.fileName);
   const normalizedMimeType = inferMimeType(body.fileName, body.mimeType);
@@ -203,6 +210,7 @@ export async function POST(request: Request) {
 
   const created = await prisma.fileAsset.create({
     data: {
+      id: uploadId.data,
       jobId: body.jobId,
       expenseId: linkedExpenseId,
       type: body.fileType,
@@ -215,7 +223,8 @@ export async function POST(request: Request) {
       area: body.area,
       tags: body.tags ?? [],
       description: description || null,
-      isPortfolio: body.fileType === "PHOTO" ? Boolean(body.isPortfolio) : false,
+      // Publishing is a separate owner/admin review step.
+      isPortfolio: false,
       isClientVisible: Boolean(body.isClientVisible),
     },
   });

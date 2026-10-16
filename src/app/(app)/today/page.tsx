@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
+import { LeadStage } from "@prisma/client";
 import { endOfDay, endOfWeek, format, setHours, setMinutes, setSeconds, startOfDay, startOfWeek } from "date-fns";
 import { requireAuth } from "@/lib/auth";
 import { getTodayOpsSummary } from "@/lib/data";
@@ -109,6 +110,31 @@ async function TodayPageContent() {
         };
       })(),
     ]));
+    const recentNewLeads = isDemoMode()
+      ? [
+          {
+            id: "demo-new-lead-1",
+            contactName: "Test Lead",
+            serviceType: "Drywall Installation and Repair",
+            source: "WEBSITE_FORM",
+            createdAt: new Date(),
+          },
+        ]
+      : await prisma.lead.findMany({
+          where: {
+            orgId: auth.orgId,
+            stage: LeadStage.NEW,
+          },
+          orderBy: { createdAt: "desc" },
+          take: 5,
+          select: {
+            id: true,
+            contactName: true,
+            serviceType: true,
+            source: true,
+            createdAt: true,
+          },
+        });
 
     const captureCountsByJob = await perf.time("capture", async () => {
       if (isDemoMode()) return {} as Record<string, { photosToday: number; receiptsToday: number }>;
@@ -192,6 +218,38 @@ async function TodayPageContent() {
               </button>
             </form>
           ) : null}
+        </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">Recent New Leads</h2>
+              <p className="mt-1 text-xs text-slate-500">
+                The latest website and phone leads waiting for first contact.
+              </p>
+            </div>
+            <Link href="/leads" className="text-xs font-semibold text-teal-700 underline-offset-2 hover:underline">
+              Open leads
+            </Link>
+          </div>
+          <div className="mt-3 space-y-2">
+            {recentNewLeads.map((lead) => (
+              <article key={lead.id} className="rounded-xl border border-slate-200 p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-900">{lead.contactName}</p>
+                    <p className="text-xs text-slate-500">
+                      {lead.serviceType || "Service TBD"} · {String(lead.source).replaceAll("_", " ").toLowerCase()}
+                    </p>
+                  </div>
+                  <span className="shrink-0 text-[10px] text-slate-400">{format(lead.createdAt, "h:mm a")}</span>
+                </div>
+              </article>
+            ))}
+            {recentNewLeads.length === 0 ? (
+              <p className="text-xs text-slate-500">No new leads waiting right now.</p>
+            ) : null}
+          </div>
         </section>
 
         <section className="rounded-2xl border border-slate-200 bg-white p-4">

@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { preparePhoto } from "@/lib/client/prepare-photo";
 import { useRouter } from "next/navigation";
 import {
   enqueueUpload,
@@ -84,6 +85,9 @@ export function FileCapture({
   const [uploading, setUploading] = useState(false);
   const [queueItems, setQueueItems] = useState<UploadQueueItem[]>([]);
   const [isOnline, setIsOnline] = useState(true);
+  const [feedback, setFeedback] = useState("");
+  const [errors, setErrors] = useState<string[]>([]);
+  const busy = useRef(false);
 
   const activeFileType: "PHOTO" | "RECEIPT" | "DOCUMENT" = modeLocked ? lockedType : captureMode;
   const isDocumentMode = modeLocked && lockedType === "DOCUMENT";
@@ -107,10 +111,11 @@ export function FileCapture({
         body: JSON.stringify(item),
       });
 
-      if (!response.ok) {
-        const message = await response.text();
-        throw new Error(message || "Upload failed");
+      if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) {
+        throw new Error(response.status === 401 || response.redirected ? "Sign in again, then retry your saved photos." : "Upload did not complete. Your photo is saved on this device.");
       }
+      const result = await response.json();
+      if (!result.ok || result.mode === "demo") throw new Error("Demo preview cannot save photos. Your photo remains on this device.");
 
       await removeQueuedUpload(item.id);
     },
@@ -118,9 +123,11 @@ export function FileCapture({
   );
 
   const flushQueue = useCallback(async () => {
-    if (!navigator.onLine) return;
+    if (!navigator.onLine || busy.current) return;
+    busy.current = true;
 
-    const queue = await getUploadQueue();
+    try {
+    const queue = (await getUploadQueue()).filter((item) => item.jobId === jobId);
     for (const item of queue) {
       try {
         await tryUpload(item);
@@ -136,12 +143,16 @@ export function FileCapture({
 
     await refreshQueue();
     router.refresh();
-  }, [refreshQueue, router, tryUpload]);
+    } finally { busy.current = false; }
+  }, [jobId, refreshQueue, router, tryUpload]);
 
   useEffect(() => {
-    setIsOnline(navigator.onLine);
-    void refreshQueue();
-    void flushQueue();
+    // Read the external network state after mounting; browser events handle changes.
+    const timer = setTimeout(() => {
+      setIsOnline(navigator.onLine);
+      void refreshQueue().catch(() => setErrors(["Device storage is unavailable. Keep your originals and try another browser."]));
+      void flushQueue().catch(() => setErrors(["Could not retry saved uploads. Keep this screen open and try again."]));
+    }, 0);
 
     const handleOnline = () => {
       setIsOnline(true);
@@ -152,6 +163,7 @@ export function FileCapture({
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
     return () => {
+      clearTimeout(timer);
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
@@ -173,7 +185,7 @@ export function FileCapture({
   const vendorDatalistId = `receipt-vendors-${jobId}`;
 
   const onFilesSelected = async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
+    if (!files || files.length === 0 || busy.current || uploading) return;
 
     if (isDocumentMode) {
       const invalid = Array.from(files).find((file) => {
@@ -184,11 +196,6 @@ export function FileCapture({
         alert("Joist upload only supports PDF files.");
         return;
       }
-    }
-
-    if (activeFileType === "PHOTO" && !selectedArea) {
-      alert("Area is required for photos.");
-      return;
     }
 
     const normalizedVendor = expenseVendor.trim();
@@ -205,9 +212,18 @@ export function FileCapture({
     }
 
     setUploading(true);
+    busy.current = true;
+    setErrors([]);
+    setFeedback("");
+    let sent = 0;
+    let saved = 0;
+    const failed: string[] = [];
 
     try {
-      for (const file of Array.from(files)) {
+      for (const original of Array.from(files)) {
+        try {
+        setFeedback(`Preparing ${original.name}…`);
+        const file = activeFileType === "PHOTO" ? await preparePhoto(original) : original;
         const payload: UploadQueueItem = {
           id: crypto.randomUUID(),
           jobId,
@@ -216,7 +232,7 @@ export function FileCapture({
           mimeType: file.type,
           fileType: activeFileType,
           stage: activeFileType === "PHOTO" ? stage : undefined,
-          area: activeFileType === "PHOTO" ? selectedArea : undefined,
+          area: activeFileType === "PHOTO" ? selectedArea || "Other" : undefined,
           tags: activeFileType === "PHOTO" ? buildAutoCaptureTags({ area: selectedArea, stage }) : [],
           description: description.trim() || undefined,
           isPortfolio: false,
@@ -229,14 +245,18 @@ export function FileCapture({
           expenseNotes: activeFileType === "RECEIPT" ? description.trim() || undefined : undefined,
         };
 
+        // Persist first: closing the screen during a network request must not lose it.
+        await enqueueUpload(payload);
         try {
           if (!navigator.onLine) throw new Error("offline");
           await tryUpload(payload);
-        } catch {
-          await enqueueUpload({
-            ...payload,
-            retryCount: 0,
-          });
+          sent += 1;
+        } catch (error) {
+          saved += 1;
+          await updateQueuedUpload(payload.id, (current) => ({ ...current, lastError: error instanceof Error ? error.message : "Waiting for connection", retryCount: 1 }));
+        }
+        } catch (error) {
+          failed.push(`${original.name}: ${error instanceof Error ? error.message : "Could not save photo. Keep the original and try again."}`);
         }
       }
 
@@ -248,7 +268,10 @@ export function FileCapture({
         setExpenseAmount("");
         setDescription("");
       }
+      setErrors(failed);
+      setFeedback(`${sent ? `${sent} uploaded successfully. ` : ""}${saved ? `${saved} saved on this device, waiting to upload. Keep this screen open or return to retry. ` : ""}${failed.length ? `${failed.length} could not be saved. Keep the originals.` : ""}`);
     } finally {
+      busy.current = false;
       setUploading(false);
     }
   };
@@ -257,7 +280,7 @@ export function FileCapture({
 
   return (
     <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-3">
-      <p className="text-sm font-medium text-slate-900">{isDocumentMode ? "Joist PDF Upload" : "Capture / Upload"}</p>
+      <p className="text-sm font-medium text-slate-900">{isDocumentMode ? "Joist PDF Upload" : activeFileType === "PHOTO" ? "Add job photos" : "Capture / Upload"}</p>
 
       {!modeLocked ? (
         <div className="grid grid-cols-2 gap-2 text-xs">
@@ -292,14 +315,13 @@ export function FileCapture({
       {activeFileType === "PHOTO" ? (
         <>
           <label className="block text-xs text-slate-600">
-            Area (required)
+            Room or area (optional)
             <select
               value={areaOption}
               onChange={(event) => setAreaOption(event.target.value)}
               className="mt-1 w-full rounded-xl border border-slate-300 px-2 py-2 text-sm"
-              required
             >
-              <option value="">Select area</option>
+              <option value="">Choose later</option>
               {AREA_OPTIONS.map((option) => (
                 <option key={option} value={option}>{option}</option>
               ))}
@@ -319,7 +341,12 @@ export function FileCapture({
             </label>
           ) : null}
 
-          <details className="rounded-xl border border-slate-200 bg-slate-50/60">
+          <label className="block text-xs text-slate-600">When were these taken?
+            <select aria-label="Photo stage" value={stage} onChange={(event) => setStage(event.target.value as typeof stage)} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-2 py-2 text-sm">
+              <option value="BEFORE">Before work</option><option value="DURING">Work in progress</option><option value="AFTER">Finished work</option>
+            </select>
+          </label>
+          {!photoOnly ? <details className="rounded-xl border border-slate-200 bg-slate-50/60">
             <summary className="cursor-pointer list-none px-3 py-2 text-xs font-medium text-slate-700">
               Advanced photo options
             </summary>
@@ -345,7 +372,7 @@ export function FileCapture({
                 Client visible
               </label>
             </div>
-          </details>
+          </details> : null}
         </>
       ) : null}
 
@@ -416,21 +443,22 @@ export function FileCapture({
 
       {!isDocumentMode ? (
         <label className="block text-xs text-slate-600">
-          {activeFileType === "RECEIPT" ? "Receipt notes (optional)" : "Photo note (optional)"}
+          {activeFileType === "RECEIPT" ? "Receipt notes (optional)" : "What did you do? (optional)"}
           <textarea
             value={description}
             onChange={(event) => setDescription(event.target.value)}
             className="mt-1 w-full rounded-xl border border-slate-300 px-2 py-2 text-sm"
             rows={2}
+            placeholder={activeFileType === "PHOTO" ? "Type a quick note or use your keyboard’s microphone." : undefined}
           />
         </label>
       ) : null}
 
       {activeFileType === "PHOTO" ? (
-        <p className="text-[11px] text-slate-500">Portfolio can be set after upload from the photo grid.</p>
+        <p className="text-xs text-slate-500">Photos go to your review queue. They stay off the website until published.</p>
       ) : null}
       {activeFileType === "PHOTO" ? (
-        <p className="text-[11px] text-slate-500">Tip: JPG/PNG/WebP preview best on desktop. HEIC uploads are saved but may not render inline.</p>
+        <p className="text-[11px] text-slate-500">Photos are resized for upload. iPhone photos are converted to JPG when supported. Keep your originals.</p>
       ) : null}
 
       {isDocumentMode ? (
@@ -441,7 +469,7 @@ export function FileCapture({
             accept={acceptValue}
             className="hidden"
             onChange={(event) => {
-              void onFilesSelected(event.target.files);
+              void onFilesSelected(event.target.files).catch(() => setErrors(["Could not save this upload. Keep the original and try again."]));
               event.currentTarget.value = "";
             }}
           />
@@ -456,8 +484,9 @@ export function FileCapture({
               capture={activeFileType === "PHOTO" || activeFileType === "RECEIPT" ? "environment" : undefined}
               className="hidden"
               multiple={activeFileType === "PHOTO"}
+              disabled={uploading}
               onChange={(event) => {
-                void onFilesSelected(event.target.files);
+                void onFilesSelected(event.target.files).catch(() => setErrors(["Could not save these photos. Keep the originals and try again."]));
                 event.currentTarget.value = "";
               }}
             />
@@ -470,8 +499,9 @@ export function FileCapture({
               accept={acceptValue}
               className="hidden"
               multiple={activeFileType === "PHOTO"}
+              disabled={uploading}
               onChange={(event) => {
-                void onFilesSelected(event.target.files);
+                void onFilesSelected(event.target.files).catch(() => setErrors(["Could not save these photos. Keep the originals and try again."]));
                 event.currentTarget.value = "";
               }}
             />
@@ -479,13 +509,14 @@ export function FileCapture({
         </div>
       )}
 
-      <div className="text-xs text-slate-500">{uploading ? "Uploading..." : "Ready"}</div>
+      <div role="status" aria-live="polite" className="text-sm text-teal-800">{feedback || (uploading ? "Uploading…" : "Ready when you are.")}</div>
+      {errors.length > 0 ? <div role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800">{errors.map((error) => <p key={error}>{error}</p>)}</div> : null}
 
       {scopedQueueItems.length > 0 ? (
         <button
           type="button"
-          onClick={() => void flushQueue()}
-          disabled={!isOnline}
+          onClick={() => void flushQueue().catch(() => setErrors(["Could not retry uploads. Keep your originals and try again."]))}
+          disabled={!isOnline || uploading}
           className="w-full rounded-xl border border-slate-300 px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"
         >
           Retry Pending Uploads

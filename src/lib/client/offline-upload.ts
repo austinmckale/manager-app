@@ -44,27 +44,31 @@ export async function getUploadQueue() {
 }
 
 export async function enqueueUpload(item: UploadQueueItem) {
-  const queue = await getUploadQueue();
-  queue.push(item);
   const db = await getDb();
-  await db.put(STORE_NAME, queue, KEY);
+  const tx = db.transaction(STORE_NAME, "readwrite");
+  const queue: UploadQueueItem[] = (await tx.store.get(KEY)) ?? [];
+  if (!queue.some((existing) => existing.id === item.id)) queue.push(item);
+  await tx.store.put(queue, KEY);
+  await tx.done;
 }
 
 export async function removeQueuedUpload(id: string) {
-  const queue = await getUploadQueue();
   const db = await getDb();
-  await db.put(
-    STORE_NAME,
+  const tx = db.transaction(STORE_NAME, "readwrite");
+  const queue: UploadQueueItem[] = (await tx.store.get(KEY)) ?? [];
+  await tx.store.put(
     queue.filter((item) => item.id !== id),
     KEY,
   );
+  await tx.done;
 }
 
 export async function updateQueuedUpload(id: string, updater: (item: UploadQueueItem) => UploadQueueItem) {
-  const queue = await getUploadQueue();
-  const next = queue.map((item) => (item.id === id ? updater(item) : item));
   const db = await getDb();
-  await db.put(STORE_NAME, next, KEY);
+  const tx = db.transaction(STORE_NAME, "readwrite");
+  const queue: UploadQueueItem[] = (await tx.store.get(KEY)) ?? [];
+  await tx.store.put(queue.map((item) => (item.id === id ? updater(item) : item)), KEY);
+  await tx.done;
 }
 
 export async function clearUploadQueue() {

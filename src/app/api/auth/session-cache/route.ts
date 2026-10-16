@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
+import { clientPortalUser } from "@/lib/client-portal";
 import {
   AUTH_CONTEXT_COOKIE_NAME,
   createAuthContextCookieValue,
@@ -8,6 +9,11 @@ import {
 
 export async function POST() {
   try {
+    if (await clientPortalUser()) {
+      const response = NextResponse.json({ ok: true, destination: "/portal" });
+      response.cookies.delete(AUTH_CONTEXT_COOKIE_NAME);
+      return response;
+    }
     const auth = await requireAuth({ allowFallback: false });
     const value = createAuthContextCookieValue(auth);
     const response = NextResponse.json({ ok: true });

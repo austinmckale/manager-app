@@ -1,28 +1,45 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
-const APP_ROUTES = ["/today", "/capture", "/leads", "/jobs", "/reports", "/time", "/attendance", "/settings/targets"];
-const PREFETCH_REFRESH_MS = 45_000;
+const FALLBACK_ROUTES = ["/today", "/leads"];
+const PREFETCH_MAP: Record<string, string[]> = {
+  "/today": ["/leads", "/jobs"],
+  "/leads": ["/today", "/jobs"],
+  "/jobs": ["/today", "/leads"],
+  "/reports": ["/today"],
+  "/time": ["/today", "/attendance"],
+  "/attendance": ["/today", "/time"],
+  "/settings/targets": ["/today"],
+};
 
 export function NavPrefetch() {
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
     const w = globalThis as typeof globalThis & {
       requestIdleCallback?: (cb: () => void) => number;
       cancelIdleCallback?: (id: number) => void;
     };
+    const nav = navigator as Navigator & {
+      connection?: {
+        saveData?: boolean;
+        effectiveType?: string;
+      };
+    };
+
+    if (nav.connection?.saveData) return;
+    if (nav.connection?.effectiveType === "2g") return;
+
+    const routes = PREFETCH_MAP[pathname] ?? FALLBACK_ROUTES;
 
     const run = () => {
-      for (const route of APP_ROUTES) {
+      for (const route of routes) {
         router.prefetch(route);
       }
     };
-
-    // Warm route payloads immediately for snappier first tab switches.
-    run();
 
     let idleId: number | null = null;
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -32,15 +49,6 @@ export function NavPrefetch() {
       idleTimer = setTimeout(run, 500);
     }
 
-    // Keep route payloads warm while the app is open.
-    const interval = setInterval(run, PREFETCH_REFRESH_MS);
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") {
-        run();
-      }
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-
     return () => {
       if (idleId != null && typeof w.cancelIdleCallback === "function") {
         w.cancelIdleCallback(idleId);
@@ -48,10 +56,8 @@ export function NavPrefetch() {
       if (idleTimer) {
         clearTimeout(idleTimer);
       }
-      clearInterval(interval);
-      document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [router]);
+  }, [pathname, router]);
 
   return null;
 }

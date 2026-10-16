@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { isEmailAllowed, requireAuth } from "@/lib/auth";
+import { isClientPortalEmail } from "@/lib/client-portal-policy";
 import {
   AUTH_CONTEXT_COOKIE_NAME,
   createAuthContextCookieValue,
@@ -33,15 +34,26 @@ export async function GET(request: Request) {
     },
   );
 
-  await supabase.auth.exchangeCodeForSession(code);
+  const exchanged = await supabase.auth.exchangeCodeForSession(code);
+  if (exchanged.error) return NextResponse.redirect(`${origin}/login?error=unauthorized`);
 
   const { data } = await supabase.auth.getUser();
-  if (!isEmailAllowed(data.user?.email)) {
+  if (!data.user || !isEmailAllowed(data.user.email)) {
     await supabase.auth.signOut();
     return NextResponse.redirect(`${origin}/login?error=unauthorized`);
   }
 
-  const response = NextResponse.redirect(`${origin}/today`);
+  if (isClientPortalEmail(data.user.email)) {
+    if (!data.user.email_confirmed_at) {
+      await supabase.auth.signOut();
+      return NextResponse.redirect(`${origin}/login?error=unauthorized`);
+    }
+    const portalResponse = NextResponse.redirect(`${origin}/portal`);
+    portalResponse.cookies.delete(AUTH_CONTEXT_COOKIE_NAME);
+    return portalResponse;
+  }
+  cookieStore.delete(AUTH_CONTEXT_COOKIE_NAME);
+  const response = NextResponse.redirect(`${origin}/marketing`);
   try {
     const auth = await requireAuth({ allowFallback: false });
     const cookieValue = createAuthContextCookieValue(auth);

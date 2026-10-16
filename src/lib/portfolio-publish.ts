@@ -45,11 +45,8 @@ export async function publishToSiteBucket(storageKey: string): Promise<string | 
  * un-flagged from portfolio.
  */
 export async function unpublishFromSiteBucket(storageKey: string): Promise<void> {
-  try {
-    await supabaseAdmin.storage.from(PUBLIC_BUCKET).remove([storageKey]);
-  } catch (err) {
-    console.error("[portfolio-publish] remove failed:", err);
-  }
+  const { error } = await supabaseAdmin.storage.from(PUBLIC_BUCKET).remove([storageKey]);
+  if (error) throw new Error("Photo was removed from the feed, but its public file could not be removed. Please retry.");
 }
 
 /**
@@ -57,8 +54,9 @@ export async function unpublishFromSiteBucket(storageKey: string): Promise<void>
  */
 export async function onPortfolioPublish(assetId: string, storageKey: string) {
   await ensureSitePublicBucket();
-  await publishToSiteBucket(storageKey);
-  revalidateSitePortfolio().catch(() => {});
+  const published = await publishToSiteBucket(storageKey);
+  if (!published) throw new Error(`Could not publish photo ${assetId}. Please retry.`);
+  return revalidateSitePortfolio();
 }
 
 /**
@@ -66,7 +64,7 @@ export async function onPortfolioPublish(assetId: string, storageKey: string) {
  */
 export async function onPortfolioUnpublish(storageKey: string) {
   await unpublishFromSiteBucket(storageKey);
-  revalidateSitePortfolio().catch(() => {});
+  return revalidateSitePortfolio();
 }
 
 /**
@@ -82,6 +80,7 @@ export async function ensureSitePublicBucket() {
     });
     if (error) {
       console.error("[portfolio-publish] bucket creation failed:", error.message);
+      throw new Error("Website photo storage is unavailable. Please retry.");
     } else {
       console.log("[portfolio-publish] created site-public bucket");
     }

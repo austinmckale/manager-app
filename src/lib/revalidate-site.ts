@@ -5,8 +5,8 @@
 export async function revalidateSitePortfolio() {
   const url = process.env.SITE_REVALIDATE_URL;
   const secret = process.env.SITE_REVALIDATE_SECRET;
-  if (!url || !secret) return;
-  await fetch(url, {
+  if (!url || !secret) return false;
+  const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -16,5 +16,8 @@ export async function revalidateSitePortfolio() {
       tags: ["portfolio"],
       paths: ["/projects", "/services"],
     }),
+    signal: AbortSignal.timeout(10000),
   });
+  if (!response.ok) throw new Error("Website refresh failed. Photos are saved; the website may take up to an hour to refresh.");
+  return true;
 }

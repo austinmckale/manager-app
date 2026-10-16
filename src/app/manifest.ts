@@ -10,6 +10,10 @@ export default function manifest(): MetadataRoute.Manifest {
     background_color: "#f8fafc",
     theme_color: "#0f766e",
     orientation: "portrait",
+    shortcuts: [
+      { name: "Add job photos", short_name: "Photos", url: "/capture" },
+      { name: "Review photos", short_name: "Review", url: "/marketing" },
+    ],
     icons: [
       {
         src: "/icons/icon-192.png",

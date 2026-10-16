@@ -73,7 +73,7 @@ export default async function CapturePage({
   const auth = await requireAuth();
   const params = await searchParams;
   const selectedJobIdParam = String(params.jobId ?? "").trim();
-  const usePhotoDump = String(params.mode ?? "").trim().toLowerCase() === "dump";
+  const usePhotoDump = !selectedJobIdParam || String(params.mode ?? "").trim().toLowerCase() === "dump";
   const demoMode = isDemoMode();
 
   let jobs: CaptureJobOption[] = [];
@@ -127,9 +127,9 @@ export default async function CapturePage({
   return (
     <div className="space-y-4">
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
-        <h2 className="text-sm font-semibold text-slate-900">Field Capture</h2>
+        <h2 className="text-xl font-semibold text-slate-900">Add photos. Start your next post.</h2>
         <p className="mt-1 text-xs text-slate-500">
-          Pick a job, then capture photos from your phone. Uploads here flow directly into that job&apos;s Field Photos section.
+          Upload the photos you receive, or take new ones. Choose a job or leave them unsorted to organize later.
         </p>
         <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
           <form action="/capture" method="get" className="grid gap-2 sm:grid-cols-[1fr_auto]">
@@ -152,7 +152,7 @@ export default async function CapturePage({
           <form action="/capture" method="get">
             <input type="hidden" name="mode" value="dump" />
             <button type="submit" className="w-full rounded-xl border border-cyan-300 bg-cyan-50 px-3 py-2 text-sm text-cyan-700 sm:w-auto">
-              Photo dump
+              Unsorted photos
             </button>
           </form>
         </div>
@@ -163,16 +163,17 @@ export default async function CapturePage({
           <div className="flex items-start justify-between gap-2">
             <div>
               <p className="text-xs uppercase tracking-wide text-slate-500">Selected job</p>
-              <h3 className="text-base font-semibold text-slate-900">{selectedJob.jobName}</h3>
-              <p className="text-xs text-slate-600">{selectedJob.address}</p>
+              <h3 className="text-base font-semibold text-slate-900">{selectedJob.jobName === "Photo Dump" ? "Unsorted photos" : selectedJob.jobName}</h3>
+              <p className="text-xs text-slate-600">{selectedJob.jobName === "Photo Dump" ? "You can assign these to a job in the review queue." : selectedJob.address}</p>
             </div>
             <Link href={`/jobs/${selectedJob.id}#capture`} className="rounded-lg border border-slate-300 px-2 py-1 text-xs">
               Open job
             </Link>
           </div>
           <div className="mt-3">
-            <FileCapture jobId={selectedJob.id} fileType="PHOTO" photoOnly />
+            <FileCapture key={selectedJob.id} jobId={selectedJob.id} fileType="PHOTO" photoOnly />
           </div>
+          <Link href="/marketing" className="mt-3 inline-flex rounded-xl border border-teal-200 px-3 py-2 text-sm text-teal-800">Open review queue</Link>
           <div className="mt-4 rounded-xl border border-slate-200 p-3">
             <div className="flex items-center justify-between gap-2">
               <p className="text-xs font-medium text-slate-700">Recent photos ({recentPhotoAssets.length})</p>

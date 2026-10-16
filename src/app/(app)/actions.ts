@@ -3562,62 +3562,11 @@ export async function createShareLinkAction(formData: FormData) {
 export async function togglePortfolioAction(formData: FormData) {
   const auth = await requireAuth();
   const assetId = String(formData.get("assetId"));
-
-  if (isDemoMode()) {
-    return;
-  }
-
+  if (!canManageOrg(auth.role)) throw new Error("Only an owner or admin can review website photos.");
+  if (isDemoMode()) redirect("/marketing");
   const asset = await prisma.fileAsset.findFirst({
     where: { id: assetId, job: { orgId: auth.orgId } },
-    select: {
-      id: true,
-      isPortfolio: true,
-      jobId: true,
-      storageKey: true,
-      job: {
-        select: { categoryTags: true },
-      },
-    },
+    select: { jobId: true },
   });
-
-  if (!asset) return;
-
-  const newValue = !asset.isPortfolio;
-  if (newValue) {
-    const serviceTags = normalizeServiceTags(asset.job.categoryTags);
-    if (serviceTags.length === 0) {
-      const mergedTags = Array.from(new Set([...(asset.job.categoryTags ?? []), "general-remodeling"]));
-      await prisma.job.update({
-        where: { id: asset.jobId },
-        data: { categoryTags: mergedTags },
-      });
-    }
-  }
-
-  await prisma.fileAsset.update({
-    where: { id: assetId },
-    data: {
-      isPortfolio: newValue,
-      ...(newValue ? { isClientVisible: true } : {}),
-    },
-  });
-
-  await prisma.activityLog.create({
-    data: {
-      orgId: auth.orgId,
-      jobId: asset.jobId,
-      actorId: auth.userId,
-      action: newValue ? "file.portfolio.added" : "file.portfolio.removed",
-      metadata: { fileAssetId: assetId },
-    },
-  });
-
-  const { onPortfolioPublish, onPortfolioUnpublish } = await import("@/lib/portfolio-publish");
-  if (newValue) {
-    onPortfolioPublish(assetId, asset.storageKey).catch(() => { });
-  } else {
-    onPortfolioUnpublish(asset.storageKey).catch(() => { });
-  }
-
-  revalidatePath(`/jobs/${asset.jobId}`);
+  redirect(asset ? `/marketing?jobId=${asset.jobId}` : "/marketing");
 }

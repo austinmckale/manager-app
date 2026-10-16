@@ -4,7 +4,7 @@ const AUTH_REQUIRED = process.env.AUTH_REQUIRED === "1" || process.env.NODE_ENV 
 
 // Lead intake (called by the RHI Pros website) and the cron digest check their own secret keys,
 // so they must not be redirected to /login.
-const PUBLIC_PATHS = ["/login", "/auth/callback", "/api/leads/intake", "/api/cron/"];
+const PUBLIC_PATHS = ["/login", "/auth/callback", "/api/leads/intake", "/api/cron/", "/send-photos/", "/api/field-intake"];
 
 export async function middleware(request: NextRequest) {
   const startedAt = performance.now();
@@ -13,7 +13,7 @@ export async function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
-  if (PUBLIC_PATHS.some((path) => pathname.startsWith(path))) {
+  if (pathname === "/portal/manifest.webmanifest" || PUBLIC_PATHS.some((path) => pathname.startsWith(path))) {
     const response = NextResponse.next();
     response.headers.set("Server-Timing", `mw;dur=${(performance.now() - startedAt).toFixed(1)}`);
     return response;

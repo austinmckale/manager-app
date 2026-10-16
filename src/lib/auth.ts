@@ -5,6 +5,7 @@ import { parseAuthContextCookieValue, AUTH_CONTEXT_COOKIE_NAME } from "@/lib/aut
 import { getDemoOrgId, isDemoMode, listDemoRuntimeUsers } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { isClientPortalEmail, isDashboardOwnerEmail } from "@/lib/client-portal-policy";
 
 export type AuthContext = {
   userId: string;
@@ -19,15 +20,8 @@ type RequireAuthOptions = {
 };
 
 const AUTH_REQUIRED = process.env.AUTH_REQUIRED === "1" || process.env.NODE_ENV === "production";
-const AUTH_ALLOWED_EMAILS = (process.env.AUTH_ALLOWED_EMAILS ?? "")
-  .split(",")
-  .map((value) => value.trim().toLowerCase())
-  .filter(Boolean);
-
 export function isEmailAllowed(email?: string | null) {
-  if (AUTH_ALLOWED_EMAILS.length === 0) return true;
-  if (!email) return false;
-  return AUTH_ALLOWED_EMAILS.includes(email.trim().toLowerCase());
+  return isClientPortalEmail(email) || isDashboardOwnerEmail(email);
 }
 
 async function ensureBaseOrg() {
@@ -47,11 +41,13 @@ async function ensureBaseOrg() {
 }
 
 async function ensureUserForSessionUser(sessionUser: { id: string; email?: string | null; user_metadata?: Record<string, unknown> }) {
+  if (isClientPortalEmail(sessionUser.email)) throw new Error("Client portal only");
+  if (!isDashboardOwnerEmail(sessionUser.email)) throw new Error("Unauthorized");
   const existingById = await prisma.userProfile.findUnique({
     where: { id: sessionUser.id },
   });
   if (existingById) {
-    if (!existingById.isActive) throw new Error("Unauthorized");
+    if (!existingById.isActive || !isDashboardOwnerEmail(existingById.email) || (existingById.role !== Role.OWNER && existingById.role !== Role.ADMIN)) throw new Error("Unauthorized");
     return existingById;
   }
 
@@ -62,29 +58,9 @@ async function ensureUserForSessionUser(sessionUser: { id: string; email?: strin
       orderBy: { createdAt: "asc" },
     });
     if (existingByEmail) {
-      if (!existingByEmail.isActive) throw new Error("Unauthorized");
+      if (!existingByEmail.isActive || (existingByEmail.role !== Role.OWNER && existingByEmail.role !== Role.ADMIN)) throw new Error("Unauthorized");
       return existingByEmail;
     }
-  }
-
-  // Auto-provision a profile for allowed emails that don't have one yet
-  if (normalizedEmail && isEmailAllowed(normalizedEmail)) {
-    const orgId = await ensureBaseOrg();
-    const displayName =
-      (sessionUser.user_metadata?.full_name as string) ??
-      (sessionUser.user_metadata?.name as string) ??
-      normalizedEmail.split("@")[0];
-    const created = await prisma.userProfile.create({
-      data: {
-        id: sessionUser.id,
-        orgId,
-        fullName: displayName,
-        email: normalizedEmail,
-        role: Role.OWNER,
-        isActive: true,
-      },
-    });
-    return created;
   }
 
   throw new Error("Unauthorized");
@@ -161,34 +137,17 @@ const requireAuthCached = cache(async (allowFallback: boolean): Promise<AuthCont
 
   const cookieStore = await cookies();
   const cachedAuth = parseAuthContextCookieValue(cookieStore.get(AUTH_CONTEXT_COOKIE_NAME)?.value);
-  if (cachedAuth && isEmailAllowed(cachedAuth.email)) {
+  if (cachedAuth && isClientPortalEmail(cachedAuth.email)) throw new Error("Client portal only");
+  if (cachedAuth && !isDashboardOwnerEmail(cachedAuth.email)) throw new Error("Unauthorized");
+  if (cachedAuth && isDashboardOwnerEmail(cachedAuth.email) && (cachedAuth.role === Role.OWNER || cachedAuth.role === Role.ADMIN)) {
     return cachedAuth;
   }
 
   try {
     const supabase = await createServerSupabase();
-    // Fast path: read session from auth cookies without forcing a remote user lookup.
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    const sessionUser = session?.user;
-    if (sessionUser) {
-      if (!isEmailAllowed(sessionUser.email)) {
-        throw new Error("Unauthorized");
-      }
-      const profile = await ensureUserForSessionUser(sessionUser);
-      return {
-        userId: profile.id,
-        orgId: profile.orgId,
-        role: profile.role,
-        fullName: profile.fullName,
-        email: profile.email,
-      };
-    }
-
     const { data, error } = await supabase.auth.getUser();
-    if (!error && data.user) {
-      if (!isEmailAllowed(data.user.email)) {
+    if (!error && data.user && data.user.email_confirmed_at) {
+      if (!isDashboardOwnerEmail(data.user.email)) {
         throw new Error("Unauthorized");
       }
       const profile = await ensureUserForSessionUser(data.user);

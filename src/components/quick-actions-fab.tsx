@@ -2,9 +2,11 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Plus, FileText, PhoneIncoming, BriefcaseBusiness } from "lucide-react";
+import { Plus, FileText, PhoneIncoming, BriefcaseBusiness, Camera, Images } from "lucide-react";
 
 const actions = [
+  { href: "/capture", label: "Add job photos", icon: Camera },
+  { href: "/marketing", label: "Review photos & drafts", icon: Images },
   { href: "/leads#new-lead-form", label: "New Lead (estimate)", icon: PhoneIncoming },
   { href: "/jobs#new-job", label: "New Job (already sold)", icon: BriefcaseBusiness },
   { href: "/attendance", label: "Clock Employees", icon: Plus },

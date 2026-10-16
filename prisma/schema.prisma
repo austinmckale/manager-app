@@ -126,6 +126,11 @@ model Organization {
   leads          Lead[]
   kpiTargets     KpiTarget[]
   settings       OrganizationSetting?
+  marketingConnections    MarketingConnection[]
+  marketingDeliveries     MarketingDelivery[]
+  marketingIngestMedia    MarketingIngestMedia[]
+  marketingReportRuns     MarketingReportRun[]
+  marketingCampaignDrafts MarketingCampaignDraft[]
 }
 
 model OrganizationSetting {
@@ -222,6 +227,8 @@ model Job {
   leads             Lead[]
   assignments       JobAssignment[]
   scheduleEvents    JobScheduleEvent[]
+  marketingDeliveries MarketingDelivery[]
+  marketingCampaignDrafts MarketingCampaignDraft[]
 
   @@index([orgId])
   @@index([status])
@@ -634,4 +641,149 @@ model KpiTarget {
   @@index([kpiKey])
   @@index([effectiveDate])
   @@unique([orgId, kpiKey, period, effectiveDate])
+}
+
+enum MarketingProvider {
+  FACEBOOK_PAGE
+  INSTAGRAM
+  GOOGLE_BUSINESS
+  GOOGLE_ADS
+  META_ADS
+}
+
+enum MarketingConnectionStatus {
+  MISSING_CONFIGURATION
+  PENDING_PLATFORM_APPROVAL
+  CONNECTED
+  EXPIRED
+  ERROR
+}
+
+enum MarketingDeliveryStatus {
+  ACCEPTED
+  PROCESSING
+  PUBLISHED
+  FAILED
+}
+
+enum MarketingCampaignStatus {
+  DRAFT
+  APPROVED
+  BLOCKED
+  PAUSED_ON_PLATFORM
+}
+
+model MarketingConnection {
+  id                   String                     @id @default(uuid()) @db.Uuid
+  orgId                String                     @db.Uuid
+  provider             MarketingProvider
+  status               MarketingConnectionStatus  @default(MISSING_CONFIGURATION)
+  externalAccountId    String?
+  externalAccountName  String?
+  scopes               String[]
+  accessTokenCipher    String?
+  refreshTokenCipher   String?
+  accountCatalogCipher String?
+  tokenExpiresAt       DateTime?
+  lastError            String?
+  approvalNote         String?
+  metadata             Json?
+  connectedById        String?                    @db.Uuid
+  createdAt            DateTime                   @default(now())
+  updatedAt            DateTime                   @updatedAt
+  organization         Organization               @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, provider])
+  @@index([orgId])
+}
+
+model MarketingDelivery {
+  id              String                  @id @default(uuid()) @db.Uuid
+  orgId           String                  @db.Uuid
+  jobId           String                  @db.Uuid
+  draftId         String                  @db.Uuid
+  destination     MarketingProvider
+  assetIds        String[]
+  idempotencyKey  String
+  contentHash     String
+  status          MarketingDeliveryStatus
+  providerPostId  String?
+  containerId     String?
+  attemptCount    Int                     @default(0)
+  lastError       String?
+  acceptedAt      DateTime?
+  publishedAt     DateTime?
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+  organization    Organization            @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  job             Job                     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, idempotencyKey])
+  @@index([orgId, createdAt])
+  @@index([orgId, jobId])
+  @@index([orgId, status])
+  @@index([draftId])
+}
+
+model MarketingIngestMedia {
+  id           String    @id @default(uuid()) @db.Uuid
+  orgId        String    @db.Uuid
+  assetId      String    @db.Uuid
+  deliveryId   String?   @db.Uuid
+  publicPath   String
+  expiresAt    DateTime
+  removedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@index([expiresAt])
+  @@index([deliveryId])
+}
+
+model MarketingReportRun {
+  id         String       @id @default(uuid()) @db.Uuid
+  orgId      String       @db.Uuid
+  weekStart  DateTime
+  preview    Json
+  sendStatus String
+  recipient  String?
+  channel    String?
+  sentAt     DateTime?
+  createdAt  DateTime     @default(now())
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, weekStart])
+  @@index([orgId])
+}
+
+model MarketingCampaignDraft {
+  id                 String                  @id @default(uuid()) @db.Uuid
+  orgId              String                  @db.Uuid
+  jobId              String                  @db.Uuid
+  sourceDraftId      String                  @db.Uuid
+  provider           MarketingProvider
+  accountExternalId  String
+  destinationUrl     String
+  serviceArea        String
+  objective          String
+  budgetAmountCents  Int
+  currency           String                  @default("USD")
+  scheduleStart      DateTime
+  scheduleEnd        DateTime
+  contentSnapshot    Json
+  contentHash        String
+  status             MarketingCampaignStatus @default(DRAFT)
+  approvedAt         DateTime?
+  approvedById       String?                 @db.Uuid
+  platformCampaignId String?
+  missingStep        String?
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+  organization       Organization            @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  job                Job                     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, provider])
+  @@index([orgId, createdAt])
+  @@index([sourceDraftId])
 }
