@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 
 const AUTH_REQUIRED = process.env.AUTH_REQUIRED === "1" || process.env.NODE_ENV === "production";
 
-const PUBLIC_PATHS = ["/login", "/auth/callback"];
+// Lead intake (called by the RHI Pros website) and the cron digest check their own secret keys,
+// so they must not be redirected to /login.
+const PUBLIC_PATHS = ["/login", "/auth/callback", "/api/leads/intake", "/api/cron/"];
 
 export async function middleware(request: NextRequest) {
   const startedAt = performance.now();
