@@ -150,7 +150,7 @@ async function dumpDatabase(databaseUrl: string, outputPath: string) {
 }
 
 async function listBucketFilesRecursive(
-  client: SupabaseClient<any, any, any, any, any>,
+  client: SupabaseClient,
   bucket: string,
   prefix = "",
 ): Promise<StorageManifestFile[]> {
@@ -208,7 +208,7 @@ async function listBucketFilesRecursive(
 }
 
 async function downloadBucketFile(
-  client: SupabaseClient<any, any, any, any, any>,
+  client: SupabaseClient,
   outputDir: string,
   file: StorageManifestFile,
 ) {
