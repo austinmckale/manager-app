@@ -115,37 +115,34 @@ export async function getJobs(params: {
     })) as never[];
   }
 
+  const activeStatuses = [JobStatus.ESTIMATE, JobStatus.SCHEDULED, JobStatus.IN_PROGRESS, JobStatus.ON_HOLD];
+  const searchFilter = params.q
+    ? {
+        OR: [
+          { jobName: { contains: params.q, mode: "insensitive" as const } },
+          { address: { contains: params.q, mode: "insensitive" as const } },
+          { customer: { name: { contains: params.q, mode: "insensitive" as const } } },
+        ],
+      }
+    : null;
+  const rangeStart = view === "today" ? todayStart : weekStart;
+  const rangeEnd = view === "today" ? todayEnd : weekEnd;
+  const viewFilter =
+    view === "all"
+      ? null
+      : {
+          OR: [
+            { scheduleEvents: { some: { startAt: { gte: rangeStart, lte: rangeEnd } } } },
+            { startDate: { gte: rangeStart, lte: rangeEnd } },
+            { status: { in: activeStatuses } },
+          ],
+        };
+
   const where = {
     orgId: params.orgId,
     ...(params.status && params.status !== "ALL" ? { status: params.status as never } : {}),
-    ...(params.q
-      ? {
-          OR: [
-            { jobName: { contains: params.q, mode: "insensitive" as const } },
-            { address: { contains: params.q, mode: "insensitive" as const } },
-            { customer: { name: { contains: params.q, mode: "insensitive" as const } } },
-          ],
-        }
-      : {}),
-    ...{},
-    ...(view === "today"
-      ? {
-          OR: [
-            { scheduleEvents: { some: { startAt: { gte: todayStart, lte: todayEnd } } } },
-            { startDate: { gte: todayStart, lte: todayEnd } },
-            { status: { in: [JobStatus.ESTIMATE, JobStatus.SCHEDULED, JobStatus.IN_PROGRESS, JobStatus.ON_HOLD] } },
-          ],
-        }
-      : {}),
-    ...(view === "week"
-      ? {
-          OR: [
-            { scheduleEvents: { some: { startAt: { gte: weekStart, lte: weekEnd } } } },
-            { startDate: { gte: weekStart, lte: weekEnd } },
-            { status: { in: [JobStatus.ESTIMATE, JobStatus.SCHEDULED, JobStatus.IN_PROGRESS, JobStatus.ON_HOLD] } },
-          ],
-        }
-      : {}),
+    // Search and the today/week view each need their own OR; combine them with AND so neither is dropped.
+    AND: [searchFilter, viewFilter].filter((filter) => filter !== null),
   };
 
   return prisma.job.findMany({

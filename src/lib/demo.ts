@@ -2,6 +2,8 @@ import { JobStatus, Role, TaskStatus } from "@prisma/client";
 import { addDays, addHours, startOfDay, subDays } from "date-fns";
 
 export function isDemoMode() {
+  // Demo data must never stand in for the real database on the live app.
+  if (process.env.NODE_ENV === "production") return false;
   return !process.env.DATABASE_URL || process.env.DATABASE_URL.trim() === "" || process.env.DEV_BYPASS === "1";
 }
 

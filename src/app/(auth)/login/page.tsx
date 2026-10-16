@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { createClientSupabase } from "@/lib/supabase/client";
 
@@ -11,13 +11,14 @@ export default function LoginPage() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState(false);
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("error") === "unauthorized") {
-      setMessage("This account is not authorized for this dashboard.");
-    }
-  }, []);
+  // Read ?error= from the URL without a state update in an effect (the page is prerendered).
+  const urlError = useSyncExternalStore(
+    () => () => {},
+    () => new URLSearchParams(window.location.search).get("error"),
+    () => null,
+  );
+  const shownMessage =
+    message || (urlError === "unauthorized" ? "This account is not authorized for this dashboard." : "");
 
   const onSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -121,7 +122,7 @@ export default function LoginPage() {
           </button>
         </form>
 
-        {message ? <p className="mt-3 text-sm text-slate-600">{message}</p> : null}
+        {shownMessage ? <p className="mt-3 text-sm text-slate-600">{shownMessage}</p> : null}
       </div>
     </div>
   );
