@@ -65,6 +65,12 @@ async function main() {
           if (plan.deferOwnerJobsBeforeHybrid) await deferQueuedOwnerJobs(prisma, orgId);
         } catch (error) { await workerHeartbeat(prisma, orgId, "error", "local"); throw error; }
       }
+      try {
+        const { runCaptionRevision } = await import("./local-caption-revision");
+        await runCaptionRevision(prisma, orgId);
+      } catch (error) {
+        console.log(JSON.stringify({ captionRevisionFailed: true, error: error instanceof Error ? error.message.slice(0, 200) : "Caption revision failed" }));
+      }
       if (plan.automaticPaused) {
         await workerHeartbeat(prisma, orgId, plan.ownerSubmissionIds.length ? "idle" : "paused", plan.ownerSubmissionIds.length ? "local" : settings.mode);
         if (!plan.ownerSubmissionIds.length) console.log(JSON.stringify({ transcribed: 0, generated: false, paused: true }));
