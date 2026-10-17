@@ -17,7 +17,7 @@ async function dataUrl(file: File) {
   return new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = reject; reader.readAsDataURL(file); });
 }
 
-export function CrewPhotoIntake({ token, preview = false, packs = [], jobsHref, reportsHref, packBase, draftKey }: { token: string; preview?: boolean; packs?: { id: string; name: string }[]; jobsHref?: string; reportsHref?: string; packBase?: string; draftKey?: string }) {
+export function CrewPhotoIntake({ token, preview = false, packs = [], jobsHref, reportsHref, packBase, draftKey, showReports = true }: { token: string; preview?: boolean; packs?: { id: string; name: string }[]; jobsHref?: string; reportsHref?: string; packBase?: string; draftKey?: string; showReports?: boolean }) {
   const key = draftKey || token.split(".")[0];
   const [draft, setDraft] = useState<Draft>({ submissionId: "", location: "", description: "", stage: "", photos: [] });
   const [loaded, setLoaded] = useState(false);
@@ -107,7 +107,7 @@ export function CrewPhotoIntake({ token, preview = false, packs = [], jobsHref, 
     <p className="mt-2 text-sm text-slate-600">Add photos and a quick note. We’ll take it from here.</p>
     <CrewInstallHelp />
     {!preview ? <Link href={jobsHref ?? `/send-photos/${encodeURIComponent(token)}/jobs`} className="ml-5 mt-4 inline-block text-sm font-semibold text-[#b4411b] underline underline-offset-4">My uploads</Link> : <Link href="/send-photos/preview/jobs" className="ml-5 mt-4 inline-block text-sm font-semibold text-[#b4411b] underline underline-offset-4">My uploads</Link>}
-    <Link href={reportsHref ?? `/send-photos/${encodeURIComponent(token)}/reports`} className="ml-5 mt-4 inline-block text-sm font-semibold text-[#b4411b] underline underline-offset-4">Reports</Link>
+    {showReports ? <Link href={reportsHref ?? `/send-photos/${encodeURIComponent(token)}/reports`} className="ml-5 mt-4 inline-block text-sm font-semibold text-[#b4411b] underline underline-offset-4">Reports</Link> : null}
     {packs.length ? <section className="mt-5 rounded-2xl border border-teal-200 bg-teal-50 p-4"><h2 className="font-semibold text-teal-900">Ready to post</h2><div className="mt-3 space-y-2">{packs.map((pack) => <Link key={pack.id} href={`${packBase ?? `/send-photos/${encodeURIComponent(token)}/packs`}/${pack.id}`} className="block rounded-xl bg-white px-3 py-3 text-sm font-semibold text-teal-900 underline">{pack.name} →</Link>)}</div></section> : null}
     {preview ? <p className="mt-4 rounded-xl bg-amber-100 p-3 text-sm text-amber-900">Preview only. Your live link will send photos straight to the marketing inbox.</p> : null}
     <div className="mt-6 grid grid-cols-2 gap-3">

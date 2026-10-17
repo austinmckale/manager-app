@@ -52,3 +52,20 @@ are removed. The source files for those older features remain available.
 Checks: existing 44 marketing/intake/report checks plus four new portal permission
 checks; TypeScript and focused ESLint. Deployment and live checks are recorded in
 the conversation. Publishing and outbound delivery remain disabled.
+
+## Limited portal handoff
+
+Finished-pack delivery to Ryan is optional and is not a launch requirement.
+The Google portal does not show saved drafts, captions, finished packs, or
+marketing reports, and it does not ask Ryan to choose copy or publish anything.
+`/portal/packs` and `/portal/reports` are intentionally unavailable.
+
+Ryan can send photos, a typed note, and a voice note, then open My uploads to
+see each previous submission. The status is only “Received” or “Processing your
+voice note.” His original photos, typed note, and voice recording stay on the
+submission. Internal marketing copy stays on Austin’s dashboard.
+
+Shared `/send-photos/` links are unchanged. A still-valid shared link can still
+show a finished pack that was already marked ready. An expired or revoked shared
+link stays blocked. No release action, email, SMS, social publish, ad launch,
+migration, or deployment was added for this handoff.

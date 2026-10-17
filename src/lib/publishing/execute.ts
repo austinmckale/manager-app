@@ -1,8 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { readPublishingEnv } from "@/lib/publishing/config";
-import { presentConnection } from "@/lib/publishing/connections";
-import { readConnections, toSecret } from "@/lib/publishing/connection-store";
+import { toSecret } from "@/lib/publishing/connection-store";
 import { publishOrganic, type DeliveryStore, type PreparedMedia } from "@/lib/publishing/deliver";
 import { ingestExpiresAt, ingestObjectPath, publicIngestUrl } from "@/lib/publishing/public-media";
 import { createFacebookPublisher } from "@/lib/publishing/providers/facebook";
@@ -16,6 +15,8 @@ import { loadApprovedPublishingDraft } from "@/lib/publishing/approval";
 import { approvedText, contentHash } from "@/lib/publishing/content";
 import { isMockPostId } from "@/lib/publishing/deliver";
 import { PublishRejection } from "@/lib/publishing/types";
+import { facebookRetryBlocker } from "@/lib/publishing/providers/facebook-state";
+import { publishingStatus } from "@/lib/publishing/status";
 
 const PRIVATE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET ?? "job-assets";
 const PUBLIC_BUCKET = "site-public";
@@ -89,21 +90,35 @@ function deliveryStore(): DeliveryStore {
         throw error;
       }
     },
-    async update(id, patch) {
-      const row = await prisma.marketingDelivery.update({
-        where: { id },
-        data: {
-          status: patch.status,
-          providerPostId: patch.providerPostId,
-          containerId: patch.containerId,
-          attemptCount: patch.attemptCount,
-          lastError: patch.lastError,
-          acceptedAt: patch.acceptedAt ? new Date(patch.acceptedAt) : undefined,
-          publishedAt: patch.publishedAt ? new Date(patch.publishedAt) : undefined,
-          assetIds: patch.assetIds,
-        },
-      });
+    async update(id, patch, expectedAttemptCount) {
+      const data = {
+        status: patch.status,
+        providerPostId: patch.providerPostId,
+        containerId: patch.containerId,
+        attemptCount: patch.attemptCount,
+        lastError: patch.lastError,
+        acceptedAt: patch.acceptedAt ? new Date(patch.acceptedAt) : undefined,
+        publishedAt: patch.publishedAt ? new Date(patch.publishedAt) : undefined,
+        assetIds: patch.assetIds,
+      };
+      if (expectedAttemptCount !== undefined) {
+        const updated = await prisma.marketingDelivery.updateMany({ where: { id, attemptCount: expectedAttemptCount }, data });
+        if (updated.count !== 1) throw new PublishRejection("Another request owns this delivery. Check its current status.", 409);
+        const row = await prisma.marketingDelivery.findUnique({ where: { id } });
+        if (!row) throw new PublishRejection("That delivery is no longer available.", 404);
+        return toRecord(row);
+      }
+      const row = await prisma.marketingDelivery.update({ where: { id }, data });
       return toRecord(row);
+    },
+    async claimRetry(record, now) {
+      const claimed = await prisma.marketingDelivery.updateMany({
+        where: { id: record.id, orgId: record.orgId, status: record.status, attemptCount: record.attemptCount, acceptedAt: record.acceptedAt ? new Date(record.acceptedAt) : null, containerId: record.containerId, providerPostId: record.providerPostId },
+        data: { status: "ACCEPTED", lastError: null, acceptedAt: new Date(now), attemptCount: { increment: 1 } },
+      });
+      if (claimed.count !== 1) return null;
+      const row = await prisma.marketingDelivery.findUnique({ where: { id: record.id } });
+      return row && row.attemptCount === record.attemptCount + 1 ? toRecord(row) : null;
     },
   };
 }
@@ -254,24 +269,14 @@ async function releaseMedia(media: PreparedMedia[]) {
 }
 
 export async function presentedConnections(orgId: string) {
-  const env = readPublishingEnv(process.env);
-  const rows = await readConnections(orgId);
-  const now = new Date();
-  const providers = ["FACEBOOK_PAGE", "INSTAGRAM", "GOOGLE_BUSINESS", "GOOGLE_ADS", "META_ADS"] as const;
-  return {
-    migrationReady: rows !== null,
-    publishMode: env.publishMode,
-    connections: providers.map((provider) => {
-      const row = rows?.find((item) => item.provider === provider) ?? null;
-      return presentConnection(provider, row ? toSecret(row) : null, env, now);
-    }),
-  };
+  return publishingStatus(orgId);
 }
 
 export async function pollDelivery(orgId: string, deliveryId: string) {
   const row = await prisma.marketingDelivery.findFirst({ where: { id: deliveryId, orgId } });
   if (!row) return null;
   if (row.status === "PUBLISHED" || row.status === "FAILED") return toRecord(row);
+  if (row.destination === "FACEBOOK_PAGE" && facebookRetryBlocker(row.containerId)) return toRecord(row);
   const env = readPublishingEnv(process.env);
   // Status reads in mock mode must never refresh accounts or poll live APIs.
   if (env.publishMode !== "live" || isMockPostId(row.providerPostId)) return toRecord(row);

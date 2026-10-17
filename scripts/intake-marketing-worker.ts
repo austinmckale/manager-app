@@ -3,12 +3,14 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { randomInt } from "node:crypto";
 import { z } from "zod";
+import { existsSync } from "node:fs";
 
 // This worker never sends mail or texts itself. The scheduled assistant uses its
 // connected Gmail tool after claiming a due notification, then records its ID.
 async function main() {
   const [command = "scan", ...args] = process.argv.slice(2);
   const envFile = process.env.INTAKE_WORKER_ENV_FILE || ".env.intake-production-verified";
+  if (existsSync(".env.marketing-ai.local")) loadEnvFile(".env.marketing-ai.local");
   loadEnvFile(envFile);
   const { prisma } = await import("../src/lib/prisma");
   const { supabaseAdmin } = await import("../src/lib/supabase/admin");
@@ -41,7 +43,25 @@ async function main() {
       console.log(JSON.stringify(await runMarketingAlerts(orgId, args.includes("--worker-failed") ? "failed" : args.includes("--worker-healthy") ? "healthy" : undefined, args.includes("--test"))));
     } else if (command === "run-local") {
       const { runLocalIntake } = await import("./local-intake-runner");
-      await runLocalIntake({ prisma, supabaseAdmin, orgId, folder, audioAction: AUDIO_RECEIVED, includeTest: args.includes("--include-test") });
+      const { processingSettings, processingId, workerHeartbeat } = await import("../src/lib/marketing-processing");
+      const settings = await processingSettings(prisma, orgId);
+      const testOnce = Boolean(settings.testRequestedAt);
+      if ((!settings.enabled && !testOnce) || (settings.mode === "manual" && !testOnce)) {
+        await workerHeartbeat(prisma, orgId, "paused", settings.mode);
+        console.log(JSON.stringify({ transcribed: 0, generated: false, paused: true })); return;
+      }
+      if (testOnce) {
+        const row = await prisma.activityLog.findUnique({ where: { id: processingId(orgId, "settings") } });
+        if (!row) throw new Error("Settings changed.");
+        const claimed = await prisma.activityLog.updateMany({ where: { id: row.id, metadata: { equals: row.metadata! } }, data: { metadata: { ...settings, testRequestedAt: null, testDraftId: null, testSubmissionId: null } } });
+        if (!claimed.count) throw new Error("Test already claimed.");
+      }
+      await workerHeartbeat(prisma, orgId, "processing", settings.mode);
+      try {
+        if (settings.mode === "hybrid" && !process.env.OPENAI_API_KEY) throw new Error("Configure OPENAI_API_KEY on the worker before using Hybrid.");
+        await runLocalIntake({ prisma, supabaseAdmin, orgId, folder, audioAction: AUDIO_RECEIVED, includeTest: args.includes("--include-test") || testOnce, mode: settings.mode === "manual" ? "local" : settings.mode, testOnce, reviewOnly: settings.mode === "manual" || !!settings.testDraftId, reviewDraftId: settings.testDraftId || undefined, testSubmissionId: settings.testSubmissionId || undefined });
+        await workerHeartbeat(prisma, orgId, "idle", settings.mode);
+      } catch (error) { await workerHeartbeat(prisma, orgId, "error", settings.mode); throw error; }
     } else if (command === "scan") {
       const rows = await prisma.activityLog.findMany({ where: { orgId, action: PHOTO_RECEIVED, createdAt: { gte: new Date(now.getTime() - 29 * 86400000) } }, orderBy: { createdAt: "desc" }, take: 2000 });
       const seen = new Set<string>();
@@ -49,10 +69,11 @@ async function main() {
         const parsed = receiptSchema.safeParse(row.metadata);
         if (!parsed.success) continue;
         const receipt = parsed.data;
+        if (args.includes("--submission") && receipt.submissionId !== args[args.indexOf("--submission") + 1]) continue;
         const id = deliveryId(orgId, receipt.inviteId, receipt.submissionId);
         if (seen.has(id)) continue;
         seen.add(id);
-        if (row.createdAt.getTime() > now.getTime() - 15 * 60000 && !(args.includes("--include-test") && /^TEST\b/i.test(receipt.description.trim()))) continue;
+        if (!args.includes("--now") && row.createdAt.getTime() > now.getTime() - 15 * 60000 && !(args.includes("--include-test") && /^TEST\b/i.test(receipt.description.trim()))) continue;
         if (!args.includes("--include-test") && /^TEST\b/i.test(receipt.description.trim())) continue;
         if (await prisma.activityLog.findUnique({ where: { id }, select: { id: true } })) {
           const { generationJobId, completeMetadata } = await import("./local-generation-queue");
@@ -108,7 +129,12 @@ async function main() {
       const { generationJobId } = await import("./local-generation-queue");
       const generation = await prisma.activityLog.findUnique({ where: { id: generationJobId(orgId, inviteId, submissionId) } });
       const state = generationRecordSchema.safeParse(generation?.metadata);
-      if (input.generator === "local-ollama" && (!state.success || state.data.status !== "running" || !state.data.evidence || state.data.evidence.reasons.length || !state.data.issues || state.data.issues.length || !checkedFieldsMatch(draft, state.data.checkedFields))) throw new Error("Evidence and claim checks must pass on this exact copy before saving a generated pack.");
+      if (["local-ollama", "openai"].includes(input.generator) && (!state.success || state.data.status !== "running" || !state.data.evidence || state.data.evidence.reasons.length || !state.data.issues || state.data.issues.length || !checkedFieldsMatch(draft, state.data.checkedFields))) throw new Error("Evidence and claim checks must pass on this exact copy before saving a generated pack.");
+      if (["local-ollama", "openai"].includes(input.generator) && state.success) {
+        const checked = state.data.evidence!;
+        const receiptData = receiptSchema.parse(receipt.metadata);
+        if (draft.assetIds.length !== batch.assets.length || checked.sources.voice !== batch.transcript || checked.sources.owner !== state.data.ownerNotes || checked.sources.notes !== [receiptData.location, receiptData.description].filter(Boolean).join("\n")) throw new Error("Submission evidence changed during generation. Run fresh checks.");
+      }
       draft.sourceNotes = [...selected.map((asset) => asset.description || ""), batch.transcript, state.success ? state.data.ownerNotes : ""].filter(Boolean).join("\n\n").slice(0, 6000);
       draft.photoNotes = selected.map((asset) => ({ assetId: asset.id, description: asset.description || "", stage: asset.stage, area: asset.area }));
       const deliverAt = deliveryDate(receipt.createdAt, randomInt(600, 2521));
@@ -125,7 +151,19 @@ async function main() {
       } catch (error) {
         if (!(typeof error === "object" && error && "code" in error && error.code === "P2002")) throw error;
       }
-      console.log(JSON.stringify({ saved: true, id, draftId, deliverAt, url: `${base.origin}/send-photos/${uploadInviteToken(inviteId)}/packs/${id}` }));
+      let reviewed = false;
+      if (["local-ollama", "openai"].includes(input.generator) && state.success && state.data.evidence) {
+        const { loadContentReview } = await import("../src/lib/content-review-store");
+        const { REVIEW_REQUEST } = await import("../src/lib/content-review");
+        const current = await loadContentReview(orgId, draftId);
+        const evidence = state.data.evidence;
+        if (current && !current.voicePending && current.audio.map((audio) => audio.transcript).join("\n\n") === evidence.sources.voice && current.originals.receiptNotes.includes(evidence.sources.notes)) {
+          const review = { draftId, inputHash: current.inputHash, status: "completed", policyVersion: 2, requestedAt: new Date().toISOString(), completedAt: new Date().toISOString(), engine: input.generator, imagesChecked: evidence.photos.length, evidence, result: { summary: "All selected photos and public fields passed evidence checks in a separate review pass. Owner approval is still required.", findings: [] } };
+          await prisma.activityLog.upsert({ where: { id: current.reviewId }, create: { id: current.reviewId, orgId, jobId: batch.invite.jobId, action: REVIEW_REQUEST, metadata: review }, update: { metadata: review } });
+          reviewed = true;
+        }
+      }
+      console.log(JSON.stringify({ saved: true, reviewed, id, draftId, deliverAt, url: `${base.origin}/send-photos/${uploadInviteToken(inviteId)}/packs/${id}` }));
     } else if (command === "due" || command === "claim-email" || command === "record-email") {
       if (command !== "record-email" && process.env.INTAKE_EMAIL_SENDING !== "enabled") { console.log(JSON.stringify({ due: [], claimed: false, email: "disabled — test and finalize the approval workflow first", sms: "not configured" })); return; }
       if (command === "record-email") {

@@ -13,13 +13,15 @@ function load(file, imports) {
   return exports;
 }
 const marketing = load('src/lib/marketing.ts', { zod: require('zod') });
-const review = load('src/lib/content-review.ts', { zod: require('zod'), 'node:crypto': require('node:crypto'), '@/lib/marketing': marketing });
+const evidence = load('src/lib/marketing-evidence.ts', { zod: require('zod') });
+const processing = load('src/lib/marketing-processing.ts', { zod: require('zod'), 'node:crypto': require('node:crypto') });
+const review = load('src/lib/content-review.ts', { zod: require('zod'), 'node:crypto': require('node:crypto'), '@/lib/marketing': marketing, '@/lib/marketing-evidence': evidence });
 const draftId = '10000000-0000-4000-8000-000000000001';
 const photoId = '20000000-0000-4000-8000-000000000001';
 const nextId = '30000000-0000-4000-8000-000000000001';
 const draft = marketing.prepareMarketingDraft({ assetIds: [photoId], notes: ['Built a pavilion in Reading.'] });
 const hash = review.contentHash({ draft, originals: 'raw notes' });
-const completed = { draftId, inputHash: hash, requestedAt: new Date().toISOString(), status: 'completed', result: { summary: 'Checked against supplied evidence.', findings: [] } };
+const completed = { draftId, inputHash: hash, requestedAt: new Date().toISOString(), status: 'completed', policyVersion: 2, evidence: { version: 1, sources: { notes: '', voice: '', owner: '' }, postType: 'project', photos: [{ assetId: photoId, relevance: 'construction', observations: ['A pavilion.'], concerns: [] }], notes: { facts: [], conflicts: [] }, reasons: [] }, result: { summary: 'Checked against supplied evidence.', findings: [] } };
 const blocker = { category: 'facts', severity: 'blocker', detail: 'Unsupported warranty.', evidence: 'Original notes contain no warranty.', suggestion: 'Remove it.' };
 test('review identity changes with edited text, selected photos or original evidence', () => {
   const id = review.contentReviewId(draftId, hash);
@@ -54,12 +56,12 @@ test('visual observations require human resolution; privacy and factual blockers
 function harness(options = {}) {
   const writes = [];
   const context = { draftId, inputHash: hash, jobId: 'job', reviewId: nextId, draft, superseded: false, voicePending: false, review: completed, approvedAt: null, ...options.context };
-  const tx = { activityLog: { create: async (query) => { writes.push(query); return { id: nextId }; }, upsert: async (query) => { writes.push(query); return {}; } } };
+  const tx = { activityLog: { findFirst: async () => null, create: async (query) => { writes.push(query); return { id: nextId }; }, upsert: async (query) => { writes.push(query); return {}; } } };
   const route = load('src/app/api/marketing/review/route.ts', {
     'next/server': { NextResponse: { json: (body, init) => Response.json(body, init) } }, zod: require('zod'),
     '@/lib/auth': { requireAuth: async () => { if (options.unauthenticated) throw new Error('Unauthorized'); return { orgId: 'org', userId: 'owner', email: options.client ? 'rhisolutions316@gmail.com' : 'austinmck17@gmail.com' }; } },
     '@/lib/client-portal-policy': { isDashboardOwnerEmail: (email) => email === 'austinmck17@gmail.com' },
-    '@/lib/demo': { isDemoMode: () => options.demo || false }, '@/lib/marketing': marketing, '@/lib/content-review': review,
+    '@/lib/demo': { isDemoMode: () => options.demo || false }, '@/lib/marketing': marketing, '@/lib/content-review': review, '@/lib/marketing-processing': processing,
     '@/lib/content-review-store': { loadContentReview: async (orgId) => { assert.equal(orgId, 'org'); return options.missing ? null : context; } },
     '@/lib/prisma': { prisma: { $transaction: async (fn) => fn(tx) } },
   });
@@ -101,7 +103,8 @@ test('saving creates a new version and marks the old one replaced without overwr
 test('local checks queue the current input hash without granting approval', async () => {
   const h = harness({ context: { review: null } });
   assert.equal((await h.request({ action: 'check' })).status, 200);
-  assert.equal(h.writes.length, 1);
+  assert.equal(h.writes.length, 2);
+  assert.equal(h.writes[1].create.metadata.testDraftId, draftId);
   assert.equal(h.writes[0].create.action, review.REVIEW_REQUEST);
   assert.equal(h.writes[0].create.metadata.inputHash, hash);
   assert.equal(h.writes[0].create.metadata.status, 'queued');

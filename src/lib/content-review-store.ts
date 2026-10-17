@@ -22,7 +22,7 @@ export async function loadContentReview(orgId: string, draftId: string, db: Data
   const audio = [] as { id: string; storageKey: string; mimeType: string; transcript: string; status: string; submissionId: string }[];
   const receiptNotes = new Set<string>();
   for (const pair of pairs.values()) {
-    const rows = await db.activityLog.findMany({ where: { orgId, action: { in: [AUDIO_RECEIVED, PHOTO_RECEIVED] }, AND: [{ metadata: { path: ["inviteId"], equals: pair.inviteId } }, { metadata: { path: ["submissionId"], equals: pair.submissionId } }] }, orderBy: { id: "asc" }, take: 100 });
+    const rows = await db.activityLog.findMany({ where: { orgId, action: { in: [AUDIO_RECEIVED, PHOTO_RECEIVED] }, AND: [{ metadata: { path: ["inviteId"], equals: pair.inviteId } }, { metadata: { path: ["submissionId"], equals: pair.submissionId } }] }, orderBy: [{ createdAt: "asc" }, { id: "asc" }], take: 100 });
     for (const row of rows) {
       const meta = row.metadata as Record<string, unknown>;
       if (row.action === PHOTO_RECEIVED) {
@@ -37,7 +37,7 @@ export async function loadContentReview(orgId: string, draftId: string, db: Data
   const reviewId = contentReviewId(draftId, inputHash);
   const [reviewRow, approval, superseded] = await Promise.all([
     db.activityLog.findFirst({ where: { id: reviewId, orgId, action: REVIEW_REQUEST } }),
-    db.activityLog.findFirst({ where: { orgId, action: REVIEW_APPROVAL, AND: [{ metadata: { path: ["draftId"], equals: draftId } }, { metadata: { path: ["inputHash"], equals: inputHash } }] }, orderBy: { createdAt: "desc" } }),
+    db.activityLog.findFirst({ where: { orgId, action: REVIEW_APPROVAL, AND: [{ metadata: { path: ["draftId"], equals: draftId } }, { metadata: { path: ["inputHash"], equals: inputHash } }, { metadata: { path: ["reviewId"], equals: reviewId } }] }, orderBy: { createdAt: "desc" } }),
     db.activityLog.findFirst({ where: { orgId, action: REVIEW_SUPERSEDED, metadata: { path: ["draftId"], equals: draftId } }, orderBy: { createdAt: "desc" } }),
   ]);
   const review = reviewRecordSchema.safeParse(reviewRow?.metadata);

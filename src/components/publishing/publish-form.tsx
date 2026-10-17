@@ -30,19 +30,19 @@ export function PublishForm({ drafts, initialDraftId = "" }: { drafts: DraftChoi
   }
 
   async function publish() {
-    if (!draft) return;
+    if (!draft || pending) return;
     setPending(true);
     setMessage("");
     setResults([]);
     try {
-    const response = await fetch("/api/publishing/publish", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jobId: draft.jobId, draftId: draft.id, assetIds, destinations }),
-    });
-    const body = (await response.json().catch(() => null)) as { error?: string; mode?: string; results?: PublishResult[] } | null;
-    setResults(body?.results ?? []);
-    setMessage(body?.error ?? (body?.mode === "mock" ? "Mock result. Nothing was posted to Facebook, Instagram, or Google." : "Each destination is listed separately."));
+      const response = await fetch("/api/publishing/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: draft.jobId, draftId: draft.id, assetIds, destinations }),
+      });
+      const body = (await response.json().catch(() => null)) as { error?: string; mode?: string; results?: PublishResult[] } | null;
+      setResults(body?.results ?? []);
+      setMessage(body?.error ?? (body?.mode === "mock" ? "Simulation result. Nothing was posted to Facebook, Instagram, or Google." : "Each destination is listed separately."));
     } catch { setMessage("The request could not complete. Check delivery status before retrying."); }
     finally { setPending(false); }
   }
@@ -57,7 +57,7 @@ export function PublishForm({ drafts, initialDraftId = "" }: { drafts: DraftChoi
       <p className="mt-1 text-sm text-slate-600">The server requires owner approval of this exact draft and its source evidence. Mock mode returns a simulation of the approved caption and selected photos without posting.</p>
       <label className="mt-3 block text-sm">
         Saved draft
-        <select className="mt-1 w-full rounded-xl border border-slate-300 p-2" value={draftId} onChange={(event) => chooseDraft(event.target.value)}>
+        <select disabled={pending} className="mt-1 w-full rounded-xl border border-slate-300 p-2" value={draftId} onChange={(event) => chooseDraft(event.target.value)}>
           {drafts.map((item) => (
             <option key={item.id} value={item.id}>
               {item.jobName} · {new Date(item.createdAt).toLocaleString()} · {item.assetIds.length} photos
@@ -72,6 +72,7 @@ export function PublishForm({ drafts, initialDraftId = "" }: { drafts: DraftChoi
             <label key={id} className="flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
+                disabled={pending}
                 checked={assetIds.includes(id)}
                 onChange={(event) => setAssetIds(event.target.checked ? [...assetIds, id] : assetIds.filter((assetId) => assetId !== id))}
               />
@@ -87,6 +88,7 @@ export function PublishForm({ drafts, initialDraftId = "" }: { drafts: DraftChoi
             <label key={destination.id} className="flex items-center gap-2">
               <input
                 type="checkbox"
+                disabled={pending}
                 checked={destinations.includes(destination.id)}
                 onChange={(event) =>
                   setDestinations(event.target.checked ? [...destinations, destination.id] : destinations.filter((item) => item !== destination.id))

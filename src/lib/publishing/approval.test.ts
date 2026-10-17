@@ -28,6 +28,7 @@ function fixture() {
   let authenticated = true;
   let email = "austinmck17@gmail.com";
   let beforeInsert: (() => void) | undefined;
+  const missingTables = new Set<string>();
   const photo = { id: assetId, jobId, type: "PHOTO", description: "Finished pavilion", stage: "AFTER", updatedAt: new Date("2026-10-17T12:00:00Z"), tags: [`intake:${inviteId}`, `submission:${submissionId}`], fileName: "pavilion-finished.jpg", mimeType: "image/jpeg", fileSize: 1200, storageKey: "private/original.jpg" };
   function matches(row: Row, where: Query): boolean {
     for (const key of ["id", "orgId", "jobId"] as const) if (where[key] && row[key] !== where[key]) return false;
@@ -40,12 +41,21 @@ function fixture() {
   const prisma = {
     activityLog: { findFirst: async ({ where }: { where: Query }) => activity.find((row) => matches(row, where)) || null, findMany: async ({ where }: { where: Query }) => activity.filter((row) => matches(row, where)) },
     fileAsset: { findMany: async ({ where }: { where: { id: { in: string[] }; jobId?: string; job?: { orgId: string; id?: string } } }) => where.id.in.includes(assetId) && (!where.jobId || where.jobId === jobId) && (!where.job || where.job.orgId === orgId) ? [photo] : [] },
-    marketingConnection: { findUnique: async () => { calls.connection++; throw new Error("Account access forbidden in mock mode"); } },
+    marketingConnection: {
+      findUnique: async () => { calls.connection++; throw new Error("Account access forbidden in mock mode"); },
+      findMany: async () => { if (missingTables.has("connections")) throw { code: "P2021" }; return []; },
+    },
     marketingDelivery: {
-      findUnique: async ({ where }: { where: { orgId_idempotencyKey: { orgId: string; idempotencyKey: string } } }) => deliveries.find((row) => row.orgId === where.orgId_idempotencyKey.orgId && row.idempotencyKey === where.orgId_idempotencyKey.idempotencyKey) || null,
-      findFirst: async ({ where }: { where: { id: string; orgId: string } }) => deliveries.find((row) => row.id === where.id && row.orgId === where.orgId) || null,
+      findUnique: async ({ where }: { where: { id?: string; orgId_idempotencyKey?: { orgId: string; idempotencyKey: string } } }) => deliveries.find((row) => where.id ? row.id === where.id : row.orgId === where.orgId_idempotencyKey?.orgId && row.idempotencyKey === where.orgId_idempotencyKey?.idempotencyKey) || null,
+      findFirst: async ({ where }: { where: { id?: string; orgId: string } }) => { if (missingTables.has("deliveries")) throw { code: "P2021" }; return deliveries.find((row) => (!where.id || row.id === where.id) && row.orgId === where.orgId) || null; },
       create: async ({ data }: { data: Record<string, unknown> }) => { const row = { ...data }; deliveries.push(row); beforeInsert?.(); return row; },
       update: async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => { const row = deliveries.find((item) => item.id === where.id)!; Object.assign(row, Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined))); return row; },
+      updateMany: async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+        const row = deliveries.find((item) => Object.entries(where).every(([key, value]) => item[key] === value || item[key] instanceof Date && value instanceof Date && (item[key] as Date).getTime() === value.getTime()));
+        if (!row) return { count: 0 };
+        Object.assign(row, Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined).map(([key, value]) => [key, key === "attemptCount" && typeof value === "object" && value !== null ? Number(row[key]) + Number((value as { increment: number }).increment) : value])));
+        return { count: 1 };
+      },
     },
   };
   const forbiddenNetwork = () => { calls.network++; throw new Error("External requests forbidden in the approved dry run"); };
@@ -76,8 +86,9 @@ function fixture() {
   async function approve() {
     const context = await store.loadContentReview(orgId, draftId);
     assert.ok(context);
-    activity.push({ id: context.reviewId, orgId, jobId, action: review.REVIEW_REQUEST, metadata: { draftId, inputHash: context.inputHash, requestedAt: new Date().toISOString(), status: "completed", result: { summary: "Synthetic test review passed.", findings: [] } }, createdAt: new Date() });
-    activity.push({ id: `approval-${activity.length}`, orgId, jobId, action: review.REVIEW_APPROVAL, metadata: { draftId, inputHash: context.inputHash }, createdAt: new Date() });
+    const evidence = { version: 1, sources: { notes: "Built a pavilion.", voice: "We built a pavilion in Reading.", owner: "" }, postType: "project", photos: [{ assetId, relevance: "construction", observations: ["A pavilion is visible."], concerns: [] }], notes: { facts: [{ source: "voice", quote: "We built a pavilion in Reading.", fact: "Pavilion in Reading" }], conflicts: [] }, reasons: [] };
+    activity.push({ id: context.reviewId, orgId, jobId, action: review.REVIEW_REQUEST, metadata: { draftId, inputHash: context.inputHash, requestedAt: new Date().toISOString(), status: "completed", policyVersion: 2, evidence, result: { summary: "Synthetic test review passed.", findings: [] } }, createdAt: new Date() });
+    activity.push({ id: `approval-${activity.length}`, orgId, jobId, action: review.REVIEW_APPROVAL, metadata: { draftId, inputHash: context.inputHash, reviewId: context.reviewId }, createdAt: new Date() });
     return context.inputHash;
   }
   function request(path: "publish" | "retry", body: unknown, origin = "https://app.rhipros.com") {
@@ -85,7 +96,11 @@ function fixture() {
     return route.POST(new Request(`https://app.rhipros.com/api/publishing/${path}`, { method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify(body) }));
   }
   const command = { jobId, draftId, assetIds: [assetId], destinations: ["FACEBOOK_PAGE"] };
-  return { activity, deliveries, photo, draft, env, calls, approve, command, request, load, authenticate(value: boolean) { authenticated = value; }, setEmail(value: string) { email = value; }, beforeInsert(fn: () => void) { beforeInsert = fn; }, review };
+  async function status(id?: string) {
+    const route = load(resolve(root, "app/api/publishing/status/route")) as { GET: (request: Request) => Promise<Response> };
+    return route.GET(new Request(`https://app.rhipros.com/api/publishing/status${id === undefined ? "" : `?draftId=${id}`}`));
+  }
+  return { activity, deliveries, photo, draft, env, calls, approve, command, request, status, missingTables, load, authenticate(value: boolean) { authenticated = value; }, setEmail(value: string) { email = value; }, beforeInsert(fn: () => void) { beforeInsert = fn; }, review };
 }
 
 test("direct publishing API rejects a missing owner approval and ignores forged approval flags", async () => {
@@ -140,6 +155,28 @@ test("superseded drafts and photos outside the approved selection are rejected",
   assert.equal((await f.request("publish", f.command)).status, 409); assert.equal(f.deliveries.length, 0);
 });
 
+test("an approval record cannot bypass failed/pending checks, pending speech or blocking findings", async () => {
+  for (const state of ["failed", "running", "blocker", "voice-pending", "legacy-policy", "held-evidence"]) {
+    const f = fixture(); await f.approve();
+    const check = f.activity.find((row) => row.action === f.review.REVIEW_REQUEST)!;
+    if (state === "blocker") check.metadata.result = { summary: "Blocking finding.", findings: [{ category: "facts", severity: "blocker", detail: "Unsupported fact.", evidence: "No supporting evidence.", suggestion: "Correct it." }] };
+    else if (state === "voice-pending") f.activity.find((row) => row.id === "audio")!.metadata.status = "queued";
+    else if (state === "legacy-policy") delete check.metadata.policyVersion;
+    else if (state === "held-evidence") (check.metadata.evidence as { reasons: string[] }).reasons.push("Evidence needs owner correction.");
+    else check.metadata.status = state;
+    assert.equal((await f.request("publish", f.command)).status, 409); assert.equal(f.deliveries.length, 0);
+  }
+});
+
+test("delivery status also labels a saved simulation without polling a provider", async () => {
+  const f = fixture(); await f.approve();
+  const first = await (await f.request("publish", f.command)).json();
+  const route = f.load(resolve(root, "app/api/publishing/deliveries/[id]/route")) as { GET: (r: Request, c: { params: Promise<{ id: string }> }) => Promise<Response> };
+  const result = await (await route.GET(new Request("https://app.rhipros.com/status"), { params: Promise.resolve({ id: first.results[0].deliveryId }) })).json();
+  assert.equal(result.status, "SIMULATED"); assert.equal(result.mock, true); assert.equal(result.providerPostId, null); assert.equal(result.publishedAt, null);
+  assert.equal(f.calls.network + f.calls.connection + f.calls.storage, 0);
+});
+
 test("retry API refuses stale evidence even after that evidence is separately re-approved", async () => {
   const f = fixture(); await f.approve();
   const first = await (await f.request("publish", f.command)).json();
@@ -172,4 +209,60 @@ test("retry remains scoped to its organization and unchanged approved simulation
   assert.equal(retry.results[0].status, "SIMULATED"); assert.equal(retry.results[0].deduped, true);
   f.deliveries[0].orgId = "another-organization";
   assert.equal((await f.request("retry", { deliveryId: first.results[0].deliveryId })).status, 404);
+});
+
+test("readiness API is owner-only, validates draft ids and disables caching", async () => {
+  const f = fixture();
+  f.authenticate(false); assert.equal((await f.status()).status, 401);
+  f.authenticate(true); f.setEmail("rhisolutions316@gmail.com"); assert.equal((await f.status()).status, 403);
+  f.setEmail("austinmck17@gmail.com"); assert.equal((await f.status("invalid")).status, 400);
+  const response = await f.status();
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  const result = await response.json();
+  assert.equal(result.facebook.approval.state, "NOT_SELECTED"); assert.equal(result.facebook.canPublish, false);
+});
+
+test("readiness uses the real approval store and changes when source evidence changes", async () => {
+  const f = fixture(); await f.approve();
+  const result = await (await f.status(draftId)).json();
+  assert.equal(result.facebook.status, "READY_FOR_SIMULATION"); assert.equal(result.facebook.canSimulate, true); assert.equal(result.facebook.canPublish, false);
+  assert.deepEqual(result.tables, { connections: true, deliveries: true });
+  f.photo.description = "Evidence changed after approval.";
+  const changed = await (await f.status(draftId)).json();
+  assert.equal(changed.facebook.approval.state, "REVIEW_REQUIRED"); assert.equal(changed.facebook.canSimulate, false);
+  assert.equal(f.calls.network + f.calls.connection + f.calls.storage, 0);
+});
+
+test("readiness detects either missing publishing table and unavailable drafts", async () => {
+  for (const table of ["connections", "deliveries"]) {
+    const f = fixture(); await f.approve(); f.missingTables.add(table);
+    const result = await (await f.status(draftId)).json();
+    assert.equal(result.migrationReady, false); assert.equal(result.tables[table], false); assert.equal(result.facebook.canSimulate, false);
+  }
+  const f = fixture();
+  const missing = await (await f.status("10000000-0000-4000-8000-000000000099")).json();
+  assert.equal(missing.facebook.approval.state, "UNAVAILABLE");
+  assert.equal(missing.facebook.approval.approvalHash, undefined);
+});
+
+test("retry API reclaims an unchanged failed simulation through the real atomic delivery store", async () => {
+  const f = fixture(); await f.approve();
+  const first = await (await f.request("publish", f.command)).json();
+  f.deliveries[0].status = "FAILED";
+  const response = await f.request("retry", { deliveryId: first.results[0].deliveryId });
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.results[0].status, "SIMULATED"); assert.equal(result.results[0].attemptCount, 2);
+  assert.equal(f.deliveries.length, 1); assert.equal(f.calls.network + f.calls.connection + f.calls.storage, 0);
+});
+
+test("delivery status exposes the manual-check hold without posting or polling Facebook", async () => {
+  const f = fixture(); await f.approve();
+  const first = await (await f.request("publish", f.command)).json();
+  f.deliveries[0].providerPostId = null;
+  f.deliveries[0].containerId = `fbresume:${JSON.stringify({ version: 1, fingerprint: "a".repeat(64), phase: "feed_pending", photos: [{ assetId, photoId: "photo-a" }] })}`;
+  const route = f.load(resolve(root, "app/api/publishing/deliveries/[id]/route")) as { GET: (r: Request, c: { params: Promise<{ id: string }> }) => Promise<Response> };
+  const result = await (await route.GET(new Request("https://app.rhipros.com/status"), { params: Promise.resolve({ id: first.results[0].deliveryId }) })).json();
+  assert.equal(result.requiresManualCheck, true); assert.equal(result.status, "FAILED");
+  assert.match(result.error, /automatic retry is blocked/); assert.equal(f.calls.network + f.calls.connection + f.calls.storage, 0);
 });

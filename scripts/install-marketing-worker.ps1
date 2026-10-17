@@ -13,6 +13,6 @@ $logon = New-ScheduledTaskTrigger -AtLogOn -User ([Security.Principal.WindowsIde
 $watchdog = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5)
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 $principal = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logon, $watchdog) -Settings $settings -Principal $principal -Description 'Local-only RHI transcription and draft preparation. No outbound delivery or publishing.' -Force | Out-Null
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logon, $watchdog) -Settings $settings -Principal $principal -Description 'RHI marketing worker. Processing mode and automatic generation are controlled in the app; owner approval is required for publishing.' -Force | Out-Null
 Start-ScheduledTask -TaskName $taskName
 Write-Output 'RHI worker installed and started. It runs while this Windows account is signed in, independently of Codex.'

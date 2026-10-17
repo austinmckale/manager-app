@@ -3,9 +3,10 @@ import { pollDelivery } from "@/lib/publishing/execute";
 import { authorizePublishing } from "@/lib/publishing/http";
 import { isMockPostId } from "@/lib/publishing/deliver";
 import { PublishRejection } from "@/lib/publishing/types";
+import { facebookRetryBlocker } from "@/lib/publishing/providers/facebook-state";
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
-  const authorized = await authorizePublishing();
+  const authorized = await authorizePublishing(request);
   if ("response" in authorized) return authorized.response;
   const { id } = await context.params;
   if (!/^[0-9a-f-]{36}$/i.test(id)) return NextResponse.json({ error: "That delivery is not available." }, { status: 404 });
@@ -17,14 +18,16 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   }
   if (!delivery) return NextResponse.json({ error: "That delivery is not available." }, { status: 404 });
   const mock = isMockPostId(delivery.providerPostId);
+  const manualCheck = delivery.destination === "FACEBOOK_PAGE" && delivery.status !== "PUBLISHED" && !delivery.providerPostId ? facebookRetryBlocker(delivery.containerId) : null;
   return NextResponse.json({
     id: delivery.id,
     destination: delivery.destination,
-    status: mock && delivery.status !== "FAILED" ? "SIMULATED" : delivery.status,
+    status: manualCheck ? "FAILED" : mock && delivery.status !== "FAILED" ? "SIMULATED" : delivery.status,
     providerPostId: mock ? null : delivery.providerPostId,
-    error: delivery.lastError,
+    error: manualCheck ?? delivery.lastError,
     attemptCount: delivery.attemptCount,
     mock,
+    requiresManualCheck: !!manualCheck,
     publishedAt: mock ? null : delivery.publishedAt,
   });
 }

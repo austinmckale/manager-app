@@ -14,6 +14,7 @@ export const noteEvidenceSchema = z.object({
 });
 export const evidenceSchema = z.object({
   version: z.literal(1),
+  sources: z.object({ notes: z.string().max(12000), voice: z.string().max(180000), owner: z.string().max(6000) }),
   postType: postTypeSchema,
   photos: z.array(photoEvidenceSchema).min(1).max(24),
   notes: noteEvidenceSchema,
@@ -49,7 +50,7 @@ export function assessEvidence(input: { postType: z.infer<typeof postTypeSchema>
   if (facts.length !== input.notes.facts.length) reasons.push("Some extracted facts could not be traced to the original notes. Check the notes and retry.");
   if (input.postType === "company_life" && !input.sources.owner.trim()) reasons.push("Describe the intended company-personality post in the owner notes.");
   if (!facts.length && !photos.some((photo) => photo.relevance === "construction" && photo.observations.length)) reasons.push("No usable project facts were supplied. Add job details or choose a company-personality post and explain the photo.");
-  return evidenceSchema.parse({ version: 1, postType: input.postType, photos, notes: { ...input.notes, facts }, reasons: reasons.slice(0, 40) });
+  return evidenceSchema.parse({ version: 1, sources: input.sources, postType: input.postType, photos, notes: { ...input.notes, facts }, reasons: reasons.slice(0, 40) });
 }
 export function evidenceFacts(evidence: MarketingEvidence) {
   return [

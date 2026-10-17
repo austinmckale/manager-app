@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { marketingDraftSchema, type MarketingDraft } from "@/lib/marketing";
+import { evidenceSchema } from "@/lib/marketing-evidence";
 
 export const REVIEW_REQUEST = "marketing.content.review";
 export const REVIEW_APPROVAL = "marketing.content.approved";
@@ -8,7 +9,7 @@ export const REVIEW_SUPERSEDED = "marketing.content.superseded";
 export const findingSchema = z.object({ category: z.enum(["facts", "privacy", "copy", "images"]), severity: z.enum(["blocker", "warning"]), detail: z.string().min(1).max(800), evidence: z.string().min(1).max(800), suggestion: z.string().max(800) });
 export const reviewResultSchema = z.object({ summary: z.string().min(1).max(1000), findings: z.array(findingSchema).max(30) }).transform((result) => ({ ...result, findings: result.findings.map((finding) => finding.category === "images" ? { ...finding, severity: "warning" as const } : finding) }));
 export const aiReviewResultSchema = z.object({ summary: z.string().min(1).max(1000), findings: z.array(findingSchema.extend({ publicField: z.enum(["publicLocation", "service", "social", "googleBusiness", "metaPrimary", "metaHeadline", "imageHeadline", "googleHeadlines", "googleDescriptions", "landingUrl", "photos"]), quote: z.string().max(400) })).max(6) });
-export const reviewRecordSchema = z.object({ draftId: z.string().uuid(), inputHash: z.string().length(64), status: z.enum(["queued", "running", "completed", "failed"]), requestedAt: z.string(), startedAt: z.string().optional(), completedAt: z.string().optional(), result: reviewResultSchema.optional(), engine: z.string().optional(), error: z.string().optional(), imagesChecked: z.number().optional() });
+export const reviewRecordSchema = z.object({ draftId: z.string().uuid(), inputHash: z.string().length(64), status: z.enum(["queued", "running", "completed", "failed"]), requestedAt: z.string(), startedAt: z.string().optional(), completedAt: z.string().optional(), result: reviewResultSchema.optional(), engine: z.string().optional(), error: z.string().optional(), imagesChecked: z.number().optional(), policyVersion: z.literal(2).optional(), evidence: evidenceSchema.optional() });
 export type ContentReview = z.infer<typeof reviewRecordSchema>;
 export type ReviewFinding = z.infer<typeof findingSchema>;
 export function groundReviewFindings(draft: MarketingDraft, result: z.infer<typeof aiReviewResultSchema>): ReviewFinding[] {
@@ -25,7 +26,7 @@ export function groundReviewFindings(draft: MarketingDraft, result: z.infer<type
 }
 export function contentHash(input: unknown) { return createHash("sha256").update(JSON.stringify(input)).digest("hex"); }
 export function contentReviewId(draftId: string, hash: string) {
-  const hex = contentHash(["rhi-content-review-v1", draftId, hash]);
+  const hex = contentHash(["rhi-content-review-v2", draftId, hash]);
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 export function copyChecks(draft: MarketingDraft): ReviewFinding[] {
@@ -40,5 +41,5 @@ export function copyChecks(draft: MarketingDraft): ReviewFinding[] {
   return findings;
 }
 export function canApproveContent(hash: string, review: ContentReview | null, superseded: boolean, voicePending: boolean) {
-  return !superseded && !voicePending && review?.inputHash === hash && review.status === "completed" && !!review.result && !review.result.findings.some((finding) => finding.severity === "blocker");
+  return !superseded && !voicePending && review?.inputHash === hash && review.status === "completed" && review.policyVersion === 2 && !!review.evidence && !review.evidence.reasons.length && !!review.result && !review.result.findings.some((finding) => finding.severity === "blocker");
 }

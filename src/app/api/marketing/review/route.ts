@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { DRAFT_SAVED_ACTION, marketingDraftSchema } from "@/lib/marketing";
 import { loadContentReview } from "@/lib/content-review-store";
 import { REVIEW_APPROVAL, REVIEW_REQUEST, REVIEW_SUPERSEDED, canApproveContent, copyChecks } from "@/lib/content-review";
+import { PROCESSING_SETTINGS, processingId, processingSettingsSchema } from "@/lib/marketing-processing";
 
 const schema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("check"), draftId: z.string().uuid(), inputHash: z.string().length(64) }),
@@ -35,10 +36,15 @@ export async function POST(request: Request) {
       }
       if (context.voicePending) throw new Error("Wait for the original voice recording to finish transcription.");
       if (body.action === "check") {
-        if (context.review?.status === "completed") return { alreadyChecked: true };
+        if (context.review?.status === "completed" && context.review.policyVersion === 2) return { alreadyChecked: true };
         if (context.review?.status === "running" && Date.now() - new Date(context.review.startedAt || "").getTime() < 20 * 60000) return { queued: true };
         const metadata = { draftId: context.draftId, inputHash: context.inputHash, status: "queued", requestedAt: new Date().toISOString() };
         await tx.activityLog.upsert({ where: { id: context.reviewId }, create: { ...base, id: context.reviewId, action: REVIEW_REQUEST, metadata }, update: { metadata } });
+        const settingsId = processingId(auth.orgId, "settings");
+        const setting = await tx.activityLog.findFirst({ where: { id: settingsId, orgId: auth.orgId, action: PROCESSING_SETTINGS } });
+        const settings = processingSettingsSchema.parse(setting?.metadata || {});
+        const requested = { ...settings, testRequestedAt: new Date().toISOString(), testDraftId: context.draftId, testSubmissionId: null };
+        await tx.activityLog.upsert({ where: { id: settingsId }, create: { ...base, id: settingsId, action: PROCESSING_SETTINGS, metadata: requested }, update: { metadata: requested } });
         return { queued: true };
       }
       if (!canApproveContent(context.inputHash, context.review, context.superseded, context.voicePending) || copyChecks(context.draft).some((finding) => finding.severity === "blocker")) throw new Error("A completed review with no blocking findings is required.");

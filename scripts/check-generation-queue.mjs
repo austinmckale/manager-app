@@ -15,7 +15,7 @@ const leaked = 'transcript: the gate code is 1234 https://storage.example/privat
 function load(file) {
   const exports = {};
   const code = ts.transpileModule(readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
-  vm.runInNewContext(code, { exports, require(id) { if (id === 'node:crypto') return require('node:crypto'); if (id === 'zod') return require('zod'); throw new Error(`Unexpected import ${id}`); }, Date, URL });
+  vm.runInNewContext(code, { exports, require(id) { if (id === '../src/lib/marketing-evidence') return load('src/lib/marketing-evidence.ts'); if (id === 'node:crypto') return require('node:crypto'); if (id === 'zod') return require('zod'); throw new Error(`Unexpected import ${id}`); }, Date, URL });
   return exports;
 }
 

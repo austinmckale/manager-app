@@ -61,6 +61,8 @@ export type PublishAttempt = {
   providerPostId: string | null;
   accessToken: string;
   externalAccountId: string;
+  /** Persist provider progress before any potentially public request. */
+  checkpoint?: (containerId: string) => Promise<void>;
 };
 
 export type OrganicPublisher = {

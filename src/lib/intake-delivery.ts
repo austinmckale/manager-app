@@ -9,7 +9,7 @@ export const INTAKE_EMAIL = "marketing.intake.pack.email";
 export const packSchema = z.object({
   inviteId: z.string().uuid(), submissionId: z.string().uuid(),
   deliverAt: z.string().datetime(), draft: marketingDraftSchema,
-  generator: z.enum(["local-ollama", "codex", "claude", "codex-and-claude", "owner"]),
+  generator: z.enum(["local-ollama", "openai", "codex", "claude", "codex-and-claude", "owner"]),
   isTest: z.boolean().default(false),
   ownerApproved: z.boolean().default(false),
 });

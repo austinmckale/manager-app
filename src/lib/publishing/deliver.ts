@@ -4,6 +4,7 @@ import { approvedText, assertAssetSubset, contentHash, idempotencyKey, mediaProb
 import type { PublishingEnv } from "@/lib/publishing/config";
 import type { ApprovedPublishingDraft } from "@/lib/publishing/approval";
 import { createMockPublisher } from "@/lib/publishing/providers/mock";
+import { facebookRetryBlocker } from "@/lib/publishing/providers/facebook-state";
 import {
   ORGANIC_DESTINATIONS,
   PublishRejection,
@@ -21,7 +22,8 @@ const IN_FLIGHT_MS = 120_000;
 export type DeliveryStore = {
   findByKey: (orgId: string, key: string) => Promise<DeliveryRecord | null>;
   insert: (record: DeliveryRecord) => Promise<DeliveryRecord | "conflict">;
-  update: (id: string, patch: Partial<DeliveryRecord>) => Promise<DeliveryRecord>;
+  update: (id: string, patch: Partial<DeliveryRecord>, expectedAttemptCount?: number) => Promise<DeliveryRecord>;
+  claimRetry: (record: DeliveryRecord, now: string) => Promise<DeliveryRecord | null>;
 };
 
 export type PreparedMedia = { id: string; url: string };
@@ -44,6 +46,7 @@ export type DestinationResult = {
   deduped: boolean;
   mock: boolean;
   deliveryId: string;
+  requiresManualCheck: boolean;
   simulation?: { draftId: string; approvalHash: string; text: string; photos: { id: string; fileName: string; mimeType: string | null }[] };
 };
 
@@ -77,12 +80,13 @@ function resultOf(record: DeliveryRecord, deduped: boolean, simulation?: Destina
     deduped,
     mock,
     deliveryId: record.id,
+    requiresManualCheck: record.destination === "FACEBOOK_PAGE" && record.status !== "PUBLISHED" && !record.providerPostId && !!facebookRetryBlocker(record.containerId),
     ...(simulation ? { simulation } : {}),
   };
 }
 
 function inFlight(record: DeliveryRecord, now: Date) {
-  if (record.providerPostId || record.containerId) return false;
+  if (record.providerPostId || (record.containerId && record.destination !== "FACEBOOK_PAGE")) return false;
   if (record.status !== "ACCEPTED" && record.status !== "PROCESSING") return false;
   if (!record.acceptedAt) return false;
   return now.getTime() - Date.parse(record.acceptedAt) < IN_FLIGHT_MS;
@@ -160,6 +164,7 @@ function failedShell(destination: OrganicDestination, command: PublishCommand, m
     deduped: false,
     mock: false,
     deliveryId: "",
+    requiresManualCheck: false,
   };
 }
 
@@ -189,6 +194,8 @@ async function publishOne(
   const existing = await deps.store.findByKey(command.orgId, key);
   if (command.retry && existing?.id !== command.retry.deliveryId) throw new PublishRejection("That delivery is no longer available for retry.", 409);
   if (existing?.status === "PUBLISHED" || (existing && isMockPostId(existing.providerPostId) && existing.status !== "FAILED")) return result(existing, true);
+  const retryBlocker = destination === "FACEBOOK_PAGE" && existing ? facebookRetryBlocker(existing.containerId) : null;
+  if (existing && retryBlocker) return result({ ...existing, status: "FAILED", lastError: retryBlocker }, true);
   if (existing && inFlight(existing, deps.now)) return result({ ...existing, status: "PROCESSING" }, true);
 
   const problem = mediaProblem(destination, assets);
@@ -202,7 +209,7 @@ async function publishOne(
       const outcome = await createMockPublisher(destination).publish({ destination, text, assetIds: command.assetIds, mediaUrls: [], idempotencyKey: key, containerId: null, providerPostId: null, accessToken: "", externalAccountId: "" });
       return result(await applyOutcome(deps, claimed.record, outcome), false);
     } catch (error) {
-      await deps.store.update(claimed.record.id, { status: "FAILED", lastError: "The approved simulation could not complete. Check approval and try again." });
+      await deps.store.update(claimed.record.id, { status: "FAILED", lastError: "The approved simulation could not complete. Check approval and try again." }, claimed.record.attemptCount);
       throw error;
     }
   }
@@ -269,6 +276,10 @@ async function publishOne(
       providerPostId: owned.providerPostId,
       accessToken: connection.accessToken,
       externalAccountId: connection.externalAccountId,
+      async checkpoint(containerId) {
+        await assertStillApproved(command, approved, deps);
+        await deps.store.update(owned.id, { containerId, acceptedAt: new Date().toISOString() }, owned.attemptCount);
+      },
     });
     const saved = await applyOutcome(deps, owned, outcome);
     if (saved.status === "PUBLISHED" || saved.status === "FAILED") await deps.releaseMedia(media);
@@ -276,8 +287,8 @@ async function publishOne(
   } catch (error) {
     const saved = await deps.store.update(owned.id, {
       status: "FAILED",
-      lastError: "The destination did not accept the post. Try again.",
-    });
+      lastError: destination === "FACEBOOK_PAGE" ? "The Facebook delivery could not complete. Check its saved status before retrying." : "The destination did not accept the post. Try again.",
+    }, owned.attemptCount);
     await deps.releaseMedia(media);
     if (error instanceof PublishRejection) throw error;
     return result(saved, false);
@@ -320,7 +331,7 @@ async function applyOutcome(deps: PublishDeps, record: DeliveryRecord, outcome: 
   if (outcome.outcome === "failed" && outcome.approvalPending) {
     await deps.markStatus(record.destination, "PENDING_PLATFORM_APPROVAL", outcome.message);
   }
-  return deps.store.update(record.id, patchFromOutcome(record, outcome, deps.now.toISOString()));
+  return deps.store.update(record.id, patchFromOutcome(record, outcome, deps.now.toISOString()), record.attemptCount);
 }
 
 async function writeFailure(
@@ -337,14 +348,13 @@ async function writeFailure(
       status: "FAILED",
       lastError: message,
       attemptCount: existing.attemptCount + 1,
-    });
+    }, existing.attemptCount);
   }
   const inserted = await deps.store.insert(blank(deps, command, destination, key, hash, "FAILED", message));
   if (inserted !== "conflict") return inserted;
   const winner = await deps.store.findByKey(command.orgId, key);
   if (!winner) throw new PublishRejection("The delivery could not be saved.", 500);
-  if (winner.status === "PUBLISHED") return winner;
-  return deps.store.update(winner.id, { status: "FAILED", lastError: message });
+  return winner;
 }
 
 async function claim(
@@ -363,15 +373,11 @@ async function claim(
     if (!winner) throw new PublishRejection("The delivery could not be saved.", 500);
     return { record: winner, owned: false };
   }
-  return {
-    record: await deps.store.update(existing.id, {
-      status: "ACCEPTED",
-      lastError: null,
-      acceptedAt: now,
-      attemptCount: existing.attemptCount + 1,
-    }),
-    owned: true,
-  };
+  const claimed = await deps.store.claimRetry(existing, now);
+  if (claimed) return { record: claimed, owned: true };
+  const winner = await deps.store.findByKey(command.orgId, key);
+  if (!winner) throw new PublishRejection("The delivery could not be saved.", 500);
+  return { record: winner, owned: false };
 }
 
 function blank(

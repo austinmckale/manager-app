@@ -65,7 +65,7 @@ export async function recordEvidenceResult(store: PrismaClient, orgId: string, i
   const current = parseJob(row?.metadata);
   if (!row || !current || current.status !== "running") throw new Error("Generation ownership changed.");
   const metadata = { ...current, evidence, issues: issues.slice(0, 80), checkedFields: checkedFields || {}, ...(held ? { status: "held" as const, runningAt: null, nextRetryAt: null, error: null } : {}) };
-  const result = await store.activityLog.updateMany({ where: { id, metadata: { equals: row.metadata } }, data: { metadata } });
+  const result = await store.activityLog.updateMany({ where: { id, metadata: { equals: row.metadata! } }, data: { metadata } });
   if (result.count !== 1) throw new Error("Generation evidence changed.");
 }
 

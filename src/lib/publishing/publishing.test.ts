@@ -8,7 +8,9 @@ import { pausedCampaignReadiness } from "@/lib/publishing/campaigns";
 import { readPublishingEnv, PROVIDER_CATALOG } from "@/lib/publishing/config";
 import { presentConnection } from "@/lib/publishing/connections";
 import { encryptSecret, decryptSecret } from "@/lib/publishing/crypto";
-import { publishOrganic, type DeliveryStore } from "@/lib/publishing/deliver";
+import { publishOrganic, type DeliveryStore, type PublishDeps } from "@/lib/publishing/deliver";
+import { encodeFacebookState } from "@/lib/publishing/providers/facebook-state";
+import { createFacebookPublisher } from "@/lib/publishing/providers/facebook";
 import { createOauthState, verifyOauthState } from "@/lib/publishing/oauth-state";
 import { classifyMetaError } from "@/lib/publishing/provider-errors";
 import { assertPausedGoogleCampaign, googleAdsPausedMutations } from "@/lib/publishing/providers/google-ads";
@@ -73,11 +75,17 @@ function memoryStore(): DeliveryStore & { rows: DeliveryRecord[] } {
       rows.push(record);
       return record;
     },
-    async update(id, patch) {
+    async update(id, patch, expectedAttemptCount) {
       const index = rows.findIndex((row) => row.id === id);
       if (index < 0) throw new Error("missing delivery");
+      if (expectedAttemptCount !== undefined && rows[index].attemptCount !== expectedAttemptCount) throw new PublishRejection("Delivery attempt changed.", 409);
       rows[index] = { ...rows[index], ...patch };
       return rows[index];
+    },
+    async claimRetry(record, now) {
+      const current = rows.find((row) => row.id === record.id);
+      if (!current || current.attemptCount !== record.attemptCount || current.status !== record.status || current.containerId !== record.containerId) return null;
+      return this.update(record.id, { status: "ACCEPTED", lastError: null, acceptedAt: now, attemptCount: record.attemptCount + 1 });
     },
   };
 }
@@ -195,6 +203,74 @@ test("retrying a published post does not create another post", async () => {
   assert.equal(second[0]?.deduped, true);
   assert.equal(second[0]?.providerPostId, first[0]?.providerPostId);
   assert.deepEqual(calls.publish, ["FACEBOOK_PAGE"]);
+});
+
+test("concurrent retries claim a failed delivery once", async () => {
+  const store = memoryStore();
+  const { deps, calls } = baseDeps(store, { publish: async () => calls.publish.length === 1 ? { outcome: "failed", message: "Retryable failure", retryable: true } : { outcome: "published", providerPostId: "confirmed-post" } });
+  const command = { orgId, jobId, draftId, assetIds: [assetId], destinations: ["FACEBOOK_PAGE" as const] };
+  await publishOrganic(command, deps);
+  const results = await Promise.all([publishOrganic(command, deps), publishOrganic(command, deps)]);
+  assert.equal(calls.publish.length, 2);
+  assert.equal(store.rows.length, 1); assert.equal(store.rows[0].attemptCount, 2);
+  assert.ok(results.some(([result]) => result.deduped));
+});
+
+test("active Facebook uploads cannot be reclaimed just because a photo checkpoint exists", async () => {
+  const store = memoryStore();
+  const { deps, calls } = baseDeps(store, { publish: async () => ({ outcome: "failed", message: "Upload interrupted", retryable: true }) });
+  const command = { orgId, jobId, draftId, assetIds: [assetId], destinations: ["FACEBOOK_PAGE" as const] };
+  await publishOrganic(command, deps);
+  store.rows[0] = { ...store.rows[0], status: "ACCEPTED", containerId: encodeFacebookState({ version: 1, fingerprint: "a".repeat(64), phase: "uploading", photos: [{ assetId, photoId: "photo-a" }] }) };
+  const [result] = await publishOrganic(command, deps);
+  assert.equal(result.status, "PROCESSING"); assert.equal(result.deduped, true); assert.equal(calls.publish.length, 1);
+});
+
+test("an uncertain Facebook feed outcome blocks retry before connection or provider access", async () => {
+  const store = memoryStore();
+  const marker = encodeFacebookState({ version: 1, fingerprint: "a".repeat(64), phase: "feed_pending", photos: [{ assetId, photoId: "photo-a" }] });
+  const { deps, calls } = baseDeps(store, { publish: async () => ({ outcome: "failed", message: "Check the Page", retryable: false, containerId: marker }) });
+  const command = { orgId, jobId, draftId, assetIds: [assetId], destinations: ["FACEBOOK_PAGE" as const] };
+  await publishOrganic(command, deps);
+  deps.loadConnection = async () => { throw new Error("Must not reconnect or submit an uncertain delivery"); };
+  const [result] = await publishOrganic(command, deps);
+  assert.equal(result.requiresManualCheck, true); assert.equal(result.status, "FAILED"); assert.equal(calls.publish.length, 1);
+  assert.equal(store.rows[0].attemptCount, 1);
+});
+
+test("a request that loses its delivery claim cannot checkpoint or submit a feed post", async () => {
+  const store = memoryStore();
+  const deps: PublishDeps = baseDeps(store).deps;
+  let feedRequests = 0;
+  deps.publisherFor = () => createFacebookPublisher(async (url) => {
+    if (String(url).endsWith("/feed")) feedRequests++;
+    // Another request reclaimed this attempt while its photo upload was pending.
+    store.rows[0] = { ...store.rows[0], attemptCount: store.rows[0].attemptCount + 1 };
+    return Response.json({ id: "photo-a" });
+  }, "v-test", async () => ({ bytes: new Uint8Array([1]), mimeType: "image/jpeg", fileName: "photo.jpg" }));
+  await assert.rejects(() => publishOrganic({ orgId, jobId, draftId, assetIds: [assetId], destinations: ["FACEBOOK_PAGE"] }, deps), PublishRejection);
+  assert.equal(feedRequests, 0); assert.equal(store.rows[0].status, "ACCEPTED");
+});
+
+test("losing the saved success after a Facebook submission cannot trigger a duplicate feed request", async () => {
+  const store = memoryStore();
+  const update = store.update.bind(store);
+  store.update = async (id, patch, expectedAttemptCount) => {
+    if (patch.status === "PUBLISHED") throw new Error("Database connection lost after Facebook responded");
+    return update(id, patch, expectedAttemptCount);
+  };
+  const deps: PublishDeps = baseDeps(store).deps;
+  let feedRequests = 0;
+  deps.publisherFor = () => createFacebookPublisher(async (url) => {
+    if (String(url).endsWith("/feed")) { feedRequests++; return Response.json({ id: "confirmed-post" }); }
+    return Response.json({ id: "photo-a" });
+  }, "v-test", async () => ({ bytes: new Uint8Array([1]), mimeType: "image/jpeg", fileName: "photo.jpg" }));
+  const command = { orgId, jobId, draftId, assetIds: [assetId], destinations: ["FACEBOOK_PAGE" as const] };
+  const [first] = await publishOrganic(command, deps);
+  assert.equal(first.status, "FAILED"); assert.equal(first.requiresManualCheck, true);
+  const [retry] = await publishOrganic(command, deps);
+  assert.equal(retry.requiresManualCheck, true); assert.equal(feedRequests, 1);
+  assert.match(retry.error ?? "", /automatic retry is blocked/);
 });
 
 test("a failed delivery that already has a provider id is polled instead of posted again", async () => {

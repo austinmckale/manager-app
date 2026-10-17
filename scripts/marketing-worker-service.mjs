@@ -42,15 +42,6 @@ function run() {
   });
 }
 
-async function ollamaReady() {
-  try {
-    const response = await fetch('http://127.0.0.1:11434/api/tags', { signal: AbortSignal.timeout(15000) });
-    if (!response.ok) return false;
-    const data = await response.json();
-    return data.models?.some((model) => model.name === 'qwen3.5:4b') === true;
-  } catch { return false; }
-}
-
 async function runAlerts(health) {
   return new Promise((done) => {
     let output = '';
@@ -89,9 +80,7 @@ async function main() {
     } catch { /* First start. */ }
     do {
       let issue = null;
-      if (!await ollamaReady()) {
-        issue = 'Local Ollama is unavailable, busy, or missing qwen3.5:4b. Processing will retry; check Ollama if this persists.';
-      } else {
+      {
         await status('processing');
         const result = await run();
         if (result.code !== 0) issue = result.issue;
