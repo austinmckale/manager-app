@@ -50,7 +50,10 @@ export async function runLocalIntake({ prisma, supabaseAdmin, orgId, folder, aud
       const packages = resolve(".vercel/local-ai/python-packages");
       const result = spawnSync(python, [resolve("scripts/local-transcribe.py"), path], { encoding: "utf8", timeout: 600000, windowsHide: true, env: { ...process.env, INTAKE_PYTHON_PACKAGES: packages, HF_HUB_DISABLE_TELEMETRY: "1" } });
       if (result.status !== 0) throw new Error(`Local transcription unavailable: ${String(result.stderr || result.error?.message || "unknown error").slice(-500)}`);
-      const transcript = z.object({ text: z.string().min(1).max(6000) }).parse(JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1)!)).text;
+      const spoken = z.object({ text: z.string().min(1) }).parse(JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1)!)).text;
+      const { keepRawText } = await import("../src/lib/raw-input");
+      const transcript = keepRawText(spoken).text;
+      if (!transcript) throw new Error("empty-transcript");
       return transcript;
     }, async (row, metadata) => { await prisma.activityLog.update({ where: { id: row.id }, data: { metadata: JSON.parse(JSON.stringify(metadata)) } }); });
     const { recoverInterruptedGeneration, claimGenerationJob, recordGenerationFailure, recordGenerationCompleted, recordEvidenceResult, safeGenerationError } = await import("./local-generation-queue");

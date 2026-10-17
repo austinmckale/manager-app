@@ -98,7 +98,7 @@ export function MetaAdPreview({
       </div>
 
       <p className="px-4 py-3 text-xs leading-relaxed text-slate-500">
-        Meta ad draft. It is not running and nothing is spent.
+        Ad draft. This card is not running and is not sent.
       </p>
     </article>
   );

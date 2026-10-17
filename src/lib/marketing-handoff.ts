@@ -23,8 +23,9 @@ export function importChatReview(raw: string, draftId: string, inputHash: string
   // cannot be changed or supplied by an external chat response.
   return marketingDraftSchema.parse(merged);
 }
-export function chatBundlePrompt(draftId: string, inputHash: string, draft: MarketingDraft, originals: { submittedNotes?: string; photos?: { description?: string }[] }) {
-  const publishability = handoffPublishability(draft, originals.submittedNotes ?? "", (originals.photos ?? []).map((photo) => photo.description ?? ""));
+export function chatBundlePrompt(draftId: string, inputHash: string, draft: MarketingDraft, originals: { submittedNotes?: string; photos?: { description?: string }[]; voice?: { transcript?: string }[] }) {
+  const rawNotes = [originals.submittedNotes, ...(originals.voice ?? []).map((item) => item.transcript)].filter(Boolean).join("\n\n");
+  const publishability = handoffPublishability(draft, rawNotes, (originals.photos ?? []).map((photo) => photo.description ?? ""));
   if (publishability.blocked) return null;
   return chatReviewPrompt(draftId, inputHash, draft, originals);
 }

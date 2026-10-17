@@ -17,8 +17,9 @@ export function MarketingChatHandoff({ draftId, inputHash, draft, originalNotes,
       if (!prompt) { setMessage(blockedReason); return; }
       const JSZip = (await import("jszip")).default;
       const zip = new JSZip();
-      zip.file("START-HERE.txt", "Unzip this bundle. Attach ALL photos and review-prompt.txt to ChatGPT or Claude. Ask it to follow the prompt. Copy its JSON reply into the app’s import box, or save the reply as a .json file and choose it there. If the chat asks for context, add it in the app and export a fresh bundle. This bundle contains private notes and transcripts: check what you share. Importing never approves or posts anything.");
+      zip.file("START-HERE.txt", "Unzip this bundle. Attach ALL photos, review-prompt.txt, and raw-input.json to ChatGPT or Claude. raw-input.json is everything Ryan said and typed. The post text in the prompt is only the short public version. Ask the chat to follow the prompt. Copy its JSON reply into the app’s import box, or save the reply as a .json file and choose it there. This bundle contains private notes and transcripts: check what you share. Importing never approves or posts anything.");
       zip.file("review-prompt.txt", prompt);
+      zip.file("raw-input.json", JSON.stringify({ note: "Private source. Keep public posts short. Do not invent facts that are not in this file or the photos.", submittedNotes: originalNotes || "", voice: audio, photos: photos.map(({ id, fileName, description }) => ({ id, fileName, description })) }, null, 2));
       for (const [index, photo] of photos.entries()) {
         const response = await fetch(photo.url, { signal: AbortSignal.timeout(30000) });
         if (!response.ok) throw new Error("A private photo link expired. Refresh and export again.");

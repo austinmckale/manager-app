@@ -129,7 +129,7 @@ export function FacebookPreview({ caption, photos }: FacebookPreviewProps) {
       </div>
 
       <p className="px-4 py-3 text-xs leading-relaxed text-slate-500">
-        Facebook preview. Saving and approving still happen below. Nothing is posted from this card.
+        Preview only. After approval, Send to Buffer sends this card to Facebook.
       </p>
     </article>
   );

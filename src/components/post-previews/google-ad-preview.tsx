@@ -84,7 +84,7 @@ export function GoogleAdPreview({
       </div>
 
       <p className="mt-4 border-t border-slate-100 bg-slate-50 px-4 py-2 text-xs text-slate-500">
-        Google ad draft. It is not running and nothing is spent.
+        Ad draft. This card is not running and is not sent.
       </p>
     </div>
   );

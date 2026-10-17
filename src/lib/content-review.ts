@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { marketingDraftSchema, type MarketingDraft } from "@/lib/marketing";
 import { evidenceSchema } from "@/lib/marketing-evidence";
+import { cosmeticFinding } from "@/lib/review-findings";
 
 export const REVIEW_REQUEST = "marketing.content.review";
 export const REVIEW_APPROVAL = "marketing.content.approved";
@@ -83,7 +84,10 @@ function cutOffPhrase(value: string) {
 }
 export function copyChecks(draft: MarketingDraft): ReviewFinding[] {
   const findings: ReviewFinding[] = [];
-  const add = (category: ReviewFinding["category"], detail: string, evidence: string, suggestion: string, severity: ReviewFinding["severity"] = "blocker") => findings.push({ category, severity, detail, evidence, suggestion });
+  const add = (category: ReviewFinding["category"], detail: string, evidence: string, suggestion: string, severity: ReviewFinding["severity"] = "blocker") => {
+    if (severity === "blocker" && cosmeticFinding(detail)) return;
+    findings.push({ category, severity, detail, evidence, suggestion });
+  };
   if (!marketingDraftSchema.safeParse(draft).success) add("copy", "Draft format is invalid.", "Field validation failed.", "Correct text lengths and required fields.");
   for (const [label, value] of Object.entries({ social: draft.social, googleBusiness: draft.googleBusiness, metaPrimary: draft.metaPrimary, metaHeadline: draft.metaHeadline, imageHeadline: draft.imageHeadline })) if (!value.trim()) add("copy", `${label} is empty.`, "No public copy supplied.", "Write this field before approval.");
   const publicText = [draft.social, draft.googleBusiness, draft.metaPrimary, draft.metaHeadline, draft.imageHeadline, ...draft.googleHeadlines, ...draft.googleDescriptions].join("\n");
@@ -114,5 +118,5 @@ export function copyChecks(draft: MarketingDraft): ReviewFinding[] {
   return findings;
 }
 export function canApproveContent(hash: string, review: ContentReview | null, superseded: boolean, voicePending: boolean) {
-  return !superseded && !voicePending && review?.inputHash === hash && review.status === "completed" && review.policyVersion === 2 && !!review.evidence && !review.evidence.reasons.length && !!review.result && !review.result.findings.some((finding) => finding.severity === "blocker");
+  return !superseded && !voicePending && review?.inputHash === hash && review.status === "completed" && review.policyVersion === 2 && !!review.evidence && !review.evidence.reasons.some((reason) => !cosmeticFinding(reason)) && !!review.result && !review.result.findings.some((finding) => finding.severity === "blocker" && !cosmeticFinding(finding.detail));
 }

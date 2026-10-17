@@ -162,6 +162,9 @@ async function main() {
         const receiptData = receiptSchema.parse(receipt.metadata);
         if (draft.assetIds.length !== batch.assets.length || checked.sources.voice !== batch.transcript || checked.sources.owner !== state.data.ownerNotes || checked.sources.notes !== [receiptData.location, receiptData.description].filter(Boolean).join("\n")) throw new Error("Submission evidence changed during generation. Run fresh checks.");
       }
+      const { buildRawInput, RAW_INPUT_ACTION, rawInputId } = await import("../src/lib/raw-input");
+      const receiptDataForRaw = receiptSchema.parse(receipt.metadata);
+      const rawInput = buildRawInput({ inviteId, submissionId, draftId: deliveryId(orgId, inviteId, submissionId, "saved-draft"), location: receiptDataForRaw.location, typedNote: receiptDataForRaw.description, transcript: batch.transcript, photoIds: draft.assetIds });
       draft.sourceNotes = [...selected.map((asset) => asset.description || ""), batch.transcript, state.success ? state.data.ownerNotes : ""].filter(Boolean).join("\n\n").slice(0, 6000);
       draft.photoNotes = selected.map((asset) => ({ assetId: asset.id, description: asset.description || "", stage: asset.stage, area: asset.area }));
       const deliverAt = deliveryDate(receipt.createdAt, randomInt(600, 2521));
@@ -174,6 +177,7 @@ async function main() {
         await prisma.$transaction([
           prisma.activityLog.create({ data: { id, orgId, jobId: batch.invite.jobId, actorId: admin.id, action: INTAKE_PACK, metadata } }),
           prisma.activityLog.create({ data: { id: draftId, orgId, jobId: batch.invite.jobId, actorId: admin.id, action: DRAFT_SAVED_ACTION, metadata: draft } }),
+          prisma.activityLog.create({ data: { id: rawInputId(orgId, submissionId), orgId, jobId: batch.invite.jobId, actorId: admin.id, action: RAW_INPUT_ACTION, metadata: rawInput } }),
         ]);
       } catch (error) {
         if (!(typeof error === "object" && error && "code" in error && error.code === "P2002")) throw error;

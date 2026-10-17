@@ -79,8 +79,7 @@ export function InstagramPreview({
         </p>
 
         <p className="rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-600">
-          Instagram is not connected in Buffer. This shows the same Facebook
-          caption so you can judge the crop. Nothing is posted.
+          Preview only. Instagram is not connected, so this card is not sent.
         </p>
       </div>
     </article>

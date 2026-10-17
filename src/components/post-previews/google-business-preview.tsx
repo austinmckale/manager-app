@@ -78,7 +78,7 @@ export function GoogleBusinessPreview({
       </div>
 
       <p className="border-t border-slate-100 bg-slate-50 px-4 py-2 text-xs text-slate-500">
-        Google Business preview. Nothing is posted from this card.
+        Preview only. After approval, Send to Buffer sends this card to Google Business.
       </p>
     </div>
   );

@@ -54,6 +54,26 @@ function capEvidenceLines(items: string[]) {
 export function verifiedNoteFacts(notes: z.infer<typeof noteEvidenceSchema>, sources: EvidenceSources) {
   return notes.facts.filter((fact) => sources[fact.source].includes(fact.quote));
 }
+// Same rule as cosmeticFinding in review-findings.ts. Kept in this file so the
+// evidence checks can load it with zod alone. A finished patio, a missing logo,
+// and a voice note that is not on the photo are not publish blocks.
+const cosmeticWithhold = /^TEST\b|do\s+not\s+publish|don['’]t\s+publish|not\s+for\s+publication|microphone\s+test/im;
+const cosmeticKeptBlock = /\bRHI\b|\baddress\b|\bemail\b|\bphone\b|\bcontradict|\bconflicts?\b|\bdisagree|\bwho built\b/i;
+const cosmeticPatterns = [
+  /\bwork appears complete\b/i,
+  /\bno\b[^.]{0,180}\bunfinished elements\b/i,
+  /\bno\b[^.]{0,180}\bconstruction equipment\b/i,
+  /\bno\b[^.]{0,180}\bbranding\b/i,
+  /\bno\b[^.]{0,80}\blogos?\b/i,
+  /\b(?:company name|ownership)\b[^.]{0,80}\bnot visible\b/i,
+  /\bno\b[^.]{0,180}\b(?:company name|project ownership)\b/i,
+  /\b(?:voice|notes?|messages?)\b[^.]{0,220}\b(?:do not|don['’]t|does not|doesn['’]t) appear in the (?:image|photo)\b/i,
+];
+function cosmeticFinding(detail: string) {
+  if (cosmeticWithhold.test(detail) || cosmeticKeptBlock.test(detail)) return false;
+  const text = detail.replace(/\s+/g, " ");
+  return cosmeticPatterns.some((pattern) => pattern.test(text));
+}
 export function assessEvidence(input: { postType: z.infer<typeof postTypeSchema>; photos: z.infer<typeof photoEvidenceSchema>[]; notes: z.infer<typeof noteEvidenceSchema>; sources: EvidenceSources; assetIds: string[]; voicePending?: boolean }): MarketingEvidence {
   const reasons: string[] = [];
   const photos = input.photos.map((photo) => photoEvidenceSchema.parse(photo));
@@ -61,7 +81,7 @@ export function assessEvidence(input: { postType: z.infer<typeof postTypeSchema>
   if (new Set(photos.map((photo) => photo.assetId)).size !== input.assetIds.length || photos.length !== input.assetIds.length || input.assetIds.some((id) => !photos.some((photo) => photo.assetId === id))) reasons.push("Every selected photo must be inspected before drafting.");
   for (const photo of photos) {
     if (photo.relevance !== "construction" && !(input.postType === "company_life" && photo.relevance === "company_life")) reasons.push(`Photo ${photo.assetId}: add a relevant photo or explain its connection to the intended post.`);
-    reasons.push(...photo.concerns.map((concern) => `Photo ${photo.assetId}: ${concern}`));
+    reasons.push(...photo.concerns.map((concern) => `Photo ${photo.assetId}: ${concern}`).filter((line) => !cosmeticFinding(line)));
   }
   reasons.push(...input.notes.conflicts);
   const traced = verifiedNoteFacts(input.notes, input.sources);
@@ -146,12 +166,13 @@ export function checkedFieldsMatch(copy: Record<string, unknown>, checked?: Reco
 }
 export function auditIssues(copy: Record<string, unknown>, evidence: MarketingEvidence, audit: z.infer<typeof claimAuditSchema>) {
   const facts = new Set(evidenceFacts(evidence).map((fact) => fact.id));
-  const issues = [...evidence.reasons];
+  const issues = evidence.reasons.filter((reason) => !cosmeticFinding(reason));
   for (const [field, text] of Object.entries(publicFields(copy))) {
     const checks = audit.fields.filter((check) => check.field === field);
     if (checks.length !== 1 || checks[0].text !== text) { issues.push(`${field}: the reviewer did not check the exact current text.`); continue; }
     const check = checks[0];
-    if (!check.supported || check.issues.length) issues.push(`${field}: ${check.issues.join(" ") || "Unsupported claim or unsuitable copy."}`);
+    const reported = check.issues.filter((issue) => !cosmeticFinding(issue));
+    if ((!check.supported || reported.length) && (reported.length || check.issues.length === 0)) issues.push(`${field}: ${reported.join(" ") || "Unsupported claim or unsuitable copy."}`);
     if (check.factIds.some((id) => !facts.has(id))) issues.push(`${field}: the reviewer cited evidence that does not exist.`);
     if (text.trim() && !check.factIds.length) issues.push(`${field}: no source evidence was linked to this copy.`);
   }
