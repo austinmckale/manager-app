@@ -14,8 +14,12 @@ export async function createServerSupabase() {
           return cookieStore.getAll();
         },
         setAll(cookiesToSet) {
-          for (const { name, value, options } of cookiesToSet) {
-            cookieStore.set(name, value, options);
+          try {
+            for (const { name, value, options } of cookiesToSet) {
+              cookieStore.set(name, value, options);
+            }
+          } catch {
+            // Page renders cannot write cookies. Middleware refreshes an expired session before the page runs.
           }
         },
       },

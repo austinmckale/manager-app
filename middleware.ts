@@ -1,4 +1,6 @@
+import { createServerClient } from "@supabase/ssr";
 import { NextRequest, NextResponse } from "next/server";
+import { sessionNeedsRefresh } from "@/lib/supabase/session-cookie";
 
 const AUTH_REQUIRED = process.env.AUTH_REQUIRED === "1" || process.env.NODE_ENV === "production";
 
@@ -25,8 +27,8 @@ export async function middleware(request: NextRequest) {
     return response;
   }
 
-  // Keep middleware fast: do not call Supabase from edge on every request.
-  // Full auth/allowlist validation is enforced in server routes/layouts.
+  // A valid session is not checked here. An expired one is refreshed before the page
+  // renders, because a page render is not allowed to write the new cookies.
   const hasAuthCookie = request.cookies.getAll().some((cookie) => cookie.name.startsWith("sb-"));
   if (!hasAuthCookie) {
     const response = NextResponse.redirect(new URL("/login", request.url));
@@ -34,9 +36,40 @@ export async function middleware(request: NextRequest) {
     return response;
   }
 
-  const response = NextResponse.next();
+  return continueWithSession(request, startedAt);
+}
+
+function withTiming(response: NextResponse, startedAt: number) {
   response.headers.set("Server-Timing", `mw;dur=${(performance.now() - startedAt).toFixed(1)}`);
   return response;
+}
+
+async function continueWithSession(request: NextRequest, startedAt: number) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key || !sessionNeedsRefresh(request.cookies.getAll())) {
+    return withTiming(NextResponse.next(), startedAt);
+  }
+
+  let response = NextResponse.next({ request });
+  const supabase = createServerClient(url, key, {
+    cookies: {
+      getAll() {
+        return request.cookies.getAll();
+      },
+      setAll(cookiesToSet) {
+        for (const { name, value } of cookiesToSet) request.cookies.set(name, value);
+        response = NextResponse.next({ request });
+        for (const { name, value, options } of cookiesToSet) response.cookies.set(name, value, options);
+      },
+    },
+  });
+  try {
+    await supabase.auth.getUser();
+  } catch {
+    // A failed refresh sends the visitor onward. The page can ask them to sign in again.
+  }
+  return withTiming(response, startedAt);
 }
 
 export const config = {
