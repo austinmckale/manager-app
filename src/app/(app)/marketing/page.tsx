@@ -125,8 +125,13 @@ export default async function MarketingPage({ searchParams }: { searchParams: Pr
   const pageCards = listed.slice((page - 1) * pageSize, page * pageSize);
   const opened = cards.find((card) => card.id === openId) ?? null;
   const openedSubmissionId = opened && /^[0-9a-f-]{36}$/i.test(opened.id) ? opened.id : "";
+  const loadedGenerationStatus = openedSubmissionId ? newestGenerationStatus(baseLogs, openedSubmissionId) : "";
   const next = listed[0] ?? null;
-  const setup = await setupPromise;
+  const [setup, generationRow] = await Promise.all([
+    setupPromise,
+    openedSubmissionId && !loadedGenerationStatus ? prisma.activityLog.findFirst({ where: { orgId: auth.orgId, action: GENERATION_ACTION, metadata: { path: ["submissionId"], equals: openedSubmissionId } }, orderBy: { createdAt: "desc" }, select: { metadata: true } }) : null,
+  ]);
+  const generationSentence = generationJobSentence(loadedGenerationStatus || generationMetadataStatus(generationRow?.metadata));
   const savedAssets = savedPack ? await prisma.fileAsset.findMany({ where: { id: { in: savedPack.draft.assetIds }, job: { orgId: auth.orgId } }, include: { job: { select: { id: true, jobName: true, categoryTags: true } } } }) : [];
   for (const asset of savedAssets) photos.set(asset.id, mapAsset(asset));
   const jobs = savedPack || opened ? await prisma.job.findMany({ where: { orgId: auth.orgId }, select: { id: true, jobName: true, categoryTags: true }, orderBy: { updatedAt: "desc" }, take: 250 }) : [];
@@ -153,7 +158,7 @@ export default async function MarketingPage({ searchParams }: { searchParams: Pr
     {savedPack ? <p role="status" className="rounded-xl bg-teal-50 p-3 text-sm text-teal-950">Reusing “{savedPack.draft.packName || savedPack.jobName}”. The saved original stays unchanged; saving creates a new version.</p> : null}
     {opened && opened.test && !showTests ? <p className="text-sm text-slate-800">This marked test upload is open. It stays out of the list until you show test uploads.</p> : null}
     {savedPack ? <MarketingJobReview jobId={savedPack.jobId} jobName={savedPack.jobName} unsorted={false} jobs={editorJobs} photos={editorPhotos(savedPack.draft.assetIds, photos, signedUrls)} initialDraft={savedPack.draft} savedPackId={savedPack.id} submittedNote={savedPack.draft.sourceNotes} /> : null}
-    {!savedPack && opened ? <div className="space-y-2">{openedSubmissionId ? <MarketingGenerateButton submissionId={openedSubmissionId} hasDraft={Boolean(opened.draft)} /> : null}<Link href={inboxQuery({ tests: showTests, jobId: jobFilter })} className={secondaryLink}>Close</Link><MarketingJobReview key={opened.id} jobId={opened.jobId} jobName={opened.jobName} unsorted={opened.unsorted} batchLabel={opened.title} jobs={editorJobs} photos={editorPhotos(opened.photoIds, photos, signedUrls)} initialDraft={opened.draft ?? undefined} savedPackId={opened.draftId ?? undefined} submittedNote={opened.summary} /></div> : null}
+    {!savedPack && opened ? <div className="space-y-2">{openedSubmissionId ? <div className="flex flex-wrap items-center gap-3"><MarketingGenerateButton submissionId={openedSubmissionId} hasDraft={Boolean(opened.draft)} />{generationSentence ? <p role="status" className="text-sm font-semibold text-slate-900">{generationSentence}</p> : null}</div> : null}<Link href={inboxQuery({ tests: showTests, jobId: jobFilter })} className={secondaryLink}>Close</Link><MarketingJobReview key={opened.id} jobId={opened.jobId} jobName={opened.jobName} unsorted={opened.unsorted} batchLabel={opened.title} jobs={editorJobs} photos={editorPhotos(opened.photoIds, photos, signedUrls)} initialDraft={opened.draft ?? undefined} savedPackId={opened.draftId ?? undefined} submittedNote={opened.summary} /></div> : null}
     <div className="flex flex-wrap items-center gap-3 text-sm">
       <Link href={inboxQuery({ tests: !showTests, jobId: jobFilter })} className="font-semibold text-slate-900 underline">{showTests ? "Hide test uploads" : "Show test uploads"}</Link>
       {jobFilter ? <Link href={inboxQuery({ tests: showTests })} className="font-semibold text-slate-900 underline">Show every submission</Link> : null}
@@ -170,6 +175,31 @@ function mapAsset(asset: { id: string; jobId: string; createdAt: Date; descripti
 
 function mapLog(log: { id: string; action: string; createdAt: Date; metadata: unknown }) {
   return { id: log.id, action: log.action, createdAt: log.createdAt.toISOString(), metadata: log.metadata };
+}
+
+function generationMetadataStatus(metadata: unknown) {
+  const status = metadata && typeof metadata === "object" ? (metadata as { status?: unknown }).status : "";
+  return status === "queued" || status === "running" || status === "completed" || status === "failed" || status === "held" ? status : "";
+}
+
+function newestGenerationStatus(logs: { action: string; createdAt: string; metadata: unknown }[], submissionId: string) {
+  let newest: { createdAt: string; status: string } | null = null;
+  for (const log of logs) {
+    if (log.action !== GENERATION_ACTION) continue;
+    const metadata = log.metadata && typeof log.metadata === "object" ? log.metadata as { submissionId?: unknown } : null;
+    const status = metadata?.submissionId === submissionId ? generationMetadataStatus(log.metadata) : "";
+    if (!status || (newest && log.createdAt <= newest.createdAt)) continue;
+    newest = { createdAt: log.createdAt, status };
+  }
+  return newest?.status ?? "";
+}
+
+function generationJobSentence(status: string) {
+  if (status === "queued") return "Waiting for the local worker";
+  if (status === "running") return "The local worker is writing the draft";
+  if (status === "failed") return "This request stopped";
+  if (status === "held") return "Add details, then queue it again";
+  return "";
 }
 
 function editorPhotos(ids: string[], photos: Map<string, StoredPhoto>, urls: Map<string, string | undefined>) {
