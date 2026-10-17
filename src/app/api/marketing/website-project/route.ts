@@ -20,7 +20,7 @@ export async function POST(request: Request) {
   if (!parsed.success) return NextResponse.json({ error: "Choose a website project." }, { status: 400 });
   const { projects } = await rememberWebsiteProjects(auth.orgId);
   const project = projects.find((item) => item.jobId === parsed.data.jobId);
-  if (!project) return NextResponse.json({ error: "That project is not on the website." }, { status: 404 });
+  if (!project?.jobId) return NextResponse.json({ error: "That project is not on the website." }, { status: 404 });
   const assets = await prisma.fileAsset.findMany({ where: { id: { in: project.assetIds }, type: "PHOTO", isPortfolio: true, jobId: project.jobId, job: { orgId: auth.orgId } }, select: { id: true } });
   if (assets.length !== project.assetIds.length) return NextResponse.json({ error: "That project is not on the website." }, { status: 404 });
   const draft = marketingDraftSchema.parse(draftFromWebsiteProject(project));
