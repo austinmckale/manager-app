@@ -2,7 +2,7 @@ import { z } from "zod";
 import { createHash } from "node:crypto";
 
 const channelSchema = z.object({ id: z.string().min(1), name: z.string(), displayName: z.string().nullable(), service: z.string(), isQueuePaused: z.boolean(), isDisconnected: z.boolean().default(false), isLocked: z.boolean().default(false) });
-export type BufferChannel = z.infer<typeof channelSchema> & { organization: string };
+export type BufferChannel = z.infer<typeof channelSchema> & { organization: string; organizationId?: string };
 export const BUFFER_CHANNEL_SELECTION = "marketing.buffer.channels";
 export function bufferSelectionId(orgId: string) {
   const hex = createHash("sha256").update(`rhi-buffer-channels-v1:${orgId}`).digest("hex");
@@ -21,12 +21,12 @@ export async function discoverBufferChannels(key: string, fetcher: typeof fetch 
   const channels: BufferChannel[] = [];
   for (const organization of account.account.organizations) {
     const result = z.object({ channels: z.array(channelSchema).max(500) }).parse(await bufferQuery("query RhiChannels($organizationId: OrganizationId!) { channels(input: { organizationId: $organizationId }) { id name displayName service isQueuePaused isDisconnected isLocked } }", { organizationId: organization.id }, key, fetcher));
-    channels.push(...result.channels.filter((channel) => ["facebook", "instagram", "googlebusiness"].includes(channel.service)).map((channel) => ({ ...channel, organization: organization.name })));
+    channels.push(...result.channels.filter((channel) => ["facebook", "instagram", "googlebusiness"].includes(channel.service)).map((channel) => ({ ...channel, organization: organization.name, organizationId: organization.id })));
   }
   return channels;
 }
 
-export const bufferPostSchema = z.object({ id: z.string().min(1), channelId: z.string(), text: z.string(), status: z.string(), dueAt: z.string().nullable(), sentAt: z.string().nullable(), externalLink: z.string().nullable(), assets: z.array(z.object({ id: z.string(), mimeType: z.string() })) });
+export const bufferPostSchema = z.object({ id: z.string().min(1), channelId: z.string(), text: z.string(), status: z.string(), dueAt: z.string().nullable(), sentAt: z.string().nullable(), externalLink: z.string().nullable(), assets: z.array(z.object({ id: z.string().nullable(), mimeType: z.string() })) });
 export type BufferPost = z.infer<typeof bufferPostSchema>;
 const postFields = "id channelId text status dueAt sentAt externalLink assets { id mimeType }";
 export class BufferRejected extends Error {}
@@ -45,4 +45,12 @@ export async function createBufferPost(input: { channel: BufferChannel; text: st
 export async function readBufferPost(id: string, key: string, fetcher: typeof fetch = fetch) {
   const data = await bufferQuery(`query RhiPost($input: PostInput!) { post(input: $input) { ${postFields} } }`, { input: { id } }, key, fetcher);
   return z.object({ post: bufferPostSchema }).parse(data).post;
+}
+// Read-only reconciliation of a fixed test fixture; never recreate an uncertain mutation.
+export async function findBufferTestDraft(channel: BufferChannel, text: string, key: string, fetcher: typeof fetch = fetch) {
+  if (!channel.organizationId) return null;
+  const data = await bufferQuery(`query RhiFindTest($input: PostsInput!) { posts(first: 100, input: $input) { edges { node { ${postFields} } } } }`, { input: { organizationId: channel.organizationId, filter: { channelIds: [channel.id], status: ["draft"] } } }, key, fetcher);
+  const parsed = z.object({ posts: z.object({ edges: z.array(z.object({ node: bufferPostSchema })) }) }).parse(data);
+  const matches = parsed.posts.edges.map((edge) => edge.node).filter((post) => post.channelId === channel.id && post.text === text && post.status === "draft" && post.assets.length === 1);
+  return matches.length === 1 ? matches[0] : null;
 }

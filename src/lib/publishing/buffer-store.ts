@@ -2,7 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { loadApprovedPublishingDraft } from "@/lib/publishing/approval";
-import { bufferSelectionId, discoverBufferChannels, createBufferPost, readBufferPost, type BufferChannel } from "@/lib/publishing/buffer";
+import { bufferSelectionId, discoverBufferChannels, createBufferPost, readBufferPost, findBufferTestDraft, type BufferChannel } from "@/lib/publishing/buffer";
 import { BUFFER_DELIVERY, BUFFER_TEST_TEXT, BUFFER_TEST_IMAGE_URL, bufferDeliveryId, postPatch, sendApprovedToBuffer, type BufferDelivery, type BufferSendCommand } from "@/lib/publishing/buffer-delivery";
 import { PublishRejection } from "@/lib/publishing/types";
 
@@ -91,6 +91,8 @@ async function testChannelDraft(orgId: string, userId: string, channel: BufferCh
   const claim = await db.claim({ id, draftId: null, inputHash: "test-v1", channelId: channel.id, channelName: channel.displayName || channel.name, service: channel.service, mode: "draft", assetIds: [], status: "unknown", postId: null, dueAt: null, sentAt: null, externalLink: null, message: "Test pending. Do not repeat if its outcome is unknown.", checkedAt: new Date().toISOString() });
   if (!claim.owned) {
     if (claim.record.postId) return refreshBufferDelivery(orgId, userId, id);
+    const recovered = await findBufferTestDraft(channel, BUFFER_TEST_TEXT, process.env.BUFFER_API_KEY || "");
+    if (recovered && recovered.assets[0].mimeType.startsWith("image/")) return db.update(id, { ...postPatch(recovered), message: "Verified: existing private test draft and brand image found in Buffer. Nothing was scheduled or published." });
     return claim.record;
   }
   try {

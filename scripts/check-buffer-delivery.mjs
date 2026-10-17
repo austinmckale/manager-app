@@ -100,6 +100,17 @@ test('status lookup uses post ID only, with no publishing mutation', async () =>
   const result = await api.readBufferPost('post-1', 'secret', async (_url, init) => { const b = JSON.parse(init.body); assert.match(b.query, /^query /); assert.equal(b.variables.input.id, 'post-1'); return Response.json({ data: { post } }); });
   assert.equal(result.status, 'draft');
 });
+test('Buffer image asset IDs may be null; reconciliation finds the existing draft without another mutation', async () => {
+  const withNullAsset = { ...post, assets: [{ id: null, mimeType: 'image/png' }] };
+  assert.equal(api.bufferPostSchema.parse(withNullAsset).assets[0].id, null);
+  let calls = 0;
+  const result = await api.findBufferTestDraft({ ...channel, organizationId: 'org' }, post.text, 'secret', async (_url, init) => {
+    const body = JSON.parse(init.body); assert.match(body.query, /^query /); assert.equal(body.variables.input.organizationId, 'org'); calls++;
+    return Response.json({ data: { posts: { edges: [{ node: withNullAsset }] } } });
+  });
+  assert.equal(result.id, post.id); assert.equal(calls, 1);
+  assert.equal(await api.findBufferTestDraft({ ...channel, organizationId: 'org' }, post.text, 'secret', async () => Response.json({ data: { posts: { edges: [{ node: post }, { node: post }] } } })), null);
+});
 
 function routeHarness(options = {}) {
   const calls = [];
