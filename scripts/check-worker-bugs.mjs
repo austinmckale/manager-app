@@ -25,7 +25,10 @@ test('busy checks preserve failures and last actual successful processing time',
 
 test('worker status never preserves arbitrary output, private URLs or error details', () => {
   const secret = 'https://private.invalid/secret-token';
-  assert.deepEqual(workerSummary(JSON.stringify({ transcribed: 1, generated: true, url: secret, notes: secret })), { transcribed: 1, transcriptionFailed: 0, generated: true, reviewed: false, reviewFailed: false });
+  assert.deepEqual(workerSummary(JSON.stringify({ transcribed: 1, generated: true, url: secret, notes: secret })), { transcribed: 1, transcriptionFailed: 0, generated: true, generationFailed: 0, reviewed: false, reviewFailed: false });
+  const attention = workerCheckState({ failures: 0, lastSuccessAt: 'previous', lastResult: workerSummary(JSON.stringify({ transcribed: 0, generated: false, generationFailed: 1, error: secret })), issue: null }, 'now');
+  assert.equal(attention.state, 'attention');
+  assert.ok(!JSON.stringify(attention).includes(secret));
   assert.throws(() => workerSummary('{}'));
   for (const error of ['TimeoutError', 'Local transcription unavailable', 'private storage', 'P1001', 'unknown']) assert.ok(!workerFailure(error + secret).includes(secret));
   assert.match(workerFailure('The operation was aborted due to timeout'), /timed out/);

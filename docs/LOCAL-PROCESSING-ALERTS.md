@@ -17,7 +17,17 @@ Each failed recording backs off for five then ten minutes, stops after three
 failed attempts, and remains saved. One bad recording does not stop subsequent
 recordings. The owner can retry failed recordings at `/marketing/delivery`.
 Retries preserve source media and require the authenticated owner and matching
-organization. This does not implement two-PC leasing or generation dead letters.
+organization.
+
+Draft generation uses the same pattern. Each submission has one
+`marketing.generation.job` ActivityLog row with `queued`, `running`, `completed`,
+or `failed`. Ordinary rescans upsert that row and do not create another job or
+draft. A failed attempt waits five minutes, then ten, and stops after three.
+The stored error is the fixed sentence “Local draft generation could not
+complete. The submission remains saved.” A worker restart finds a `running` job,
+puts it back in `queued`, and keeps the same submission id. One failed
+generation job does not stop the next submission. This does not implement
+two-PC leasing. No database migration is required.
 
 `MARKETING_ALERTS_DISCORD_WEBHOOK_URL` is a server-only secret. It is stored in the
 ignored local production environment and Vercel production environment, never in
@@ -44,6 +54,13 @@ to proactively report a powered-off or disconnected processing PC; this worker
 cannot notify while its own machine is off. Failed alert records can be inspected
 in the database; this version has no owner-facing alert retry button.
 
-Checks cover failure isolation/backoff, CPU settings, owner-only retries, webhook
-destination validation, event deduplication, retry persistence and one-time worker
-failure/recovery alerts. No Prisma migration is required.
+Checks cover failure isolation/backoff, generation restart recovery, CPU settings,
+owner-only retries, webhook destination validation, event deduplication, retry
+persistence and one-time worker failure/recovery alerts. Generation status is an
+ActivityLog row, so no Prisma migration is required and none is applied.
+
+Recovery example, using one submission id `20000000-0000-4000-8000-000000000002`:
+claim sets `running` and `attempts` 1; stopping before save leaves that row and
+the photo receipt in place; the next worker start queues the same row without a
+new id; the following claim uses `attempts` 2; after save the row is
+`completed`, and another scan does not write a second draft.

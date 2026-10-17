@@ -3,7 +3,7 @@ export function workerSummary(output) {
   const value = JSON.parse(output.trim().split(/\r?\n/).at(-1));
   if (value.busy === true) return { busy: true };
   if (typeof value.generated !== 'boolean' || !Number.isInteger(value.transcribed) || value.transcribed < 0) throw new Error('invalid-result');
-  return { transcribed: value.transcribed, transcriptionFailed: Number.isInteger(value.transcriptionFailed) && value.transcriptionFailed > 0 ? value.transcriptionFailed : 0, generated: value.generated, reviewed: value.reviewed === true, reviewFailed: value.reviewFailed === true };
+  return { transcribed: value.transcribed, transcriptionFailed: Number.isInteger(value.transcriptionFailed) && value.transcriptionFailed > 0 ? value.transcriptionFailed : 0, generated: value.generated, generationFailed: Number.isInteger(value.generationFailed) && value.generationFailed > 0 ? value.generationFailed : 0, reviewed: value.reviewed === true, reviewFailed: value.reviewFailed === true };
 }
 
 export function workerFailure(stderr) {
@@ -17,6 +17,6 @@ export function workerFailure(stderr) {
 export function workerCheckState({ issue, lastResult, failures, lastSuccessAt }, now = new Date().toISOString()) {
   if (issue) return { state: 'retrying', issue, failures: failures + 1, lastSuccessAt };
   if (lastResult?.busy) return { state: 'waiting', issue: 'Another local worker is processing. This check was skipped.', failures, lastSuccessAt };
-  if (lastResult?.transcriptionFailed || lastResult?.reviewFailed) return { state: 'attention', issue: 'Some local checks need attention. Open the processing queue and saved drafts.', failures: 0, lastSuccessAt: now };
+  if (lastResult?.transcriptionFailed || lastResult?.reviewFailed || lastResult?.generationFailed) return { state: 'attention', issue: 'Some local checks need attention. Open the processing queue and saved drafts.', failures: 0, lastSuccessAt: now };
   return { state: 'idle', issue: null, failures: 0, lastSuccessAt: now };
 }

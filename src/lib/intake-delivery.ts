@@ -50,3 +50,27 @@ export async function readIntakePack(token: string, id: string, now = new Date()
   const ordered = parsed.data.draft.assetIds.map((assetId) => assets.find((asset) => asset.id === assetId)!);
   return { id: record.id, draft: clientCopy(parsed.data.draft), photos: ordered, jobId: record.jobId ?? invite.jobId };
 }
+
+export async function availableMembershipPacks(scope: { orgId: string; jobId: string; historyInviteIds: string[] }, now = new Date()) {
+  const inviteIds = scope.historyInviteIds.filter((id) => z.string().uuid().safeParse(id).success);
+  if (!inviteIds.length) return [];
+  const allowed = new Set(inviteIds);
+  const records = await prisma.activityLog.findMany({ where: { orgId: scope.orgId, jobId: scope.jobId, action: INTAKE_PACK }, orderBy: { createdAt: "desc" }, take: 100 });
+  return records.flatMap((record) => {
+    const parsed = packSchema.safeParse(record.metadata);
+    if (!parsed.success || !parsed.data.ownerApproved || parsed.data.isTest || !allowed.has(parsed.data.inviteId) || new Date(parsed.data.deliverAt) > now) return [];
+    return [{ id: record.id, name: parsed.data.draft.packName || "Your job photo pack", deliverAt: parsed.data.deliverAt }];
+  });
+}
+
+export async function readMembershipPack(scope: { orgId: string; jobId: string; historyInviteIds: string[] }, id: string, now = new Date()) {
+  if (!z.string().uuid().safeParse(id).success) return null;
+  const allowed = new Set(scope.historyInviteIds);
+  const record = await prisma.activityLog.findFirst({ where: { id, orgId: scope.orgId, jobId: scope.jobId, action: INTAKE_PACK } });
+  const parsed = packSchema.safeParse(record?.metadata);
+  if (!record || !parsed.success || !parsed.data.ownerApproved || parsed.data.isTest || !allowed.has(parsed.data.inviteId) || new Date(parsed.data.deliverAt) > now) return null;
+  const assets = await prisma.fileAsset.findMany({ where: { id: { in: parsed.data.draft.assetIds }, jobId: scope.jobId, job: { orgId: scope.orgId }, OR: [...allowed].map((inviteId) => ({ tags: { has: `intake:${inviteId}` } })) }, select: { id: true, fileName: true, mimeType: true, storageKey: true } });
+  if (assets.length !== new Set(parsed.data.draft.assetIds).size) return null;
+  const ordered = parsed.data.draft.assetIds.map((assetId) => assets.find((asset) => asset.id === assetId)!);
+  return { id: record.id, draft: clientCopy(parsed.data.draft), photos: ordered, jobId: record.jobId ?? scope.jobId };
+}

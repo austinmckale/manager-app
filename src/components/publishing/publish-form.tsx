@@ -4,7 +4,7 @@ import { useState } from "react";
 
 type DraftChoice = { id: string; jobId: string; jobName: string; assetIds: string[]; createdAt: string };
 type Destination = "FACEBOOK_PAGE" | "INSTAGRAM" | "GOOGLE_BUSINESS";
-type PublishResult = { destination: string; status: string; error: string | null; deduped: boolean; mock: boolean; attemptCount: number };
+type PublishResult = { destination: string; status: string; error: string | null; deduped: boolean; mock: boolean; attemptCount: number; simulation?: { text: string; approvalHash: string; photos: { id: string; fileName: string }[] } };
 
 const DESTINATIONS: Array<{ id: Destination; label: string }> = [
   { id: "FACEBOOK_PAGE", label: "Facebook Page" },
@@ -33,6 +33,8 @@ export function PublishForm({ drafts, initialDraftId = "" }: { drafts: DraftChoi
     if (!draft) return;
     setPending(true);
     setMessage("");
+    setResults([]);
+    try {
     const response = await fetch("/api/publishing/publish", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -41,7 +43,8 @@ export function PublishForm({ drafts, initialDraftId = "" }: { drafts: DraftChoi
     const body = (await response.json().catch(() => null)) as { error?: string; mode?: string; results?: PublishResult[] } | null;
     setResults(body?.results ?? []);
     setMessage(body?.error ?? (body?.mode === "mock" ? "Mock result. Nothing was posted to Facebook, Instagram, or Google." : "Each destination is listed separately."));
-    setPending(false);
+    } catch { setMessage("The request could not complete. Check delivery status before retrying."); }
+    finally { setPending(false); }
   }
 
   if (!drafts.length) {
@@ -50,8 +53,8 @@ export function PublishForm({ drafts, initialDraftId = "" }: { drafts: DraftChoi
 
   return (
     <section className="rounded-2xl border border-slate-200 p-4">
-      <h3 className="font-semibold">Post a saved draft</h3>
-      <p className="mt-1 text-sm text-slate-600">The server uses the saved caption and the photos already on the draft. A success on one destination does not hide a failure on another.</p>
+      <h3 className="font-semibold">Submit an approved draft</h3>
+      <p className="mt-1 text-sm text-slate-600">The server requires owner approval of this exact draft and its source evidence. Mock mode returns a simulation of the approved caption and selected photos without posting.</p>
       <label className="mt-3 block text-sm">
         Saved draft
         <select className="mt-1 w-full rounded-xl border border-slate-300 p-2" value={draftId} onChange={(event) => chooseDraft(event.target.value)}>
@@ -95,7 +98,7 @@ export function PublishForm({ drafts, initialDraftId = "" }: { drafts: DraftChoi
         </div>
       </fieldset>
       <button type="button" disabled={pending || !assetIds.length || !destinations.length} onClick={publish} className="mt-4 rounded-xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
-        {pending ? "Publishing" : "Publish now"}
+        {pending ? "Checking approved draft…" : "Submit approved draft"}
       </button>
       {message ? <p className="mt-3 text-sm text-slate-700">{message}</p> : null}
       {results.length ? (
@@ -103,9 +106,10 @@ export function PublishForm({ drafts, initialDraftId = "" }: { drafts: DraftChoi
           {results.map((result) => (
             <li key={result.destination} className="rounded-xl bg-slate-50 p-3">
               <span className="font-medium">{result.destination}</span> · {result.status}
-              {result.deduped ? " · already sent" : ""}
-              {result.mock ? " · mock, not sent" : ""}
+              {result.deduped ? result.mock ? " · simulation already saved" : " · existing delivery" : ""}
+              {result.mock ? " · simulation, nothing posted" : ""}
               {result.error ? ` · ${result.error}` : ""}
+              {result.simulation ? <div className="mt-3 space-y-2"><p className="whitespace-pre-wrap">{result.simulation.text}</p><p className="font-medium">Selected approved photos</p><ul className="list-inside list-disc">{result.simulation.photos.map((photo) => <li key={photo.id}>{photo.fileName} · {photo.id}</li>)}</ul><p className="break-all text-xs text-slate-500">Approved version: {result.simulation.approvalHash}</p></div> : null}
             </li>
           ))}
         </ul>

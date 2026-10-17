@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { presentConnection } from "@/lib/publishing/connections";
 import { approvedText, assertAssetSubset, contentHash, idempotencyKey, mediaProblem, parseSavedDraft } from "@/lib/publishing/content";
 import type { PublishingEnv } from "@/lib/publishing/config";
+import type { ApprovedPublishingDraft } from "@/lib/publishing/approval";
+import { createMockPublisher } from "@/lib/publishing/providers/mock";
 import {
   ORGANIC_DESTINATIONS,
   PublishRejection,
@@ -30,23 +32,25 @@ export type PublishCommand = {
   draftId: string;
   assetIds: string[];
   destinations: OrganicDestination[];
+  retry?: { deliveryId: string; contentHash: string; idempotencyKey: string };
 };
 
 export type DestinationResult = {
   destination: OrganicDestination;
-  status: DeliveryStatus;
+  status: DeliveryStatus | "SIMULATED";
   providerPostId: string | null;
   error: string | null;
   attemptCount: number;
   deduped: boolean;
   mock: boolean;
   deliveryId: string;
+  simulation?: { draftId: string; approvalHash: string; text: string; photos: { id: string; fileName: string; mimeType: string | null }[] };
 };
 
 export type PublishDeps = {
   now: Date;
   env: PublishingEnv;
-  loadDraft: (orgId: string, draftId: string) => Promise<{ orgId: string; jobId: string; metadata: unknown } | null>;
+  loadApprovedDraft: (orgId: string, draftId: string) => Promise<ApprovedPublishingDraft | null>;
   loadAssets: (orgId: string, jobId: string, assetIds: string[]) => Promise<OwnedAsset[]>;
   loadConnection: (orgId: string, destination: OrganicDestination) => Promise<SecretConnection | null>;
   refresh: (connection: SecretConnection) => Promise<SecretConnection | null>;
@@ -62,16 +66,18 @@ export function isMockPostId(id: string | null | undefined) {
   return typeof id === "string" && id.startsWith("mock:");
 }
 
-function resultOf(record: DeliveryRecord, deduped: boolean): DestinationResult {
+function resultOf(record: DeliveryRecord, deduped: boolean, simulation?: DestinationResult["simulation"]): DestinationResult {
+  const mock = isMockPostId(record.providerPostId);
   return {
     destination: record.destination,
-    status: record.status,
-    providerPostId: record.providerPostId,
+    status: mock && record.status !== "FAILED" ? "SIMULATED" : record.status,
+    providerPostId: mock ? null : record.providerPostId,
     error: record.lastError,
     attemptCount: record.attemptCount,
     deduped,
-    mock: isMockPostId(record.providerPostId),
+    mock,
     deliveryId: record.id,
+    ...(simulation ? { simulation } : {}),
   };
 }
 
@@ -98,6 +104,7 @@ function patchFromOutcome(record: DeliveryRecord, outcome: ProviderOutcome, now:
       providerPostId: outcome.providerPostId ?? record.providerPostId,
       containerId: outcome.containerId ?? record.containerId,
       lastError: null,
+      publishedAt: isMockPostId(outcome.providerPostId) ? null : record.publishedAt,
     };
   }
   return {
@@ -117,8 +124,8 @@ export async function publishOrganic(command: PublishCommand, deps: PublishDeps)
     throw new PublishRejection("Choose Facebook, Instagram, Google Business Profile, or a combination of them.", 400);
   }
 
-  const draftRecord = await deps.loadDraft(command.orgId, command.draftId);
-  if (!draftRecord || draftRecord.orgId !== command.orgId || draftRecord.jobId !== command.jobId) {
+  const draftRecord = await deps.loadApprovedDraft(command.orgId, command.draftId);
+  if (!draftRecord || draftRecord.draftId !== command.draftId || draftRecord.orgId !== command.orgId || draftRecord.jobId !== command.jobId) {
     throw new PublishRejection("That saved draft is not available for this job.", 404);
   }
   const draft = parseSavedDraft(draftRecord.metadata);
@@ -135,9 +142,10 @@ export async function publishOrganic(command: PublishCommand, deps: PublishDeps)
 
   return Promise.all(
     command.destinations.map((destination) =>
-      publishOne(destination, command, draft, assets, deps).catch(() =>
-        failedShell(destination, command, "This destination could not be saved. Try again."),
-      ),
+      publishOne(destination, command, draftRecord, draft, assets, deps).catch((error) => {
+        if (error instanceof PublishRejection) throw error;
+        return failedShell(destination, command, "This destination could not be saved. Try again.");
+      }),
     ),
   );
 }
@@ -158,25 +166,46 @@ function failedShell(destination: OrganicDestination, command: PublishCommand, m
 async function publishOne(
   destination: OrganicDestination,
   command: PublishCommand,
+  approved: ApprovedPublishingDraft,
   draft: NonNullable<ReturnType<typeof parseSavedDraft>>,
   assets: OwnedAsset[],
   deps: PublishDeps,
 ): Promise<DestinationResult> {
   const text = approvedText(draft, destination);
-  const hash = contentHash(destination, text, command.assetIds);
+  const hash = contentHash(destination, text, command.assetIds, approved.approvalHash);
   const key = idempotencyKey({
     orgId: command.orgId,
     draftId: command.draftId,
     destination,
     assetIds: command.assetIds,
     contentHash: hash,
+    mode: deps.env.publishMode,
   });
+  if (command.retry && (command.destinations.length !== 1 || command.retry.contentHash !== hash || command.retry.idempotencyKey !== key)) {
+    throw new PublishRejection("This delivery belongs to a different approved version or publishing mode. Review the current version and start a new delivery.", 409);
+  }
+  const simulation = deps.env.publishMode === "mock" ? { draftId: command.draftId, approvalHash: approved.approvalHash, text, photos: command.assetIds.map((id) => { const asset = assets.find((item) => item.id === id)!; return { id, fileName: asset.fileName, mimeType: asset.mimeType }; }) } : undefined;
+  const result = (record: DeliveryRecord, deduped: boolean) => resultOf(record, deduped, simulation);
   const existing = await deps.store.findByKey(command.orgId, key);
-  if (existing?.status === "PUBLISHED") return resultOf(existing, true);
-  if (existing && inFlight(existing, deps.now)) return resultOf({ ...existing, status: "PROCESSING" }, true);
+  if (command.retry && existing?.id !== command.retry.deliveryId) throw new PublishRejection("That delivery is no longer available for retry.", 409);
+  if (existing?.status === "PUBLISHED" || (existing && isMockPostId(existing.providerPostId) && existing.status !== "FAILED")) return result(existing, true);
+  if (existing && inFlight(existing, deps.now)) return result({ ...existing, status: "PROCESSING" }, true);
 
   const problem = mediaProblem(destination, assets);
-  if (problem) return resultOf(await writeFailure(deps, command, destination, key, hash, existing, problem), false);
+  if (problem) return result(await writeFailure(deps, command, destination, key, hash, existing, problem), false);
+
+  if (simulation) {
+    const claimed = await claim(deps, command, destination, key, hash, existing);
+    if (!claimed.owned) return result(claimed.record, true);
+    try {
+      await assertStillApproved(command, approved, deps);
+      const outcome = await createMockPublisher(destination).publish({ destination, text, assetIds: command.assetIds, mediaUrls: [], idempotencyKey: key, containerId: null, providerPostId: null, accessToken: "", externalAccountId: "" });
+      return result(await applyOutcome(deps, claimed.record, outcome), false);
+    } catch (error) {
+      await deps.store.update(claimed.record.id, { status: "FAILED", lastError: "The approved simulation could not complete. Check approval and try again." });
+      throw error;
+    }
+  }
 
   let connection = await deps.loadConnection(command.orgId, destination);
   if (connection?.accessToken && connection.tokenExpiresAt && Date.parse(connection.tokenExpiresAt) <= deps.now.getTime() + 120_000) {
@@ -192,42 +221,44 @@ async function publishOne(
   const presented = presentConnection(destination, connection, deps.env, deps.now);
   if (presented.status !== "CONNECTED" || !connection?.accessToken || !connection.externalAccountId) {
     if (existing?.providerPostId || existing?.containerId) {
-      return resultOf({ ...existing, lastError: presented.note }, false);
+      return result({ ...existing, lastError: presented.note }, false);
     }
     if (presented.status === "PENDING_PLATFORM_APPROVAL") await deps.markStatus(destination, "PENDING_PLATFORM_APPROVAL", presented.note);
     if (presented.status === "EXPIRED") await deps.markStatus(destination, "EXPIRED", presented.note);
-    return resultOf(await writeFailure(deps, command, destination, key, hash, existing, presented.note), false);
+    return result(await writeFailure(deps, command, destination, key, hash, existing, presented.note), false);
   }
 
   const publisher = deps.publisherFor(destination, connection);
   if (existing?.providerPostId) {
-    if (!publisher.poll) return resultOf(existing, false);
-    return resultOf(await pollExisting(existing, publisher, deps), false);
+    if (!publisher.poll) return result(existing, false);
+    return result(await pollExisting(existing, publisher, deps, command, approved), false);
   }
   if (existing?.containerId && publisher.poll && existing.status !== "FAILED") {
-    return resultOf(await pollExisting(existing, publisher, deps), false);
+    return result(await pollExisting(existing, publisher, deps, command, approved), false);
   }
 
   const claimed = await claim(deps, command, destination, key, hash, existing);
   if (!claimed.owned) {
-    if (claimed.record.status === "PUBLISHED") return resultOf(claimed.record, true);
+    if (claimed.record.status === "PUBLISHED") return result(claimed.record, true);
     if (claimed.record.providerPostId || claimed.record.containerId) {
-      return resultOf(await pollExisting(claimed.record, publisher, deps), true);
+      return result(await pollExisting(claimed.record, publisher, deps, command, approved), true);
     }
-    return resultOf({ ...claimed.record, status: "PROCESSING" }, true);
+    return result({ ...claimed.record, status: "PROCESSING" }, true);
   }
   const owned = claimed.record;
 
   let media: PreparedMedia[] = [];
   try {
+    await assertStillApproved(command, approved, deps);
     if (destination !== "FACEBOOK_PAGE") {
       const prepared = await deps.prepareMedia(assets);
       if (!prepared.ok) {
         const failed = await deps.store.update(owned.id, { status: "FAILED", lastError: prepared.message });
-        return resultOf(failed, false);
+        return result(failed, false);
       }
       media = prepared.media;
     }
+    await assertStillApproved(command, approved, deps);
     const outcome = await publisher.publish({
       destination,
       text,
@@ -241,22 +272,29 @@ async function publishOne(
     });
     const saved = await applyOutcome(deps, owned, outcome);
     if (saved.status === "PUBLISHED" || saved.status === "FAILED") await deps.releaseMedia(media);
-    return resultOf(saved, false);
-  } catch {
+    return result(saved, false);
+  } catch (error) {
     const saved = await deps.store.update(owned.id, {
       status: "FAILED",
       lastError: "The destination did not accept the post. Try again.",
     });
     await deps.releaseMedia(media);
-    return resultOf(saved, false);
+    if (error instanceof PublishRejection) throw error;
+    return result(saved, false);
   }
 }
 
-async function pollExisting(record: DeliveryRecord, publisher: OrganicPublisher, deps: PublishDeps) {
+async function assertStillApproved(command: PublishCommand, expected: ApprovedPublishingDraft, deps: PublishDeps) {
+  const current = await deps.loadApprovedDraft(command.orgId, command.draftId);
+  if (!current || current.orgId !== command.orgId || current.jobId !== command.jobId || current.approvalHash !== expected.approvalHash) throw new PublishRejection("Approval or source evidence changed. Review the current version before publishing.", 409);
+}
+
+async function pollExisting(record: DeliveryRecord, publisher: OrganicPublisher, deps: PublishDeps, command: PublishCommand, approved: ApprovedPublishingDraft) {
   if (!publisher.poll || (!record.providerPostId && !record.containerId)) return record;
   const connection = await deps.loadConnection(record.orgId, record.destination);
   if (!connection?.accessToken || !connection.externalAccountId) return record;
   try {
+    await assertStillApproved(command, approved, deps);
     const outcome = await publisher.poll({
       destination: record.destination,
       text: "",
@@ -269,7 +307,8 @@ async function pollExisting(record: DeliveryRecord, publisher: OrganicPublisher,
       externalAccountId: connection.externalAccountId,
     });
     return applyOutcome(deps, record, outcome);
-  } catch {
+  } catch (error) {
+    if (error instanceof PublishRejection) throw error;
     return deps.store.update(record.id, { status: "FAILED", lastError: "The destination could not be checked. Try again." });
   }
 }

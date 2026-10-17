@@ -17,14 +17,23 @@ confirmed email, not client-submitted email or editable user metadata. These two
 emails are denied manager authentication even if an older owner profile or owner
 context cookie exists. No new Prisma role or database migration was needed.
 
-Existing uploads, notes, recordings and saved content remain in their original
-inbox. Portal links currently reuse the existing capability-protected history
-and media routes. The original link remains supported and private. Invite
-revocation and expiration are still enforced: this initial mapping's underlying
-invite expires November 15, 2026. Account membership and upload-link lifetime
-are not yet fully separated. Before that date, implement account-scoped durable
-history and renewable upload authorization, or renew and remap access explicitly.
-No claim is made that renewing to a different invite merges earlier history.
+Google portal membership is the ActivityLog row `client.portal.access`. It stays
+valid after the mapped upload invitation expires or is revoked. Both emails read
+that same membership, including photos, recordings, transcripts and submission
+IDs from every invitation id stored on it. A new 30-day upload invitation is
+created only for the signed-in portal when the current one cannot accept uploads.
+Shared `/send-photos/` links still fail when expired or revoked. Revoking Google
+portal access writes `client.portal.revoked` for that membership and does not
+delete the earlier submissions.
+
+The local processing worker still calls
+`resolveUploadInvite(uploadInviteToken(inviteId))` before it prepares a
+submission. New portal uploads use the fresh invitation, so the current worker
+can process them without a code change. It will skip a submission whose
+invitation has expired or been revoked. If an expired invitation still needs
+processing, the worker's `source()` check has to accept that invitation for the
+same organization while the shared link continues to reject it. Do not delete
+the original ActivityLog rows when renewing access.
 
 The portal and login page advertise a token-free manifest starting at `/portal`.
 On iPhone, Save as app explains Safari Share -> Add to Home Screen. iOS may ask

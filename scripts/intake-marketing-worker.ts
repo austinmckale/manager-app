@@ -54,7 +54,18 @@ async function main() {
         seen.add(id);
         if (row.createdAt.getTime() > now.getTime() - 15 * 60000 && !(args.includes("--include-test") && /^TEST\b/i.test(receipt.description.trim()))) continue;
         if (!args.includes("--include-test") && /^TEST\b/i.test(receipt.description.trim())) continue;
-        if (await prisma.activityLog.findUnique({ where: { id }, select: { id: true } })) continue;
+        if (await prisma.activityLog.findUnique({ where: { id }, select: { id: true } })) {
+          const { generationJobId, completeMetadata } = await import("./local-generation-queue");
+          const jobKey = generationJobId(orgId, receipt.inviteId, receipt.submissionId);
+          const generation = await prisma.activityLog.findUnique({ where: { id: jobKey } });
+          const current = generation?.metadata && typeof generation.metadata === "object" && !Array.isArray(generation.metadata) ? generation.metadata : null;
+          const metadata = completeMetadata(generation?.metadata);
+          if (generation && current && metadata) await prisma.activityLog.updateMany({ where: { id: jobKey, metadata: { equals: current } }, data: { metadata } });
+          continue;
+        }
+        const { generationJobId, generationScanDecision } = await import("./local-generation-queue");
+        const generation = await prisma.activityLog.findUnique({ where: { id: generationJobId(orgId, receipt.inviteId, receipt.submissionId) } });
+        if (generationScanDecision(generation?.metadata, now) !== "run") continue;
         let batch;
         try { batch = await source(receipt.inviteId, receipt.submissionId); } catch { continue; }
         const batchFolder = join(folder, id);
@@ -67,7 +78,9 @@ async function main() {
           await writeFile(path, Buffer.from(await data.arrayBuffer()));
           photos.push({ id: asset.id, path, description: asset.description, stage: asset.stage, area: asset.area });
         }
-        const input = { id, orgId, inviteId: receipt.inviteId, submissionId: receipt.submissionId, jobId: batch.invite.jobId, submittedAt: row.createdAt.toISOString(), location: receipt.location, description: receipt.description, transcript: batch.transcript, photos };
+        const { generationRecordSchema } = await import("../src/lib/marketing-evidence");
+        const state = generationRecordSchema.safeParse(generation?.metadata);
+        const input = { id, orgId, inviteId: receipt.inviteId, submissionId: receipt.submissionId, jobId: batch.invite.jobId, submittedAt: row.createdAt.toISOString(), location: receipt.location, description: receipt.description, transcript: batch.transcript, ownerNotes: state.success ? state.data.ownerNotes : "", postType: state.success ? state.data.postType : "project", photos };
         const path = join(batchFolder, "source.json");
         await writeFile(path, JSON.stringify(input, null, 2));
         console.log(JSON.stringify({ pending: true, inputPath: path, input, outputPath: join(batchFolder, "finished.json") }));
@@ -91,7 +104,12 @@ async function main() {
       const receipt = rows.find((row) => receiptSchema.safeParse(row.metadata).success && receiptSchema.parse(row.metadata).inviteId === inviteId);
       if (!receipt) throw new Error("Submission receipt unavailable.");
       const selected = batch.assets.filter((asset) => draft.assetIds.includes(asset.id));
-      draft.sourceNotes = [...selected.map((asset) => asset.description || ""), batch.transcript].filter(Boolean).join("\n\n").slice(0, 6000);
+      const { generationRecordSchema, checkedFieldsMatch } = await import("../src/lib/marketing-evidence");
+      const { generationJobId } = await import("./local-generation-queue");
+      const generation = await prisma.activityLog.findUnique({ where: { id: generationJobId(orgId, inviteId, submissionId) } });
+      const state = generationRecordSchema.safeParse(generation?.metadata);
+      if (input.generator === "local-ollama" && (!state.success || state.data.status !== "running" || !state.data.evidence || state.data.evidence.reasons.length || !state.data.issues || state.data.issues.length || !checkedFieldsMatch(draft, state.data.checkedFields))) throw new Error("Evidence and claim checks must pass on this exact copy before saving a generated pack.");
+      draft.sourceNotes = [...selected.map((asset) => asset.description || ""), batch.transcript, state.success ? state.data.ownerNotes : ""].filter(Boolean).join("\n\n").slice(0, 6000);
       draft.photoNotes = selected.map((asset) => ({ assetId: asset.id, description: asset.description || "", stage: asset.stage, area: asset.area }));
       const deliverAt = deliveryDate(receipt.createdAt, randomInt(600, 2521));
       if (new Date(deliverAt) >= new Date(batch.invite.expiresAt)) throw new Error("Upload link expires before delivery. Renew it first.");

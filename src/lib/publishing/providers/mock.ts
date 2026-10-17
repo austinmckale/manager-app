@@ -3,7 +3,8 @@ import type { OrganicDestination, OrganicPublisher } from "@/lib/publishing/type
 export function createMockPublisher(destination: OrganicDestination): OrganicPublisher {
   return {
     async publish(input) {
-      return { outcome: "published", providerPostId: `mock:${destination}:${input.idempotencyKey.slice(0, 12)}` };
+      // Accepted by this application as a simulation, never a published post.
+      return { outcome: "accepted", providerPostId: `mock:${destination}:${input.idempotencyKey.slice(0, 12)}` };
     },
   };
 }

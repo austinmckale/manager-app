@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { isDemoMode } from "@/lib/demo";
 import { marketingAccessDenied } from "@/lib/publishing/access";
+import { isDashboardOwnerEmail } from "@/lib/client-portal-policy";
 
 export function sameOrigin(request: Request) {
   const origin = request.headers.get("origin");
@@ -17,7 +18,8 @@ export async function authorizePublishing(request?: Request) {
     return { response: NextResponse.json({ error: "This is a preview. Nothing has been connected or published." }, { status: 409 }) };
   }
   try {
-    const auth = await requireAuth();
+    const auth = await requireAuth({ allowFallback: false });
+    if (!isDashboardOwnerEmail(auth.email)) return { response: NextResponse.json({ error: "Owner access required." }, { status: 403 }) };
     const denied = marketingAccessDenied(auth.role);
     if (denied) return { response: NextResponse.json({ error: denied }, { status: 403 }) };
     return { auth };

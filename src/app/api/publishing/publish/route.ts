@@ -13,7 +13,7 @@ export async function POST(request: Request) {
     const result = await executePublish({ orgId: authorized.auth.orgId, userId: authorized.auth.userId, ...parsed.data });
     if ("error" in result) return NextResponse.json({ error: result.error }, { status: result.status });
     return NextResponse.json({
-      ok: result.results.every((item) => item.status === "PUBLISHED" || item.status === "PROCESSING" || item.status === "ACCEPTED"),
+      ok: result.results.every((item) => item.status === "SIMULATED" || item.status === "PUBLISHED" || item.status === "PROCESSING" || item.status === "ACCEPTED"),
       mode: result.mode,
       results: result.results,
     });

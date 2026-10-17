@@ -90,14 +90,14 @@ function baseDeps(store: DeliveryStore, options: {
   publishingEnv?: ReturnType<typeof env>;
 } = {}) {
   const calls = { publish: [] as string[], poll: [] as string[], marked: [] as string[] };
-  const publishingEnv = options.publishingEnv ?? env();
+  const publishingEnv = options.publishingEnv ?? env({ MARKETING_PUBLISH_MODE: "live" });
   return {
     calls,
     deps: {
       now: new Date(),
       env: publishingEnv,
-      async loadDraft(requestOrg: string) {
-        return { orgId: options.draftOrgId ?? requestOrg, jobId, metadata: prepareMarketingDraft({ assetIds: [assetId], notes: ["Replaced the vanity."], area: "Bathroom" }) };
+      async loadApprovedDraft(requestOrg: string) {
+        return { orgId: options.draftOrgId ?? requestOrg, jobId, draftId, approvalHash: "a".repeat(64), metadata: prepareMarketingDraft({ assetIds: [assetId], notes: ["Replaced the vanity."], area: "Bathroom" }) };
       },
       async loadAssets() {
         return [asset()];

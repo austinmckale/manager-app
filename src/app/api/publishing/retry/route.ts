@@ -26,9 +26,10 @@ export async function POST(request: Request) {
       draftId: delivery.draftId,
       assetIds: delivery.assetIds,
       destinations: [delivery.destination as OrganicDestination],
+      retry: { deliveryId: delivery.id, contentHash: delivery.contentHash, idempotencyKey: delivery.idempotencyKey },
     });
     if ("error" in result) return NextResponse.json({ error: result.error }, { status: result.status });
-    return NextResponse.json({ ok: true, mode: result.mode, results: result.results });
+    return NextResponse.json({ ok: result.results.every((item) => item.status !== "FAILED"), mode: result.mode, results: result.results });
   } catch (error) {
     if (error instanceof PublishRejection) return NextResponse.json({ error: error.message }, { status: error.status });
     return NextResponse.json({ error: "The delivery could not be retried." }, { status: 400 });

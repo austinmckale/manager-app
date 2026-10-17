@@ -12,6 +12,10 @@ import { createMockPublisher } from "@/lib/publishing/providers/mock";
 import { refreshGoogleAccessToken } from "@/lib/publishing/oauth";
 import type { DeliveryRecord, OrganicDestination, OwnedAsset, SecretConnection } from "@/lib/publishing/types";
 import { isMissingRelation } from "@/lib/publishing/http";
+import { loadApprovedPublishingDraft } from "@/lib/publishing/approval";
+import { approvedText, contentHash } from "@/lib/publishing/content";
+import { isMockPostId } from "@/lib/publishing/deliver";
+import { PublishRejection } from "@/lib/publishing/types";
 
 const PRIVATE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET ?? "job-assets";
 const PUBLIC_BUCKET = "site-public";
@@ -116,6 +120,7 @@ export async function executePublish(input: {
   draftId: string;
   assetIds: string[];
   destinations: OrganicDestination[];
+  retry?: { deliveryId: string; contentHash: string; idempotencyKey: string };
 }) {
   if (new Set(input.assetIds).size !== input.assetIds.length) {
     return { error: "Each photo can be selected once.", status: 400 as const };
@@ -123,15 +128,11 @@ export async function executePublish(input: {
   const env = readPublishingEnv(process.env);
   const loadedAssets = new Map<string, OwnedAsset>();
   const results = await publishOrganic(
-    { orgId: input.orgId, jobId: input.jobId, draftId: input.draftId, assetIds: input.assetIds, destinations: input.destinations },
+    { orgId: input.orgId, jobId: input.jobId, draftId: input.draftId, assetIds: input.assetIds, destinations: input.destinations, retry: input.retry },
     {
       now: new Date(),
       env,
-      async loadDraft(orgId, draftId) {
-        const { loadSavedDraft } = await import("@/lib/publishing/connection-store");
-        const draft = await loadSavedDraft(orgId, draftId);
-        return draft ? { orgId: draft.orgId, jobId: draft.jobId, metadata: draft.metadata } : null;
-      },
+      loadApprovedDraft: loadApprovedPublishingDraft,
       async loadAssets(orgId, jobId, assetIds) {
         const rows = await prisma.fileAsset.findMany({
           where: { id: { in: assetIds }, type: "PHOTO", job: { id: jobId, orgId } },
@@ -271,9 +272,14 @@ export async function pollDelivery(orgId: string, deliveryId: string) {
   const row = await prisma.marketingDelivery.findFirst({ where: { id: deliveryId, orgId } });
   if (!row) return null;
   if (row.status === "PUBLISHED" || row.status === "FAILED") return toRecord(row);
+  const env = readPublishingEnv(process.env);
+  // Status reads in mock mode must never refresh accounts or poll live APIs.
+  if (env.publishMode !== "live" || isMockPostId(row.providerPostId)) return toRecord(row);
+  const approved = await loadApprovedPublishingDraft(orgId, row.draftId);
+  const hash = contentHash(row.destination as OrganicDestination, approvedText(approved.metadata, row.destination as OrganicDestination), row.assetIds, approved.approvalHash);
+  if (approved.jobId !== row.jobId || hash !== row.contentHash) throw new PublishRejection("This delivery's approval or source evidence changed. Review the current version.", 409);
   const secret = await connectionFor(orgId, row.destination as OrganicDestination);
   if (!secret) return toRecord(row);
-  const env = readPublishingEnv(process.env);
   const publisher =
     env.publishMode !== "live"
       ? createMockPublisher(row.destination as OrganicDestination)
@@ -283,6 +289,8 @@ export async function pollDelivery(orgId: string, deliveryId: string) {
           ? createGoogleBusinessPublisher(fetch)
           : null;
   if (!publisher?.poll || !secret.accessToken || !secret.externalAccountId) return toRecord(row);
+  const latest = await loadApprovedPublishingDraft(orgId, row.draftId);
+  if (latest.approvalHash !== approved.approvalHash) throw new PublishRejection("Approval changed before checking the delivery.", 409);
   const outcome = await publisher.poll({
     destination: row.destination as OrganicDestination,
     text: "",

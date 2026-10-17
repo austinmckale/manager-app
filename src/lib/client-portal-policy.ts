@@ -1,6 +1,7 @@
 // Client identities must never be automatically provisioned as managers.
 export const RYAN_PORTAL_EMAILS = ["ryanran321@gmail.com", "rhisolutions316@gmail.com"] as const;
 export const CLIENT_PORTAL_ACCESS = "client.portal.access";
+export const CLIENT_PORTAL_REVOKED = "client.portal.revoked";
 export const DASHBOARD_OWNER_EMAIL = "austinmck17@gmail.com";
 export function isDashboardOwnerEmail(email?: string | null) {
   return email?.trim().toLowerCase() === DASHBOARD_OWNER_EMAIL;

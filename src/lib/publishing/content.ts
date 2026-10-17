@@ -13,14 +13,14 @@ export function approvedText(draft: MarketingDraft, destination: OrganicDestinat
 
 export function assertAssetSubset(draft: MarketingDraft, assetIds: string[]) {
   const allowed = new Set(draft.assetIds);
-  if (assetIds.length === 0 || assetIds.some((id) => !allowed.has(id))) {
+  if (assetIds.length === 0 || new Set(assetIds).size !== assetIds.length || assetIds.some((id) => !allowed.has(id))) {
     throw new PublishRejection("Choose photos that are already part of this saved draft.", 400);
   }
 }
 
-export function contentHash(destination: OrganicDestination, text: string, assetIds: string[]) {
+export function contentHash(destination: OrganicDestination, text: string, assetIds: string[], approvalHash: string) {
   return createHash("sha256")
-    .update(JSON.stringify({ destination, text, assetIds: [...assetIds].sort() }))
+    .update(JSON.stringify({ destination, text, assetIds: [...assetIds].sort(), approvalHash }))
     .digest("hex");
 }
 
@@ -30,6 +30,7 @@ export function idempotencyKey(input: {
   destination: OrganicDestination;
   assetIds: string[];
   contentHash: string;
+  mode: "mock" | "live";
 }) {
   return createHash("sha256")
     .update(
@@ -39,6 +40,7 @@ export function idempotencyKey(input: {
         destination: input.destination,
         assetIds: [...input.assetIds].sort(),
         contentHash: input.contentHash,
+        mode: input.mode,
       }),
     )
     .digest("hex");
