@@ -14,8 +14,13 @@ export async function createServerSupabase() {
           return cookieStore.getAll();
         },
         setAll(cookiesToSet) {
-          for (const { name, value, options } of cookiesToSet) {
-            cookieStore.set(name, value, options);
+          try {
+            for (const { name, value, options } of cookiesToSet) {
+              cookieStore.set(name, value, options);
+            }
+          } catch {
+            // Pages can't write cookies. A refreshed session is saved by the next route handler
+            // or server action instead (the app shell calls /api/auth/session-cache on every load).
           }
         },
       },
