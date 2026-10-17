@@ -31,6 +31,24 @@ export const generationRecordSchema = z.object({
   checkedFields: z.record(z.string(), z.string()).optional(),
 });
 
+const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+// Upload tests, microphone checks and approval commands are not job facts.
+function isUsableQuote(quote: string) {
+  return !/ignore\s+(?:all\s+|any\s+|previous\s+|prior\s+)?instructions|mark\s+(?:this\s+|it\s+)?approved|(?:do not|don't)\s+publish|existing website photo|test the upload|upload link|microphone test|\btesting testing\b/i.test(quote);
+}
+function shortEvidenceText(text: string) {
+  return text.replace(uuidPattern, "").replace(/\s+/g, " ").replace(/\s+([.,;:!?])/g, "$1").trim().slice(0, 160);
+}
+function capEvidenceLines(items: string[]) {
+  const lines: string[] = [];
+  for (const item of items) {
+    const line = shortEvidenceText(item);
+    if (!line || lines.includes(line)) continue;
+    lines.push(line);
+    if (lines.length === 8) break;
+  }
+  return lines;
+}
 // Quotes are anchored in immutable sources. Model-written summaries are never
 // promoted to source facts: the writer gets the exact quote instead.
 export function verifiedNoteFacts(notes: z.infer<typeof noteEvidenceSchema>, sources: EvidenceSources) {
@@ -46,11 +64,69 @@ export function assessEvidence(input: { postType: z.infer<typeof postTypeSchema>
     reasons.push(...photo.concerns.map((concern) => `Photo ${photo.assetId}: ${concern}`));
   }
   reasons.push(...input.notes.conflicts);
-  const facts = verifiedNoteFacts(input.notes, input.sources);
-  if (facts.length !== input.notes.facts.length) reasons.push("Some extracted facts could not be traced to the original notes. Check the notes and retry.");
+  const traced = verifiedNoteFacts(input.notes, input.sources);
+  if (traced.length !== input.notes.facts.length) reasons.push("Some extracted facts could not be traced to the original notes. Check the notes and retry.");
+  const facts = traced.filter((fact) => isUsableQuote(fact.quote));
   if (input.postType === "company_life" && !input.sources.owner.trim()) reasons.push("Describe the intended company-personality post in the owner notes.");
-  if (!facts.length && !photos.some((photo) => photo.relevance === "construction" && photo.observations.length)) reasons.push("No usable project facts were supplied. Add job details or choose a company-personality post and explain the photo.");
+  const showsConstruction = photos.some((photo) => photo.relevance === "construction" && photo.observations.length);
+  if (!facts.length && !showsConstruction) reasons.push("No usable project facts were supplied. Add job details or choose a company-personality post and explain the photo.");
+  if (!facts.length && showsConstruction) reasons.push("The photo shows the structure. It does not show who built it.");
   return evidenceSchema.parse({ version: 1, sources: input.sources, postType: input.postType, photos, notes: { ...input.notes, facts }, reasons: reasons.slice(0, 40) });
+}
+export function classifyEvidence(evidence: MarketingEvidence) {
+  const visual: string[] = [];
+  const concerns: string[] = [];
+  const unrelated: string[] = [];
+  for (const photo of evidence.photos) {
+    concerns.push(...photo.concerns);
+    if (photo.relevance === "construction" || photo.relevance === "company_life") visual.push(...photo.observations);
+    else unrelated.push(...photo.observations);
+  }
+  const claimed = verifiedNoteFacts(evidence.notes, evidence.sources).filter((fact) => isUsableQuote(fact.quote)).map((fact) => fact.quote);
+  return { visual: capEvidenceLines(visual), claimed: capEvidenceLines(claimed), unsupported: capEvidenceLines([...concerns, ...evidence.notes.conflicts, ...unrelated]) };
+}
+type NoteRead = z.infer<typeof noteEvidenceSchema>;
+type PhotoRead = z.infer<typeof photoEvidenceSchema>;
+
+// Two independent reads. A quoted fact from either read is kept when the quote
+// is really in the source, so a thin first read does not throw away a later one.
+// Observations are kept only when both looks agree on what the photo is.
+export function mergeNoteReads(reads: NoteRead[], sources: EvidenceSources): NoteRead {
+  const facts: NoteRead["facts"] = [];
+  const seen = new Set<string>();
+  for (const read of reads) {
+    for (const fact of read.facts) {
+      if (!sources[fact.source].includes(fact.quote)) continue;
+      const key = `${fact.source}:${fact.quote.trim().toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      facts.push(fact);
+    }
+  }
+  const conflicts = [...new Set(reads.flatMap((read) => read.conflicts.map((conflict) => conflict.trim())).filter(Boolean))].slice(0, 3);
+  return noteEvidenceSchema.parse({ facts: facts.slice(0, 30), conflicts });
+}
+export function mergePhotoReads(first: PhotoRead, second: PhotoRead): PhotoRead {
+  const concerns = [...new Set([...first.concerns, ...second.concerns].map((item) => item.trim()).filter(Boolean))].slice(0, 4);
+  if (first.assetId !== second.assetId || first.relevance !== second.relevance) {
+    return photoEvidenceSchema.parse({ assetId: first.assetId, relevance: "unclear", observations: [], concerns });
+  }
+  const observations = [...new Set([...first.observations, ...second.observations].map((item) => item.trim()).filter(Boolean))].slice(0, 12);
+  return photoEvidenceSchema.parse({ assetId: first.assetId, relevance: first.relevance, observations, concerns });
+}
+export function plainGaps(findings: { detail: string }[]) {
+  const lines: string[] = [];
+  for (const finding of findings) {
+    const detail = finding.detail.replace(/\s+/g, " ").trim();
+    const line = /finish transcription/i.test(detail) ? "Wait for the voice transcript."
+      : /no usable project facts/i.test(detail) ? "Add what work was done."
+      : /unrelated|relevant photo|does not match/i.test(detail) ? "The note does not match these photos."
+      : /email/i.test(detail) ? "Remove the email from the public text."
+      : /owner notes/i.test(detail) ? "Add what this company photo is for."
+      : detail.replace(/Photo [0-9a-f-]{36}:\s*/i, "").slice(0, 90);
+    if (line && !lines.includes(line)) lines.push(line);
+  }
+  return lines.slice(0, 5);
 }
 export function evidenceFacts(evidence: MarketingEvidence) {
   return [

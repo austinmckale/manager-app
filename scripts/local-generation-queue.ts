@@ -1,11 +1,16 @@
 import { createHash } from "node:crypto";
 import type { Prisma, PrismaClient } from "@prisma/client";
+import { z } from "zod";
 import { generationRecordSchema } from "../src/lib/marketing-evidence";
-import type { z } from "zod";
 
 export const GENERATION_JOB = "marketing.generation.job";
 export const GENERATION_ERROR = "Local draft generation could not complete. The submission remains saved.";
-const jobSchema = generationRecordSchema;
+const jobSchema = generationRecordSchema.extend({
+  engine: z.literal("local").optional(),
+  source: z.literal("owner").optional(),
+  assetIds: z.array(z.string().uuid()).min(1).max(24).optional(),
+  sourceHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+});
 export type GenerationJob = z.infer<typeof jobSchema>;
 
 export function generationJobId(orgId: string, inviteId: string, submissionId: string) {
@@ -96,6 +101,72 @@ export async function recordGenerationCompleted(store: PrismaClient, orgId: stri
   if (!metadata || !row || !current) return null;
   await store.activityLog.updateMany({ where: { id, metadata: { equals: current } }, data: { metadata } });
   return metadata;
+}
+export function generationSourceHash(assetIds: string[]) {
+  return createHash("sha256").update(`rhi-generation-source-v1:${[...assetIds].sort().join(",")}`).digest("hex");
+}
+function uniqueConstraint(error: unknown) {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
+}
+function storedJob(metadata: unknown) {
+  const job = parseJob(metadata);
+  if (!job) throw new Error("Generation record is unreadable.");
+  return job;
+}
+export async function queueOwnerGenerationJob(store: PrismaClient, orgId: string, jobId: string | null, inviteId: string, submissionId: string, assetIds: string[], actorId?: string | null) {
+  const id = generationJobId(orgId, inviteId, submissionId);
+  const existing = await store.activityLog.findUnique({ where: { id } });
+  if (existing) return { id, job: storedJob(existing.metadata), deduped: true as const, approved: false as const };
+  const metadata = jobSchema.parse({ ...blank(inviteId, submissionId), engine: "local", source: "owner", assetIds, sourceHash: generationSourceHash(assetIds) });
+  try {
+    await store.activityLog.create({ data: { id, orgId, jobId, actorId: actorId || null, action: GENERATION_JOB, metadata } });
+  } catch (error) {
+    if (!uniqueConstraint(error)) throw error;
+    const raced = await store.activityLog.findUnique({ where: { id } });
+    if (!raced) throw error;
+    return { id, job: storedJob(raced.metadata), deduped: true as const, approved: false as const };
+  }
+  return { id, job: metadata, deduped: false as const, approved: false as const };
+}
+export async function listRunnableOwnerLocalJobs(store: PrismaClient, orgId: string, now = new Date()) {
+  const rows = await store.activityLog.findMany({ where: { orgId, action: GENERATION_JOB, metadata: { path: ["status"], equals: "queued" } }, take: 20 });
+  return rows.flatMap((row) => {
+    const job = parseJob(row.metadata);
+    if (!job || job.engine !== "local" || job.source !== "owner" || generationScanDecision(job, now) !== "run") return [];
+    return [{ id: row.id, inviteId: job.inviteId, submissionId: job.submissionId, attempts: job.attempts, assetIds: job.assetIds ?? [], sourceHash: job.sourceHash ?? null }];
+  });
+}
+export function ownerSourceStillMatches(sourceHash: string | null | undefined, assetIds: string[]) {
+  if (!sourceHash) return true;
+  return sourceHash === generationSourceHash(assetIds);
+}
+export async function holdChangedOwnerSource(store: PrismaClient, orgId: string, inviteId: string, submissionId: string) {
+  const id = generationJobId(orgId, inviteId, submissionId);
+  const row = await store.activityLog.findUnique({ where: { id } });
+  const current = comparableMetadata(row?.metadata);
+  const job = parseJob(row?.metadata);
+  if (!row || !current || !job || job.status !== "queued") return null;
+  const metadata = { ...job, status: "held" as const, runningAt: null, nextRetryAt: null, error: "The saved photo set changed. Queue this submission again before drafting." };
+  const claimed = await store.activityLog.updateMany({ where: { id, metadata: { equals: current } }, data: { metadata } });
+  return claimed.count === 1 ? metadata : null;
+}
+export function ownerLocalRunPlan(settings: { enabled: boolean; mode: "hybrid" | "local" | "manual"; testRequestedAt: string | null }, ownerJobs: { submissionId: string; inviteId?: string; sourceHash?: string | null }[]) {
+  const testOnce = Boolean(settings.testRequestedAt);
+  const automaticPaused = (!settings.enabled && !testOnce) || (settings.mode === "manual" && !testOnce);
+  return { automaticPaused, testOnce, ownerSubmissionIds: ownerJobs.map((job) => job.submissionId), ownerJobs, ownerEngine: "local" as const, callsOpenAI: false as const, changesAutomaticSettings: false as const, deferOwnerJobsBeforeHybrid: !automaticPaused && settings.mode === "hybrid" && ownerJobs.length > 0 };
+}
+export async function deferQueuedOwnerJobs(store: PrismaClient, orgId: string, now = new Date()) {
+  const rows = await store.activityLog.findMany({ where: { orgId, action: GENERATION_JOB, metadata: { path: ["status"], equals: "queued" } }, take: 20 });
+  const until = new Date(now.getTime() + 60_000).toISOString();
+  let deferred = 0;
+  for (const row of rows) {
+    const current = comparableMetadata(row.metadata);
+    const job = parseJob(row.metadata);
+    if (!current || !job || job.engine !== "local" || job.source !== "owner" || job.status !== "queued" || waiting(job, now)) continue;
+    const saved = await store.activityLog.updateMany({ where: { id: row.id, metadata: { equals: current } }, data: { metadata: { ...job, nextRetryAt: until } } });
+    deferred += saved.count;
+  }
+  return deferred;
 }
 export async function recoverInterruptedGeneration(store: PrismaClient, orgId: string) {
   const rows = await store.activityLog.findMany({ where: { orgId, action: GENERATION_JOB, metadata: { path: ["status"], equals: "running" } }, take: 20 });

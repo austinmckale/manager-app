@@ -14,7 +14,7 @@ Reports can be copied as text, exported to CSV, or printed/saved to PDF by the b
 
 ## Sharing
 
-After saving, select Ryan's active upload link and create a private report link. The link references the immutable snapshot and is scoped to that invite and organization. Ryan sees it in his Reports list. **Open email draft** prepares a mailto draft addressed to `rhisolutions316@gmail.com`, cc `austinmck17@gmail.com`; it does not send mail. Sharing a snapshot exposes its aggregate figures, campaign names, sources and commentary to anyone holding that private link, so keep personal lead details out of commentary. Disabling/expiring the upload capability blocks the reports too.
+After saving, select Ryan's active upload link and create a private report link. The link references the immutable snapshot and is scoped to that invite and organization. Ryan sees it in his Reports list. **Open owner email draft** prepares a mailto draft addressed only to `austinmck17@gmail.com`. It does not send mail, and it does not address Ryan. Sharing a snapshot exposes its aggregate figures, campaign names, sources and commentary to anyone holding that private link, so keep personal lead details out of commentary. Disabling/expiring the upload capability blocks the reports too.
 
 Storage uses existing ActivityLog actions `marketing.scorecard.saved` and `marketing.scorecard.shared`. No Prisma migration or Cursor publishing models were deployed. Read endpoints require a valid signed invite and an org-owned shared snapshot. Save/share APIs require authenticated owner/admin access and same-origin requests. Public upload tokens cannot create or edit reports.
 

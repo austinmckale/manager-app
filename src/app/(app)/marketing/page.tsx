@@ -12,6 +12,7 @@ import { AUDIO_RECEIVED } from "@/lib/intake-audio";
 import { GENERATION_ACTION } from "@/lib/marketing-evidence";
 import { INTAKE_PACK } from "@/lib/intake-delivery";
 import { REVIEW_APPROVAL, REVIEW_SUPERSEDED } from "@/lib/content-review";
+import { MarketingGenerateButton } from "@/components/marketing-generate-button";
 import { MarketingJobReview } from "@/components/marketing-job-review";
 import { exampleDraft, exampleJobId, examplePhotos } from "@/lib/marketing-example";
 import { parseSavedPack } from "@/lib/saved-marketing";
@@ -123,6 +124,7 @@ export default async function MarketingPage({ searchParams }: { searchParams: Pr
   const listed = scoped.filter((card) => showTests || !card.test);
   const pageCards = listed.slice((page - 1) * pageSize, page * pageSize);
   const opened = cards.find((card) => card.id === openId) ?? null;
+  const openedSubmissionId = opened && /^[0-9a-f-]{36}$/i.test(opened.id) ? opened.id : "";
   const next = listed[0] ?? null;
   const setup = await setupPromise;
   const savedAssets = savedPack ? await prisma.fileAsset.findMany({ where: { id: { in: savedPack.draft.assetIds }, job: { orgId: auth.orgId } }, include: { job: { select: { id: true, jobName: true, categoryTags: true } } } }) : [];
@@ -151,7 +153,7 @@ export default async function MarketingPage({ searchParams }: { searchParams: Pr
     {savedPack ? <p role="status" className="rounded-xl bg-teal-50 p-3 text-sm text-teal-950">Reusing “{savedPack.draft.packName || savedPack.jobName}”. The saved original stays unchanged; saving creates a new version.</p> : null}
     {opened && opened.test && !showTests ? <p className="text-sm text-slate-800">This marked test upload is open. It stays out of the list until you show test uploads.</p> : null}
     {savedPack ? <MarketingJobReview jobId={savedPack.jobId} jobName={savedPack.jobName} unsorted={false} jobs={editorJobs} photos={editorPhotos(savedPack.draft.assetIds, photos, signedUrls)} initialDraft={savedPack.draft} savedPackId={savedPack.id} submittedNote={savedPack.draft.sourceNotes} /> : null}
-    {!savedPack && opened ? <div className="space-y-2"><Link href={inboxQuery({ tests: showTests, jobId: jobFilter })} className={secondaryLink}>Close</Link><MarketingJobReview key={opened.id} jobId={opened.jobId} jobName={opened.jobName} unsorted={opened.unsorted} batchLabel={opened.title} jobs={editorJobs} photos={editorPhotos(opened.photoIds, photos, signedUrls)} initialDraft={opened.draft ?? undefined} savedPackId={opened.draftId ?? undefined} submittedNote={opened.summary} /></div> : null}
+    {!savedPack && opened ? <div className="space-y-2">{openedSubmissionId ? <MarketingGenerateButton submissionId={openedSubmissionId} hasDraft={Boolean(opened.draft)} /> : null}<Link href={inboxQuery({ tests: showTests, jobId: jobFilter })} className={secondaryLink}>Close</Link><MarketingJobReview key={opened.id} jobId={opened.jobId} jobName={opened.jobName} unsorted={opened.unsorted} batchLabel={opened.title} jobs={editorJobs} photos={editorPhotos(opened.photoIds, photos, signedUrls)} initialDraft={opened.draft ?? undefined} savedPackId={opened.draftId ?? undefined} submittedNote={opened.summary} /></div> : null}
     <div className="flex flex-wrap items-center gap-3 text-sm">
       <Link href={inboxQuery({ tests: !showTests, jobId: jobFilter })} className="font-semibold text-slate-900 underline">{showTests ? "Hide test uploads" : "Show test uploads"}</Link>
       {jobFilter ? <Link href={inboxQuery({ tests: showTests })} className="font-semibold text-slate-900 underline">Show every submission</Link> : null}

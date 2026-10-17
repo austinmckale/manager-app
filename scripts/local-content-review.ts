@@ -7,6 +7,7 @@ import { localAiSettings } from "./local-ai-settings";
 import { DRAFT_SAVED_ACTION } from "../src/lib/marketing";
 import { loadContentReview } from "../src/lib/content-review-store";
 import { REVIEW_REQUEST, copyChecks, reviewRecordSchema, type ReviewFinding } from "../src/lib/content-review";
+import { publicationBlock } from "../src/lib/publishability";
 
 export async function runContentReview(prisma: PrismaClient, supabase: typeof SupabaseAdmin, orgId: string, includeTest = false, ai?: { model: string; request: typeof localReviewRequest; draftId?: string }) {
   const pending = await prisma.activityLog.findMany({ where: { orgId, action: REVIEW_REQUEST, OR: [{ metadata: { path: ["status"], equals: "queued" } }, { metadata: { path: ["status"], equals: "running" } }] }, orderBy: { createdAt: "asc" }, take: 20 });
@@ -46,13 +47,17 @@ export async function runContentReview(prisma: PrismaClient, supabase: typeof Su
     for (const photo of current.assets) {
       const { data, error } = await supabase.storage.from(process.env.SUPABASE_STORAGE_BUCKET || "job-assets").download(photo.storageKey);
       if (error || !data) throw new Error("Private photo unavailable");
-      images.push({ id: photo.id, image: (await sharp(Buffer.from(await data.arrayBuffer())).resize({ width: imageSize, height: imageSize, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer()).toString("base64") });
+      images.push({ id: photo.id, image: (await sharp(Buffer.from(await data.arrayBuffer())).resize({ width: imageSize, height: imageSize, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer()).toString("base64") });
     }
-    const evidence = await inspectSubmission({ model, photos: images, postType: current.draft.postType, sources: { notes: current.originals.receiptNotes.join("\n\n"), voice: current.audio.map((audio) => audio.transcript).join("\n\n"), owner: current.draft.sourceNotes } }, ai?.request);
-    const audit = evidence.reasons.length ? null : await auditDraft(model, current.draft, evidence, ai?.request);
+    const sources = { notes: current.originals.receiptNotes.join("\n\n"), voice: current.audio.map((audio) => audio.transcript).join("\n\n"), owner: current.draft.sourceNotes };
+    const evidence = await inspectSubmission({ model, photos: images, postType: current.draft.postType, sources }, ai?.request);
+    const block = publicationBlock(sources);
+    const audit = block || evidence.reasons.length ? null : await auditDraft(model, current.draft, evidence, ai?.request);
     const issues = audit?.issues || evidence.reasons;
-    const findings: ReviewFinding[] = [...copyChecks(current.draft), ...issues.map((issue) => ({ category: "facts" as const, severity: "blocker" as const, detail: issue.slice(0, 800), evidence: "Compared with all selected photos and the original notes and voice transcript.", suggestion: "Correct the notes or public copy, or choose relevant photos, then save a new version and run checks again." }))];
-    const summary = findings.length ? "Changes or context are required before approval." : "Every selected photo and public field was checked against source evidence. Owner approval is still required.";
+    const findings: ReviewFinding[] = block
+      ? block.lines.map((line) => ({ category: "facts" as const, severity: "blocker" as const, detail: line, evidence: "The notes match a publication block.", suggestion: "Use a new verified submission." }))
+      : [...copyChecks(current.draft), ...issues.map((issue) => ({ category: "facts" as const, severity: "blocker" as const, detail: issue.slice(0, 800), evidence: "Compared with all selected photos and the original notes and voice transcript.", suggestion: "Correct the notes or public copy, or choose relevant photos, then save a new version and run checks again." }))];
+    const summary = block ? block.title : findings.length ? "Changes or context are required before approval." : "Every selected photo and public field was checked against source evidence. Owner approval is still required.";
     // Re-read evidence before committing a result for an immutable input hash.
     const latest = await loadContentReview(orgId, current.draftId);
     if (!latest || latest.superseded || latest.inputHash !== current.inputHash) throw new Error("Source changed during review");

@@ -17,7 +17,7 @@ export default async function SavedPacksPage({ searchParams }: { searchParams: P
   const packs = records.slice(0, 20).map(parseSavedPack).filter((pack) => pack !== null);
   return <div className="space-y-4">
     <div><p className="text-xs uppercase tracking-widest text-teal-700">Your content library</p><h2 className="mt-2 text-2xl font-semibold">Saved marketing packs</h2><p className="mt-2 max-w-2xl text-sm text-slate-600">Keep the photos, original notes, public town, service, captions, headlines and website link together. Reopen a pack, change the angle or offer, then save a new version. Saving and reusing never publishes a post.</p></div>
-    <Link href="/marketing" className="inline-flex rounded-xl border border-slate-300 px-3 py-2 text-sm">Back to review & create</Link>
+    <Link href="/marketing" className="inline-flex min-h-11 items-center rounded-xl border-2 border-slate-900 px-3 py-2 text-sm font-semibold text-slate-900">Back to inbox</Link>
     {demo ? <Link href="/marketing/review/example" className="ml-3 inline-flex rounded-xl bg-teal-700 px-3 py-2 text-sm text-white">Preview review & approval</Link> : <p className="text-sm text-slate-600">Open Review & approve to compare original evidence, correct a draft, inspect local AI findings and record your approval. Nothing publishes automatically.</p>}
     {demo ? <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">Preview packs are stored only in this browser on this device. In the connected app, saved packs belong to your account’s organization. <Link className="underline" href="/marketing?example=1">Try the real website-photo example</Link>.</p> : null}
     <SavedMarketingPacks packs={packs} demo={demo} />

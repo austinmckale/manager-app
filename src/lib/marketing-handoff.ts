@@ -1,20 +1,32 @@
 import { z } from "zod";
 import { marketingDraftSchema, type MarketingDraft } from "@/lib/marketing";
+import { draftPublishability } from "@/lib/publishability";
 
 export const handoffCopySchema = marketingDraftSchema.omit({ sourceNotes: true, photoNotes: true, assetIds: true, landingUrl: true }).strict();
 export const handoffReturnSchema = z.object({ version: z.literal(1), draftId: z.string().uuid(), inputHash: z.string().length(64), copy: handoffCopySchema }).strict();
 export function handoffCopy(draft: MarketingDraft) {
   return handoffCopySchema.parse(Object.fromEntries(Object.keys(handoffCopySchema.shape).map((key) => [key, draft[key as keyof MarketingDraft]])));
 }
-export function importChatReview(raw: string, draftId: string, inputHash: string, current: MarketingDraft) {
+export function handoffPublishability(draft: MarketingDraft, originalNotes = "", photoDescriptions: readonly string[] = []) {
+  return draftPublishability(draft, { receiptNotes: originalNotes ? [originalNotes] : [], photos: photoDescriptions.map((description) => ({ description })) });
+}
+export function importChatReview(raw: string, draftId: string, inputHash: string, current: MarketingDraft, sources?: { originalNotes?: string; photoDescriptions?: readonly string[] }) {
   const text = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   const value = handoffReturnSchema.parse(JSON.parse(text));
   if (value.draftId !== draftId || value.inputHash !== inputHash) throw new Error("This result belongs to a different draft or evidence version. Export this version again.");
+  const merged = { ...current, ...value.copy };
+  const publishability = draftPublishability(merged, { receiptNotes: sources?.originalNotes ? [sources.originalNotes] : [], photos: (sources?.photoDescriptions ?? []).map((description) => ({ description })) });
+  if (publishability.blocked) throw new Error(publishability.reasons.join(", "));
   const original = JSON.parse(text) as { copy: Record<string, unknown> };
   for (const key of Object.keys(handoffCopySchema.shape)) if (!Object.hasOwn(original.copy, key)) throw new Error(`The returned copy is missing ${key}. Ask the chat to return the full JSON.`);
   // Only public copy is merged. Sources, photos, destination, review and approval
   // cannot be changed or supplied by an external chat response.
-  return marketingDraftSchema.parse({ ...current, ...value.copy });
+  return marketingDraftSchema.parse(merged);
+}
+export function chatBundlePrompt(draftId: string, inputHash: string, draft: MarketingDraft, originals: { submittedNotes?: string; photos?: { description?: string }[] }) {
+  const publishability = handoffPublishability(draft, originals.submittedNotes ?? "", (originals.photos ?? []).map((photo) => photo.description ?? ""));
+  if (publishability.blocked) return null;
+  return chatReviewPrompt(draftId, inputHash, draft, originals);
 }
 export function chatReviewPrompt(draftId: string, inputHash: string, draft: MarketingDraft, originals: unknown) {
   const copy = handoffCopy(draft);

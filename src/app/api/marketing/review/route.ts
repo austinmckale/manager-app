@@ -8,6 +8,7 @@ import { DRAFT_SAVED_ACTION, marketingDraftSchema } from "@/lib/marketing";
 import { loadContentReview } from "@/lib/content-review-store";
 import { REVIEW_APPROVAL, REVIEW_REQUEST, REVIEW_SUPERSEDED, canApproveContent, copyChecks } from "@/lib/content-review";
 import { PROCESSING_SETTINGS, processingId, processingSettingsSchema } from "@/lib/marketing-processing";
+import { draftPublishability } from "@/lib/publishability";
 
 const schema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("check"), draftId: z.string().uuid(), inputHash: z.string().length(64) }),
@@ -27,6 +28,9 @@ export async function POST(request: Request) {
     const result = await prisma.$transaction(async (tx) => {
       const context = await loadContentReview(auth.orgId, body.draftId, tx);
       if (!context || context.inputHash !== body.inputHash || context.superseded) throw new Error("This version changed or was replaced. Reload before continuing.");
+      const publishability = draftPublishability(context.draft, context.originals, context.assets);
+      const incoming = body.action === "save" ? draftPublishability(body.draft) : { blocked: false, reasons: [] as string[] };
+      if (publishability.blocked || incoming.blocked) throw new Error(`This submission cannot be saved, checked, approved, queued, or posted. ${(publishability.blocked ? publishability : incoming).reasons.join(", ")}.`);
       const base = { orgId: auth.orgId, actorId: auth.userId, jobId: context.jobId };
       if (body.action === "save") {
         if (JSON.stringify(body.draft.assetIds) !== JSON.stringify(context.draft.assetIds)) throw new Error("Photo selection cannot change in this editor.");

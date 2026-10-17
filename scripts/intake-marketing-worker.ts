@@ -25,7 +25,8 @@ async function main() {
   const base = new URL(process.env.NEXT_PUBLIC_APP_URL || "https://app.rhipros.com");
   if (base.protocol !== "https:") throw new Error("Production HTTPS app URL required.");
   const receiptSchema = z.object({ inviteId: z.string().uuid(), submissionId: z.string().uuid(), fileAssetId: z.string().uuid(), location: z.string(), description: z.string() });
-  const recipients = ["rhisolutions316@gmail.com", "austinmck17@gmail.com"];
+  const { ownerEmailRecipients, ownerSendDecision, OWNER_NOTIFY_PHONE } = await import("../src/lib/owner-notify");
+  const recipients = ownerEmailRecipients();
   const now = new Date();
   async function source(inviteId: string, submissionId: string) {
     const invite = await resolveUploadInvite(uploadInviteToken(inviteId));
@@ -44,12 +45,32 @@ async function main() {
     } else if (command === "run-local") {
       const { runLocalIntake } = await import("./local-intake-runner");
       const { processingSettings, processingId, workerHeartbeat } = await import("../src/lib/marketing-processing");
+      const { listRunnableOwnerLocalJobs, ownerLocalRunPlan, deferQueuedOwnerJobs, ownerSourceStillMatches, holdChangedOwnerSource } = await import("./local-generation-queue");
       const settings = await processingSettings(prisma, orgId);
-      const testOnce = Boolean(settings.testRequestedAt);
-      if ((!settings.enabled && !testOnce) || (settings.mode === "manual" && !testOnce)) {
-        await workerHeartbeat(prisma, orgId, "paused", settings.mode);
-        console.log(JSON.stringify({ transcribed: 0, generated: false, paused: true })); return;
+      const ownerJobs = await listRunnableOwnerLocalJobs(prisma, orgId, now);
+      const plan = ownerLocalRunPlan(settings, ownerJobs);
+      if (plan.ownerSubmissionIds.length) {
+        await workerHeartbeat(prisma, orgId, "processing", "local");
+        try {
+          for (const job of plan.ownerJobs) {
+            if (job.sourceHash && job.inviteId) {
+              const current = await source(job.inviteId, job.submissionId);
+              if (!ownerSourceStillMatches(job.sourceHash, current.assets.map((asset) => asset.id))) {
+                await holdChangedOwnerSource(prisma, orgId, job.inviteId, job.submissionId);
+                continue;
+              }
+            }
+            await runLocalIntake({ prisma, supabaseAdmin, orgId, folder, audioAction: AUDIO_RECEIVED, includeTest: true, mode: plan.ownerEngine, testOnce: true, reviewOnly: false, reviewDraftId: "00000000-0000-4000-8000-000000000000", testSubmissionId: job.submissionId });
+          }
+          if (plan.deferOwnerJobsBeforeHybrid) await deferQueuedOwnerJobs(prisma, orgId);
+        } catch (error) { await workerHeartbeat(prisma, orgId, "error", "local"); throw error; }
       }
+      if (plan.automaticPaused) {
+        await workerHeartbeat(prisma, orgId, plan.ownerSubmissionIds.length ? "idle" : "paused", plan.ownerSubmissionIds.length ? "local" : settings.mode);
+        if (!plan.ownerSubmissionIds.length) console.log(JSON.stringify({ transcribed: 0, generated: false, paused: true }));
+        return;
+      }
+      const testOnce = plan.testOnce;
       if (testOnce) {
         const row = await prisma.activityLog.findUnique({ where: { id: processingId(orgId, "settings") } });
         if (!row) throw new Error("Settings changed.");
@@ -165,7 +186,8 @@ async function main() {
       }
       console.log(JSON.stringify({ saved: true, reviewed, id, draftId, deliverAt, url: `${base.origin}/send-photos/${uploadInviteToken(inviteId)}/packs/${id}` }));
     } else if (command === "due" || command === "claim-email" || command === "record-email") {
-      if (command !== "record-email" && process.env.INTAKE_EMAIL_SENDING !== "enabled") { console.log(JSON.stringify({ due: [], claimed: false, email: "disabled — test and finalize the approval workflow first", sms: "not configured" })); return; }
+      const sending = ownerSendDecision(process.env.INTAKE_EMAIL_SENDING === "enabled");
+      if (command !== "record-email" && sending.email !== "chosen") { console.log(JSON.stringify({ due: [], claimed: false, email: "off until you choose to send", sms: "off", to: sending.to, phone: OWNER_NOTIFY_PHONE })); return; }
       if (command === "record-email") {
         const id = z.string().uuid().parse(args[0]);
         const providerMessageId = z.string().min(1).max(200).parse(args[1]);
@@ -196,7 +218,7 @@ async function main() {
         }
         due.push(message);
       }
-      console.log(JSON.stringify(command === "claim-email" ? { claimed: false } : { due, sms: "not configured" }));
+      console.log(JSON.stringify(command === "claim-email" ? { claimed: false } : { due, sms: "off", phone: OWNER_NOTIFY_PHONE }));
     } else throw new Error("Commands: scan [--include-test], save <file>, due, claim-email <pack-id>, record-email <claim-id> <provider-message-id>");
   } finally { await prisma.$disconnect(); }
 }

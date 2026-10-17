@@ -6,12 +6,13 @@ while this Windows user is signed in and the PC is awake. Locking the screen is
 fine. The worker checks about once a minute; draft discovery waits for 15 minutes
 without a new photo. This is an intake settling window, not an AI runtime promise.
 
-Production currently uses `INTAKE_AI_CPU_ONLY=1` in its ignored local environment.
-All three Ollama stages respect it: photo analysis, draft writing and independent
-review. CPU mode uses four threads and 384px working images. Uploaded originals
-are preserved. GPU mode uses 768px images. Only existing downloaded models are
-used; there is no paid or hosted fallback. Actual performance still depends on PC
-load. New recordings and new drafts are processed before older draft reviews.
+The owner turned GPU on. Default local runs use the GPU, 1280px images, and JPEG
+quality 90. CPU-only remains available only when `INTAKE_AI_CPU_ONLY` or
+`INTAKE_REVIEW_CPU_ONLY` is exactly `1`, and then images are 768px. Original
+uploads stay unchanged. All three Ollama stages respect that setting: photo
+analysis, draft writing and independent review. Only existing downloaded models
+are used; there is no paid or hosted fallback. Actual performance still depends
+on PC load. New recordings and new drafts are processed before older draft reviews.
 
 Each failed recording backs off for five then ten minutes, stops after three
 failed attempts, and remains saved. One bad recording does not stop subsequent

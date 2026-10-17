@@ -16,6 +16,7 @@ const marketing = load('src/lib/marketing.ts', { zod: require('zod') });
 const evidence = load('src/lib/marketing-evidence.ts', { zod: require('zod') });
 const processing = load('src/lib/marketing-processing.ts', { zod: require('zod'), 'node:crypto': require('node:crypto') });
 const review = load('src/lib/content-review.ts', { zod: require('zod'), 'node:crypto': require('node:crypto'), '@/lib/marketing': marketing, '@/lib/marketing-evidence': evidence });
+const publishability = load('src/lib/publishability.ts', {});
 const draftId = '10000000-0000-4000-8000-000000000001';
 const photoId = '20000000-0000-4000-8000-000000000001';
 const nextId = '30000000-0000-4000-8000-000000000001';
@@ -37,6 +38,66 @@ test('approval requires completed current review without blockers, pending speec
 test('code checks stop empty copy, external destinations, contact details and repeated headlines', () => {
   for (const change of [{ social: '' }, { landingUrl: 'https://example.com' }, { social: 'Contact customer@private.example' }, { googleHeadlines: ['Same', 'same', 'Same'] }]) assert.ok(review.copyChecks({ ...draft, ...change }).some((finding) => finding.severity === 'blocker'));
 });
+test('copy checks block cut-off headlines, repeated descriptions, cloned ads, double spaces and unsupported work claims', () => {
+  const claim = 'The caption says RHI Pros did this work, and the notes do not.';
+  const cut = review.copyChecks({ ...draft, metaHeadline: 'Pavilion in', imageHeadline: 'Deck buildi', googleHeadlines: ['RHI Pros', 'Short headline', 'Another headline'] });
+  assert.ok(cut.some((finding) => finding.category === 'copy' && finding.severity === 'blocker' && finding.detail === 'Finish the Meta headline so it does not end on a dangling word.' && finding.evidence && finding.suggestion));
+  assert.ok(cut.some((finding) => finding.detail === 'Finish the graphic headline so it does not stop mid-word.'));
+  for (const headline of ['Deck build-', 'Pavilion b']) assert.ok(review.copyChecks({ ...draft, imageHeadline: headline, googleHeadlines: ['RHI Pros', 'Short headline', 'Another headline'] }).some((finding) => finding.detail === 'Finish the graphic headline so it does not stop mid-word.'));
+  assert.equal(review.copyChecks({ ...draft, metaHeadline: 'Tell us about your project', imageHeadline: 'Project by RHI Pros', googleHeadlines: ['RHI Pros', 'Short headline', 'Another headline'] }).some((finding) => /dangling word|mid-word/.test(finding.detail)), false);
+  const google = review.copyChecks({ ...draft, googleHeadlines: ['A'.repeat(26), 'A'.repeat(25), `${'B'.repeat(25)}.`], googleDescriptions: ['C'.repeat(77), `${'D'.repeat(76)}.`], });
+  assert.ok(google.some((finding) => finding.detail === 'Finish Google headline 1 so it is not cut off.'));
+  assert.equal(google.some((finding) => finding.detail === 'Finish Google headline 2 so it is not cut off.'), false);
+  assert.equal(google.some((finding) => finding.detail === 'Finish Google headline 3 so it is not cut off.'), false);
+  assert.ok(google.some((finding) => finding.detail === 'Finish Google description 1 so it is not cut off.'));
+  assert.equal(google.some((finding) => finding.detail === 'Finish Google description 2 so it is not cut off.'), false);
+  const seeded = review.copyChecks(draft);
+  assert.ok(seeded.some((finding) => finding.detail === 'Finish Google headline 2 so it is not cut off.'));
+  assert.ok(seeded.some((finding) => finding.detail === 'Finish Google headline 3 so it is not cut off.'));
+  assert.equal(seeded.some((finding) => finding.detail.startsWith('Finish Google description')), false);
+  const repeated = review.copyChecks({ ...draft, googleHeadlines: ['RHI Pros', 'Short headline', 'Another headline'], googleDescriptions: ['Same description.', ' same description. '] });
+  assert.ok(repeated.some((finding) => finding.detail === 'Rewrite the repeated Google description.'));
+  assert.equal(review.copyChecks({ ...draft, googleHeadlines: ['RHI Pros', 'Short headline', 'Another headline'], googleDescriptions: ['Same description.', 'Different description.'] }).some((finding) => finding.detail === 'Rewrite the repeated Google description.'), false);
+  const cloned = review.copyChecks({ ...draft, social: 'Same public post.', metaPrimary: '  Same public post.  ', googleHeadlines: ['RHI Pros', 'Short headline', 'Another headline'] });
+  const sameAd = cloned.find((finding) => finding.detail === 'Rewrite the Meta ad so it is not the same as the Facebook post.');
+  assert.equal(sameAd.severity, 'warning');
+  assert.equal(cloned.some((finding) => finding.severity === 'blocker' && finding.detail === sameAd.detail), false);
+  assert.equal(review.copyChecks({ ...draft, social: 'Same public post.', metaPrimary: 'same public post.', googleHeadlines: ['RHI Pros', 'Short headline', 'Another headline'] }).some((finding) => finding.detail === 'Rewrite the Meta ad so it is not the same as the Facebook post.'), false);
+  assert.ok(review.copyChecks({ ...draft, imageHeadline: 'Project  by RHI Pros', googleHeadlines: ['RHI Pros', 'Short headline', 'Another headline'] }).some((finding) => finding.detail === 'Remove the double space from the graphic headline.'));
+  const unsupported = review.copyChecks({ ...draft, sourceNotes: 'Photos of a finished pavilion.', social: 'Our crew built this pavilion.', googleBusiness: 'We installed the railing.', metaPrimary: 'RHI Pros completed this pavilion.', googleHeadlines: ['RHI Pros', 'Short headline', 'Another headline'] });
+  assert.equal(unsupported.filter((finding) => finding.detail === claim && finding.category === 'facts' && finding.severity === 'blocker').length, 1);
+  assert.equal(review.copyChecks({ ...draft, sourceNotes: 'Photos of a pavilion.', social: 'Planning a project of your own? Contact RHI Pros.', googleBusiness: 'Have a project in mind?', metaPrimary: 'Tell RHI Pros what you have in mind.', googleHeadlines: ['RHI Pros', 'Short headline', 'Another headline'] }).some((finding) => finding.detail === claim), false);
+  assert.equal(review.copyChecks({ ...draft, sourceNotes: 'We built a pavilion.', social: 'We built this pavilion.', googleHeadlines: ['RHI Pros', 'Short headline', 'Another headline'] }).some((finding) => finding.detail === claim), false);
+  assert.equal(review.copyChecks({ ...draft, sourceNotes: 'Photos of a pavilion.', social: `We ${'x'.repeat(41)} built this.`, googleHeadlines: ['RHI Pros', 'Short headline', 'Another headline'] }).some((finding) => finding.detail === claim), false);
+  for (const finding of [...cut, ...google, ...repeated, ...cloned.filter((finding) => finding.severity === 'blocker'), ...unsupported]) {
+    assert.equal(finding.severity, 'blocker');
+    assert.ok(finding.evidence.length > 0);
+    assert.ok(finding.suggestion.length > 0);
+    assert.ok(finding.detail.length < 120);
+    assert.equal((finding.detail.match(/\./g) || []).length, 1);
+  }
+});
+test('editorial checks block split descriptions, dangling headlines and double spaces, and only warn when social text matches', () => {
+  const headlines = ['RHI Pros', 'Short headline', 'Another headline'];
+  const duplicate = review.copyChecks({ ...draft, googleHeadlines: headlines, googleDescriptions: ['Plan a patio project with RHI Pros today.', 'Plan a patio project with RHI Pros today too.'] });
+  assert.ok(duplicate.some((finding) => finding.severity === 'blocker' && finding.detail === 'Rewrite the repeated Google description.' && finding.suggestion));
+  const fragment = 'RHI Pros builds covered patios and pavilions homeowners can use with shade all seasons for';
+  assert.equal(fragment.length, 90);
+  const split = review.copyChecks({ ...draft, googleHeadlines: headlines, googleDescriptions: [fragment, 'the rest of the outdoor season.'] });
+  assert.ok(split.some((finding) => finding.severity === 'blocker' && finding.detail === 'Finish Google description 1 so it does not continue into the next one.' && finding.suggestion));
+  const dangling = review.copyChecks({ ...draft, googleHeadlines: ['Contractor in', 'Short headline', 'Another headline'] });
+  assert.ok(dangling.some((finding) => finding.severity === 'blocker' && finding.detail === 'Finish Google headline 1 so it does not end on a dangling word.' && finding.suggestion));
+  assert.ok(review.copyChecks({ ...draft, metaHeadline: 'RHI Pros Home Improvement Contractor in', googleHeadlines: headlines }).some((finding) => finding.severity === 'blocker' && finding.detail === 'Finish the Meta headline so it does not end on a dangling word.'));
+  const curb = review.copyChecks({ ...draft, googleHeadlines: ["Enhance your home's curb", 'Short headline', 'Another headline'] });
+  assert.ok(curb.some((finding) => finding.severity === 'blocker' && finding.detail === 'Finish Google headline 1 so it does not end on a cut-off phrase.' && finding.suggestion));
+  assert.equal(review.copyChecks({ ...draft, metaHeadline: "Enhance your home's curb appeal", googleHeadlines: headlines }).some((finding) => /cut-off phrase|dangling word/.test(finding.detail)), false);
+  const spaced = review.copyChecks({ ...draft, social: 'Built a pavilion  in Reading. Contact RHI Pros.', googleHeadlines: headlines });
+  assert.ok(spaced.some((finding) => finding.severity === 'blocker' && finding.detail === 'Remove the double space from the Facebook post.' && finding.suggestion));
+  const same = 'A finished pavilion in Reading. Tell RHI Pros about your project.';
+  const identical = review.copyChecks({ ...draft, social: same, metaPrimary: same, googleHeadlines: headlines });
+  assert.ok(identical.some((finding) => finding.severity === 'warning' && finding.detail === 'Rewrite the Meta ad so it is not the same as the Facebook post.' && finding.suggestion));
+  assert.equal(identical.some((finding) => finding.severity === 'blocker'), false);
+});
 test('AI text blockers need an exact public quote and duplicate findings are removed', () => {
   const item = { ...blocker, publicField: 'social', quote: 'private source text' };
   const unknown = review.groundReviewFindings(draft, { summary: 'Check', findings: [item, item] });
@@ -55,13 +116,13 @@ test('visual observations require human resolution; privacy and factual blockers
 });
 function harness(options = {}) {
   const writes = [];
-  const context = { draftId, inputHash: hash, jobId: 'job', reviewId: nextId, draft, superseded: false, voicePending: false, review: completed, approvedAt: null, ...options.context };
+  const context = { draftId, inputHash: hash, jobId: 'job', reviewId: nextId, draft: { ...draft, googleHeadlines: ['RHI Pros', 'Project estimate', 'Talk with us'] }, superseded: false, voicePending: false, review: completed, approvedAt: null, ...options.context };
   const tx = { activityLog: { findFirst: async () => null, create: async (query) => { writes.push(query); return { id: nextId }; }, upsert: async (query) => { writes.push(query); return {}; } } };
   const route = load('src/app/api/marketing/review/route.ts', {
     'next/server': { NextResponse: { json: (body, init) => Response.json(body, init) } }, zod: require('zod'),
     '@/lib/auth': { requireAuth: async () => { if (options.unauthenticated) throw new Error('Unauthorized'); return { orgId: 'org', userId: 'owner', email: options.client ? 'rhisolutions316@gmail.com' : 'austinmck17@gmail.com' }; } },
     '@/lib/client-portal-policy': { isDashboardOwnerEmail: (email) => email === 'austinmck17@gmail.com' },
-    '@/lib/demo': { isDemoMode: () => options.demo || false }, '@/lib/marketing': marketing, '@/lib/content-review': review, '@/lib/marketing-processing': processing,
+    '@/lib/demo': { isDemoMode: () => options.demo || false }, '@/lib/marketing': marketing, '@/lib/content-review': review, '@/lib/marketing-processing': processing, '@/lib/publishability': publishability,
     '@/lib/content-review-store': { loadContentReview: async (orgId) => { assert.equal(orgId, 'org'); return options.missing ? null : context; } },
     '@/lib/prisma': { prisma: { $transaction: async (fn) => fn(tx) } },
   });

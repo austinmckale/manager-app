@@ -27,6 +27,12 @@ export default async function MarketingResultsPage() {
   const now = new Date();
   const week = reportingWeek(now);
   const demo = isDemoMode();
+  const weekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const weeklyPromise = demo ? Promise.resolve([0, 0, 0] as const) : Promise.all([
+    prisma.fileAsset.count({ where: { job: { orgId: auth.orgId }, type: "PHOTO", createdAt: { gte: weekStart } } }),
+    prisma.fileAsset.count({ where: { job: { orgId: auth.orgId }, type: "PHOTO", isPortfolio: true, updatedAt: { gte: weekStart } } }),
+    prisma.lead.count({ where: { orgId: auth.orgId, utmCampaign: { startsWith: "job-" }, createdAt: { gte: weekStart } } }),
+  ]);
   const [report, savedAt] = demo
     ? [buildWeeklyReport({
         generatedAt: now,
@@ -42,6 +48,7 @@ export default async function MarketingResultsPage() {
         previewMode: true,
       }), null] as const
     : await Promise.all([loadWeeklyReport(auth.orgId, now), savedReportTime(auth.orgId, week.start)]);
+  const weekly = await weeklyPromise;
 
   return (
     <div className="space-y-5">
@@ -50,7 +57,12 @@ export default async function MarketingResultsPage() {
         <h2 className="mt-2 text-2xl font-semibold">{report.period.label}</h2>
         <p className="mt-2 text-sm text-teal-50">Last refresh {new Date(report.generatedAt).toLocaleString()}. {report.source}</p>
         {savedAt ? <p className="mt-1 text-sm text-teal-100">Saved weekly snapshot {new Date(savedAt).toLocaleString()}.</p> : <p className="mt-1 text-sm text-teal-100">No saved weekly snapshot for this period yet.</p>}
-        <Link href="/marketing/connections" className="mt-4 inline-flex rounded-xl bg-white px-4 py-2 text-sm font-semibold text-teal-900">Connections</Link>
+        <Link href="/marketing/connections" className="mt-4 inline-flex min-h-11 items-center rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-950">Connections</Link>
+      </section>
+      <section aria-label="Past seven days" className="rounded-2xl border border-slate-300 p-4">
+        <h3 className="text-sm font-semibold text-slate-900">Past 7 days</h3>
+        <div className="mt-3 grid grid-cols-3 gap-3">{([[weekly[0], "Photos uploaded"], [weekly[1], "Website photos updated"], [weekly[2], "Leads from tracked packs"]] as const).map(([value, label]) => <div key={label}><p className="text-2xl font-semibold text-slate-900">{value}</p><p className="mt-1 text-xs text-slate-800">{label}</p></div>)}</div>
+        <p className="mt-3 text-xs text-slate-800">{demo ? "Preview mode does not read the database, so these counts are empty." : "Tracked leads are quote requests with a marketing-pack campaign link. Website photo updates are not social posts. Ad spend, phone calls and booked revenue are not included."}</p>
       </section>
       <section className="grid gap-3 sm:grid-cols-2">
         <MetricBlock metric={report.quoteSubmissions} />
