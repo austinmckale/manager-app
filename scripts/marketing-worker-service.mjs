@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, open, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { workerSummary, workerFailure, workerCheckState } from './marketing-worker-result.mjs';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const stateDir = join(root, '.vercel', 'marketing-worker-service');
@@ -14,25 +15,20 @@ let failures = 0;
 let lastSuccessAt = null;
 let lastResult = null;
 let startedAt;
+let notifications = null;
 
 async function status(state, issue = null) {
-  const record = { version: 1, pid: process.pid, startedAt, updatedAt: new Date().toISOString(), state, failures, lastSuccessAt, lastResult, issue };
+  const record = { version: 1, pid: process.pid, startedAt, updatedAt: new Date().toISOString(), state, failures, lastSuccessAt, lastResult, issue, notifications };
   const temporary = `${statusPath}.${process.pid}.tmp`;
   await writeFile(temporary, JSON.stringify(record, null, 2));
   await rename(temporary, statusPath);
 }
 
 // Never persist raw worker output: it may contain source notes or private links.
-function summary(output) {
-  const value = JSON.parse(output.trim().split(/\r?\n/).at(-1));
-  if (value.busy === true) return { busy: true };
-  if (typeof value.generated !== 'boolean' || !Number.isInteger(value.transcribed) || value.transcribed < 0) throw new Error('invalid-result');
-  return { transcribed: value.transcribed, generated: value.generated };
-}
-
 function run() {
   return new Promise((accept) => {
     let output = '';
+    let stderr = '';
     let failed = false;
     child = spawn(process.execPath, ['--import', 'tsx', join(root, 'scripts', 'intake-marketing-worker.ts'), 'run-local'], {
       cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
@@ -40,19 +36,34 @@ function run() {
     });
     const timeout = setTimeout(() => { failed = true; child?.kill(); }, 60 * 60 * 1000);
     child.stdout.on('data', (data) => { output = (output + data.toString()).slice(-65536); });
-    child.stderr.resume();
+    child.stderr.on('data', (data) => { stderr = (stderr + data.toString()).slice(-8192); });
     child.on('error', () => { failed = true; });
-    child.on('close', (code) => { clearTimeout(timeout); child = undefined; accept({ code: failed ? -1 : code, output }); });
+    child.on('close', (code) => { clearTimeout(timeout); child = undefined; accept({ code: failed ? -1 : code, output, issue: failed ? 'Processing exceeded its time limit. Check PC load; queued work will retry.' : workerFailure(stderr) }); });
   });
 }
 
 async function ollamaReady() {
   try {
-    const response = await fetch('http://127.0.0.1:11434/api/tags', { signal: AbortSignal.timeout(5000) });
+    const response = await fetch('http://127.0.0.1:11434/api/tags', { signal: AbortSignal.timeout(15000) });
     if (!response.ok) return false;
     const data = await response.json();
     return data.models?.some((model) => model.name === 'qwen3.5:4b') === true;
   } catch { return false; }
+}
+
+async function runAlerts(health) {
+  return new Promise((done) => {
+    let output = '';
+    const notifier = spawn(process.execPath, ['--import', 'tsx', join(root, 'scripts', 'intake-marketing-worker.ts'), 'alerts', ...(health ? [`--worker-${health}`] : [])], { cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, INTAKE_EMAIL_SENDING: 'disabled' } });
+    const timer = setTimeout(() => notifier.kill(), 60000);
+    notifier.stdout.on('data', (data) => { output = (output + data.toString()).slice(-1024); });
+    notifier.on('error', () => {});
+    notifier.on('close', (code) => {
+      clearTimeout(timer);
+      try { const result = JSON.parse(output.trim().split(/\r?\n/).at(-1)); if (code !== 0) throw new Error(); done({ configured: result.alertsConfigured === true, sent: Number.isInteger(result.alertsSent) ? result.alertsSent : 0 }); }
+      catch { done({ issue: 'Discord alert check failed; check the notification configuration and internet access.' }); }
+    });
+  });
 }
 
 async function main() {
@@ -79,19 +90,22 @@ async function main() {
     do {
       let issue = null;
       if (!await ollamaReady()) {
-        issue = 'Start local Ollama with the downloaded qwen3.5:4b model.';
+        issue = 'Local Ollama is unavailable, busy, or missing qwen3.5:4b. Processing will retry; check Ollama if this persists.';
       } else {
         await status('processing');
         const result = await run();
-        if (result.code !== 0) issue = 'Processing failed. Check internet access, database credentials and the local Python runtime; run the worker manually for diagnostics.';
+        if (result.code !== 0) issue = result.issue;
         else {
-          try { lastResult = summary(result.output); }
+          try { lastResult = workerSummary(result.output); }
           catch { issue = 'Worker returned an unexpected result; run it manually for diagnostics.'; }
         }
       }
       if (stopping) break;
-      if (issue) { failures += 1; await status('retrying', issue); }
-      else { failures = 0; lastSuccessAt = new Date().toISOString(); await status('idle'); }
+      const checked = workerCheckState({ issue, lastResult, failures, lastSuccessAt });
+      notifications = await runAlerts(checked.state === 'retrying' || checked.state === 'attention' ? 'failed' : checked.state === 'idle' ? 'healthy' : undefined);
+      failures = checked.failures;
+      lastSuccessAt = checked.lastSuccessAt;
+      await status(checked.state, checked.issue);
       if (once) { if (issue) process.exitCode = 1; break; }
       const delay = issue ? Math.min(15 * 60_000, 60_000 * 2 ** Math.min(failures - 1, 4)) : 60_000;
       const until = Date.now() + delay;

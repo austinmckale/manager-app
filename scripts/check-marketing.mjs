@@ -200,6 +200,7 @@ function crewRouteHarness(options = {}) {
   let record = null; const calls = [];
   const actual = inviteHarness();
   const route = load("src/app/api/field-intake/route.ts", {
+    "@/lib/marketing-alerts": { notifyIntakeReceived: async () => undefined },
     "next/server": { NextResponse: Response }, "next/cache": { revalidatePath() {} }, "@/lib/demo": { isDemoMode: () => Boolean(options.demo) },
     "@/lib/field-intake": { ...actual, resolveUploadInvite: async () => options.invalid ? null : { id: assetId, jobId, orgId: auth.orgId } },
     "@/lib/supabase/admin": { supabaseAdmin: { storage: { from: () => ({ upload: async () => { calls.push("storage"); return { error: options.storageFails ? new Error("offline") : null }; } }) } } },

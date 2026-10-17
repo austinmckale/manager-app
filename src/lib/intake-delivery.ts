@@ -11,6 +11,7 @@ export const packSchema = z.object({
   deliverAt: z.string().datetime(), draft: marketingDraftSchema,
   generator: z.enum(["local-ollama", "codex", "claude", "codex-and-claude", "owner"]),
   isTest: z.boolean().default(false),
+  ownerApproved: z.boolean().default(false),
 });
 export type IntakePack = z.infer<typeof packSchema>;
 
@@ -33,7 +34,7 @@ export async function availableIntakePacks(token: string, now = new Date()) {
   const records = await prisma.activityLog.findMany({ where: { orgId: invite.orgId, action: INTAKE_PACK, metadata: { path: ["inviteId"], equals: invite.id } }, orderBy: { createdAt: "desc" }, take: 100 });
   return records.flatMap((record) => {
     const parsed = packSchema.safeParse(record.metadata);
-    if (!parsed.success || parsed.data.isTest || parsed.data.inviteId !== invite.id || new Date(parsed.data.deliverAt) > now) return [];
+    if (!parsed.success || !parsed.data.ownerApproved || parsed.data.isTest || parsed.data.inviteId !== invite.id || new Date(parsed.data.deliverAt) > now) return [];
     return [{ id: record.id, name: parsed.data.draft.packName || "Your job photo pack", deliverAt: parsed.data.deliverAt }];
   });
 }
@@ -43,7 +44,7 @@ export async function readIntakePack(token: string, id: string, now = new Date()
   if (!invite) return null;
   const record = await prisma.activityLog.findFirst({ where: { id, orgId: invite.orgId, action: INTAKE_PACK } });
   const parsed = packSchema.safeParse(record?.metadata);
-  if (!record || !parsed.success || parsed.data.isTest || parsed.data.inviteId !== invite.id || new Date(parsed.data.deliverAt) > now) return null;
+  if (!record || !parsed.success || !parsed.data.ownerApproved || parsed.data.isTest || parsed.data.inviteId !== invite.id || new Date(parsed.data.deliverAt) > now) return null;
   const assets = await prisma.fileAsset.findMany({ where: { id: { in: parsed.data.draft.assetIds }, tags: { has: `intake:${invite.id}` }, job: { orgId: invite.orgId } }, select: { id: true, fileName: true, mimeType: true, storageKey: true } });
   if (assets.length !== new Set(parsed.data.draft.assetIds).size) return null;
   const ordered = parsed.data.draft.assetIds.map((assetId) => assets.find((asset) => asset.id === assetId)!);

@@ -17,7 +17,7 @@ const packId = "30000000-0000-4000-8000-000000000001";
 const inviteId = "40000000-0000-4000-8000-000000000001";
 const submissionId = "50000000-0000-4000-8000-000000000001";
 const draft = { ...marketing.prepareMarketingDraft({ assetIds: [photoId], notes: ["private source note"] }), photoNotes: [{ assetId: photoId, description: "private annotation", area: null, stage: null }] };
-const metadata = { inviteId, submissionId, deliverAt: "2026-10-17T12:00:00.000Z", draft, generator: "codex" };
+const metadata = { inviteId, submissionId, deliverAt: "2026-10-17T12:00:00.000Z", draft, generator: "codex", ownerApproved: true };
 const now = new Date("2026-10-17T12:00:00.000Z");
 function harness(options = {}) {
   const queries = [];
@@ -48,12 +48,13 @@ test("submission IDs are stable, scoped by org/invite, and distinct for notifica
   assert.notEqual(id, h.deliveryId("org", inviteId, submissionId, "email"));
 });
 test("unreleased, mismatched, invalid and missing-photo packs cannot be opened", async () => {
-  for (const options of [{ invalidInvite: true }, { otherOrg: true }, { missingPhoto: true }, { metadata: { isTest: true } }, { metadata: { inviteId: "40000000-0000-4000-8000-000000000002" } }, { metadata: { deliverAt: "2026-10-17T12:00:01.000Z" } }, { metadata: { draft: null } }]) assert.equal(await harness(options).readIntakePack("token", packId, now), null);
+  for (const options of [{ invalidInvite: true }, { otherOrg: true }, { missingPhoto: true }, { metadata: { ownerApproved: false } }, { metadata: { ownerApproved: undefined } }, { metadata: { isTest: true } }, { metadata: { inviteId: "40000000-0000-4000-8000-000000000002" } }, { metadata: { deliverAt: "2026-10-17T12:00:01.000Z" } }, { metadata: { draft: null } }]) assert.equal(await harness(options).readIntakePack("token", packId, now), null);
   assert.equal(await harness().readIntakePack("token", "invalid-id", now), null);
 });
 test("available packs require their own active invite and a reached delivery time", async () => {
   assert.equal((await harness().availableIntakePacks("token", now)).length, 1);
   assert.equal((await harness({ invalidInvite: true }).availableIntakePacks("token", now)).length, 0);
+  assert.equal((await harness({ metadata: { ownerApproved: false } }).availableIntakePacks("token", now)).length, 0);
   assert.equal((await harness({ metadata: { deliverAt: "2026-10-17T12:00:01.000Z" } }).availableIntakePacks("token", now)).length, 0);
 });
 test("pack reads scope DB and photos, preserve public copy, and redact internal notes", async () => {
@@ -108,8 +109,16 @@ test("voice notes are privately scoped from the invite and saved as queued, not 
   assert.equal(h.writes[1][1].data.metadata.status, "queued");
 });
 test("audio retries deduplicate their own invite and cannot claim another invite's record", async () => {
-  const h = audioHarness({ existing: { orgId: "org", action: audioModule.AUDIO_RECEIVED, metadata: { inviteId } } }); assert.equal((await h.post()).status, 200); assert.equal(h.writes.length, 0);
+  const h = audioHarness({ existing: { orgId: "org", jobId: "job", action: audioModule.AUDIO_RECEIVED, metadata: { inviteId, submissionId } } }); assert.equal((await h.post()).status, 200); assert.equal(h.writes.length, 0);
   const other = audioHarness({ existing: { orgId: "other-org", action: audioModule.AUDIO_RECEIVED, metadata: { inviteId } } }); assert.equal((await other.post()).status, 409); assert.equal(other.writes.length, 0);
+});
+
+test("audio retries cannot report success for a different submission or job on the same invite", async () => {
+  for (const change of [{ jobId: "another-job" }, { metadata: { inviteId, submissionId: packId } }]) {
+    const h = audioHarness({ existing: { orgId: "org", jobId: "job", action: audioModule.AUDIO_RECEIVED, metadata: { inviteId, submissionId }, ...change } });
+    assert.equal((await h.post()).status, 409);
+    assert.equal(h.writes.length, 0);
+  }
 });
 test("failed voice storage does not create a queued transcription", async () => {
   const h = audioHarness({ storageFailure: true }); assert.equal((await h.post()).status, 503); assert.equal(h.writes.filter((item) => item[0] === "db").length, 0);

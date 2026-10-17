@@ -19,7 +19,7 @@ export async function intakeHistory(token: string) {
     if (!batch) { batch = { id: meta.submissionId, createdAt: record.createdAt.toISOString(), location: "", note: "", transcript: "", voiceId: null, voicePending: false, packId: null, ready: false, photos: [] }; batches.set(batch.id, batch); }
     if (record.action === PHOTO_RECEIVED) { batch.location = meta.location || batch.location; batch.note = meta.description || batch.note; }
     if (record.action === AUDIO_RECEIVED) { batch.voiceId = record.id; batch.voicePending = meta.status !== "transcribed"; batch.transcript = meta.transcript || ""; }
-    if (record.action === INTAKE_PACK) { const pack = packSchema.safeParse(record.metadata); if (pack.success) { batch.packId = record.id; batch.ready = !pack.data.isTest && new Date(pack.data.deliverAt) <= new Date(); } }
+    if (record.action === INTAKE_PACK) { const pack = packSchema.safeParse(record.metadata); if (pack.success) { batch.packId = record.id; batch.ready = pack.data.ownerApproved && !pack.data.isTest && new Date(pack.data.deliverAt) <= new Date(); } }
   }
   for (const batch of batches.values()) batch.photos = photos.filter((photo) => photo.tags.includes(`submission:${batch.id}`));
   return [...batches.values()].reverse();

@@ -5,6 +5,9 @@ import type { PrismaClient } from "@prisma/client";
 import type { supabaseAdmin as SupabaseAdmin } from "../src/lib/supabase/admin";
 import { z } from "zod";
 import { marketingDraftSchema } from "../src/lib/marketing";
+import { localReviewRequest } from "./local-review-request";
+import { localAiSettings } from "./local-ai-settings";
+import { processVoiceQueue } from "./local-voice-queue";
 
 const publicCopy = marketingDraftSchema.pick({ packName: true, publicLocation: true, service: true, social: true, googleBusiness: true, metaPrimary: true, metaHeadline: true, googleHeadlines: true, googleDescriptions: true, imageHeadline: true }).required();
 const workerFile = resolve("scripts/intake-marketing-worker.ts");
@@ -28,13 +31,13 @@ export async function runLocalIntake({ prisma, supabaseAdmin, orgId, folder, aud
   }
   await lock.writeFile(String(process.pid));
   try {
+    const { runContentReview } = await import("./local-content-review");
     const { resolveUploadInvite, uploadInviteToken } = await import("../src/lib/field-intake");
     const audio = await prisma.activityLog.findMany({ where: { orgId, action: audioAction, metadata: { path: ["status"], equals: "queued" } }, orderBy: { createdAt: "asc" }, take: 20 });
-    let transcribed = 0;
-    for (const row of audio) {
+    const { transcribed, transcriptionFailed } = await processVoiceQueue(audio, async (row) => {
       const meta = row.metadata as { inviteId: string; submissionId: string; storageKey: string; mimeType: string; [key: string]: unknown };
       const invite = await resolveUploadInvite(uploadInviteToken(meta.inviteId));
-      if (!invite || invite.orgId !== orgId || !meta.storageKey.startsWith(`${orgId}/${invite.jobId}/intake/${invite.id}/voice-`)) continue;
+      if (!invite || invite.orgId !== orgId || !meta.storageKey.startsWith(`${orgId}/${invite.jobId}/intake/${invite.id}/voice-`)) return null;
       const { data, error } = await supabaseAdmin.storage.from(process.env.SUPABASE_STORAGE_BUCKET ?? "job-assets").download(meta.storageKey);
       if (error || !data) throw new Error("Voice recording unavailable in private storage.");
       const path = join(folder, `voice-${row.id}.${meta.mimeType === "audio/mp4" ? "m4a" : "webm"}`);
@@ -44,14 +47,17 @@ export async function runLocalIntake({ prisma, supabaseAdmin, orgId, folder, aud
       const result = spawnSync(python, [resolve("scripts/local-transcribe.py"), path], { encoding: "utf8", timeout: 600000, windowsHide: true, env: { ...process.env, INTAKE_PYTHON_PACKAGES: packages, HF_HUB_DISABLE_TELEMETRY: "1" } });
       if (result.status !== 0) throw new Error(`Local transcription unavailable: ${String(result.stderr || result.error?.message || "unknown error").slice(-500)}`);
       const transcript = z.object({ text: z.string().min(1).max(6000) }).parse(JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1)!)).text;
-      await prisma.activityLog.update({ where: { id: row.id }, data: { metadata: { ...meta, status: "transcribed", transcript, transcribedAt: new Date().toISOString(), engine: "faster-whisper-small.en-local-cpu" } } });
-      transcribed += 1;
-    }
+      return transcript;
+    }, async (row, metadata) => { await prisma.activityLog.update({ where: { id: row.id }, data: { metadata: JSON.parse(JSON.stringify(metadata)) } }); });
     const scan = runWorker(["scan", ...(includeTest ? ["--include-test"] : [])]);
-    if (!scan.pending) { console.log(JSON.stringify({ transcribed, generated: false })); return; }
+    if (!scan.pending) {
+      const contentReview = await runContentReview(prisma, supabaseAdmin, orgId, includeTest);
+      console.log(JSON.stringify({ transcribed, transcriptionFailed, generated: false, ...contentReview })); return;
+    }
     const source = scan.input as { inviteId: string; submissionId: string; location: string; description: string; transcript?: string; photos: { id: string; path: string }[] };
     const sharp = (await import("sharp")).default;
-    const images = await Promise.all(source.photos.slice(0, 3).map(async (photo) => (await sharp(await readFile(photo.path)).resize({ width: 768, height: 768, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer()).toString("base64")));
+    const settings = localAiSettings();
+    const images = await Promise.all(source.photos.slice(0, 3).map(async (photo) => (await sharp(await readFile(photo.path)).resize({ width: settings.imageSize, height: settings.imageSize, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer()).toString("base64")));
     const model = process.env.INTAKE_OLLAMA_MODEL || "qwen3.5:4b";
     if (model.includes("cloud") || model.includes("/")) throw new Error("A downloaded local Ollama model is required; cloud models are disabled.");
     const { analyzeLocalPhotos } = await import("./local-photo-analysis");
@@ -62,9 +68,7 @@ export async function runLocalIntake({ prisma, supabaseAdmin, orgId, folder, aud
     ];
     let copy: z.infer<typeof publicCopy> | undefined;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const response = await fetch("http://127.0.0.1:11434/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model, messages, stream: false, think: false, format: z.toJSONSchema(publicCopy), options: { temperature: 0.3, num_ctx: 8192 }, keep_alive: "5m" }), signal: AbortSignal.timeout(600000) });
-      if (!response.ok) throw new Error(`Local Ollama returned ${response.status}. No paid API fallback was attempted.`);
-      const result = await response.json() as { message?: { content?: string } };
+      const result = await localReviewRequest({ model, messages, stream: false, think: false, format: z.toJSONSchema(publicCopy), options: { temperature: 0.3, num_ctx: 8192, num_predict: 1800, ...settings.options }, keep_alive: "5m" });
       try {
         const candidate = publicCopy.parse(JSON.parse(result.message?.content || ""));
         const headings = [candidate.metaHeadline, candidate.imageHeadline, ...candidate.googleHeadlines];
@@ -78,6 +82,6 @@ export async function runLocalIntake({ prisma, supabaseAdmin, orgId, folder, aud
     const output = { inviteId: source.inviteId, submissionId: source.submissionId, generator: "local-ollama", draft };
     await writeFile(scan.outputPath, JSON.stringify(output, null, 2));
     const saved = runWorker(["save", scan.outputPath]);
-    console.log(JSON.stringify({ transcribed, generated: true, ...saved, engine: model, inference: "local-only" }));
+    console.log(JSON.stringify({ transcribed, transcriptionFailed, generated: true, ...saved, reviewed: false, engine: model, inference: "local-only" }));
   } finally { await lock.close(); await unlink(lockPath).catch(() => undefined); }
 }

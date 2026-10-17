@@ -36,7 +36,10 @@ async function main() {
     return { invite, assets, transcript: audio.map((item) => item.transcript || "").join("\n\n") };
   }
   try {
-    if (command === "run-local") {
+    if (command === "alerts") {
+      const { runMarketingAlerts } = await import("../src/lib/marketing-alerts");
+      console.log(JSON.stringify(await runMarketingAlerts(orgId, args.includes("--worker-failed") ? "failed" : args.includes("--worker-healthy") ? "healthy" : undefined, args.includes("--test"))));
+    } else if (command === "run-local") {
       const { runLocalIntake } = await import("./local-intake-runner");
       await runLocalIntake({ prisma, supabaseAdmin, orgId, folder, audioAction: AUDIO_RECEIVED, includeTest: args.includes("--include-test") });
     } else if (command === "scan") {
@@ -122,7 +125,7 @@ async function main() {
         const parsed = packSchema.safeParse(row.metadata);
         if (!parsed.success || new Date(parsed.data.deliverAt) > now) continue;
         const pack = parsed.data;
-        if (pack.isTest) continue;
+        if (pack.isTest || !pack.ownerApproved) continue;
         const token = uploadInviteToken(pack.inviteId);
         if (!await resolveUploadInvite(token)) continue;
         const claimId = deliveryId(orgId, pack.inviteId, pack.submissionId, "email");

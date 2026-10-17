@@ -16,7 +16,11 @@ export async function POST(request: Request) {
     const invite = await resolveUploadInvite(body.token);
     if (!invite) return NextResponse.json({ error: "Upload link unavailable. Ask for a new link." }, { status: 403 });
     const existing = await prisma.activityLog.findUnique({ where: { id: body.id } });
-    if (existing) return existing.orgId === invite.orgId && existing.action === AUDIO_RECEIVED && (existing.metadata as { inviteId?: string } | null)?.inviteId === invite.id ? NextResponse.json({ ok: true, status: "queued" }) : NextResponse.json({ error: "Please record a new note." }, { status: 409 });
+    const matchesSubmission = (row: typeof existing) => {
+      const meta = row?.metadata as { inviteId?: string; submissionId?: string } | null;
+      return row?.orgId === invite.orgId && row.jobId === invite.jobId && row.action === AUDIO_RECEIVED && meta?.inviteId === invite.id && meta.submissionId === body.submissionId;
+    };
+    if (existing) return matchesSubmission(existing) ? NextResponse.json({ ok: true, status: "queued" }) : NextResponse.json({ error: "Please record a new note." }, { status: 409 });
     const count = await prisma.activityLog.count({ where: { orgId: invite.orgId, action: AUDIO_RECEIVED, metadata: { path: ["inviteId"], equals: invite.id } } });
     if (count >= 300) return NextResponse.json({ error: "This link has reached its recording limit. Ask for a new link." }, { status: 429 });
     const bytes = decodeAudioNote(body);
@@ -25,7 +29,10 @@ export async function POST(request: Request) {
     const { error } = await supabaseAdmin.storage.from(process.env.SUPABASE_STORAGE_BUCKET ?? "job-assets").upload(storageKey, bytes, { contentType: body.mimeType, upsert: true });
     if (error) return NextResponse.json({ error: "Voice note could not be sent. Keep this page open and retry." }, { status: 503 });
     try { await prisma.activityLog.create({ data: { id: body.id, orgId: invite.orgId, jobId: invite.jobId, action: AUDIO_RECEIVED, metadata: { inviteId: invite.id, submissionId: body.submissionId, storageKey, mimeType: body.mimeType, fileSize: bytes.length, status: "queued" } } }); }
-    catch (error) { if (!(typeof error === "object" && error && "code" in error && error.code === "P2002")) throw error; }
+    catch (error) {
+      if (!(typeof error === "object" && error && "code" in error && error.code === "P2002")) throw error;
+      if (!matchesSubmission(await prisma.activityLog.findUnique({ where: { id: body.id } }))) return NextResponse.json({ error: "Please record a new note." }, { status: 409 });
+    }
     return NextResponse.json({ ok: true, status: "queued" });
   } catch { return NextResponse.json({ error: "Could not send the recording. Keep this page open and retry." }, { status: 503 }); }
 }

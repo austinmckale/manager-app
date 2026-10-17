@@ -1,0 +1,49 @@
+# Local processing and owner alerts
+
+Ryan uploads to the hosted app and private storage. The Windows task named
+`RHI Pros Local Marketing Worker` runs independently of the Codex desktop app
+while this Windows user is signed in and the PC is awake. Locking the screen is
+fine. The worker checks about once a minute; draft discovery waits for 15 minutes
+without a new photo. This is an intake settling window, not an AI runtime promise.
+
+Production currently uses `INTAKE_AI_CPU_ONLY=1` in its ignored local environment.
+All three Ollama stages respect it: photo analysis, draft writing and independent
+review. CPU mode uses four threads and 384px working images. Uploaded originals
+are preserved. GPU mode uses 768px images. Only existing downloaded models are
+used; there is no paid or hosted fallback. Actual performance still depends on PC
+load. New recordings and new drafts are processed before older draft reviews.
+
+Each failed recording backs off for five then ten minutes, stops after three
+failed attempts, and remains saved. One bad recording does not stop subsequent
+recordings. The owner can retry failed recordings at `/marketing/delivery`.
+Retries preserve source media and require the authenticated owner and matching
+organization. This does not implement two-PC leasing or generation dead letters.
+
+`MARKETING_ALERTS_DISCORD_WEBHOOK_URL` is a server-only secret. It is stored in the
+ignored local production environment and Vercel production environment, never in
+source code or client props. Only HTTPS Discord webhook endpoints are accepted.
+
+The cloud upload route queues and attempts one owner notification when the first
+photo in a submission is received. This works even when the processing PC is off.
+The local worker also reconciles receipts and saved packs from the last two days,
+dispatches queued alerts, and sends one alert per processing-failure incident and
+one recovery alert. A draft-ready alert means a draft was saved for owner review;
+it does not mean approved, released to Ryan, emailed or published.
+
+Alerts use durable ActivityLog records (`marketing.owner.alert`) with atomic
+claims and provider-confirmed message IDs. Failed deliveries retry up to five
+attempts. An HTTP timeout can have reached Discord; a later retry can duplicate
+that notification. Raw provider errors, webhook secrets, photos, source notes,
+transcripts and capability links are excluded from messages and local status.
+Discord mentions are disabled. Messages link to authenticated owner pages.
+
+Enable notifications for this channel in the Discord mobile app to receive phone
+push notifications. Discord accepting a message does not prove phone delivery.
+SMS and email remain disabled. A separate cloud heartbeat monitor is still needed
+to proactively report a powered-off or disconnected processing PC; this worker
+cannot notify while its own machine is off. Failed alert records can be inspected
+in the database; this version has no owner-facing alert retry button.
+
+Checks cover failure isolation/backoff, CPU settings, owner-only retries, webhook
+destination validation, event deduplication, retry persistence and one-time worker
+failure/recovery alerts. No Prisma migration is required.

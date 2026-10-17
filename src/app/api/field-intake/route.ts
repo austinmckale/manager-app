@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { isDemoMode } from "@/lib/demo";
 import { decodeIntakePhoto, intakePhotoSchema, PHOTO_RECEIVED, resolveUploadInvite } from "@/lib/field-intake";
+import { notifyIntakeReceived } from "@/lib/marketing-alerts";
 
 export async function POST(request: Request) {
   if (isDemoMode()) return NextResponse.json({ error: "Preview only. Use the live upload link to send photos." }, { status: 409 });
@@ -30,6 +31,7 @@ export async function POST(request: Request) {
       prisma.activityLog.create({ data: { orgId: invite.orgId, jobId: invite.jobId, action: PHOTO_RECEIVED, metadata: { inviteId: invite.id, submissionId: body.submissionId, fileAssetId: body.id, location: body.location, description: body.description, stage: body.stage } } }),
     ]);
     revalidatePath("/marketing");
+    await notifyIntakeReceived(invite.orgId, invite.jobId, invite.id, body.submissionId).catch(() => undefined);
     return NextResponse.json({ ok: true, id: body.id });
   } catch {
     return NextResponse.json({ error: "Could not finish sending this photo. Keep this screen open and retry." }, { status: 503 });
