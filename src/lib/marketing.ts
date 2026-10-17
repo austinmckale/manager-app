@@ -4,6 +4,7 @@ export const ARCHIVED_PHOTO_TAG = "marketing:archived";
 export const DRAFT_SAVED_ACTION = "marketing.draft.saved";
 
 export const marketingDraftSchema = z.object({
+  postType: z.enum(["project", "company_life"]).default("project"),
   packName: z.string().max(120).default(""),
   sourceNotes: z.string().max(6000).default(""),
   publicLocation: z.string().max(100).default(""),
@@ -28,6 +29,7 @@ export function prepareMarketingDraft(input: { assetIds: string[]; notes: string
   const facts = sourceNotes.slice(0, 1400);
   const subject = input.area && input.area !== "Other" ? input.area : "Project";
   return {
+    postType: "project",
     packName: input.packName?.slice(0, 120) ?? "",
     sourceNotes,
     publicLocation: input.location?.slice(0, 100) ?? "",
