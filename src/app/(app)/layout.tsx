@@ -17,7 +17,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   }
 
   return (
-    <AppShell title="Workspace" userName={auth.fullName}>
+    <AppShell title="RHI Pros" userName={auth.fullName}>
       {children}
     </AppShell>
   );

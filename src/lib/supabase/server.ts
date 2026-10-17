@@ -19,7 +19,8 @@ export async function createServerSupabase() {
               cookieStore.set(name, value, options);
             }
           } catch {
-            // Page renders cannot write cookies. Middleware refreshes an expired session before the page runs.
+            // Pages can't write cookies. A refreshed session is saved by the next route handler
+            // or server action instead (the app shell calls /api/auth/session-cache on every load).
           }
         },
       },

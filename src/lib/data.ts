@@ -269,6 +269,7 @@ export async function getTodayOpsSummary(params: { orgId: string; userId: string
           select: {
             id: true,
             jobName: true,
+            address: true,
           },
         },
       },

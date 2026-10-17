@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import { subHours } from "date-fns";
 import { LeadSource, LeadStage } from "@prisma/client";
 import { NextResponse } from "next/server";
@@ -104,8 +105,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "LEAD_INGEST_API_KEY is not configured." }, { status: 500, headers: corsHeaders(request) });
   }
 
-  const intakeKey = getIntakeKey(request);
-  if (intakeKey !== secret) {
+  const intakeKey = getIntakeKey(request) ?? "";
+  const given = createHash("sha256").update(intakeKey).digest();
+  const expected = createHash("sha256").update(secret).digest();
+  if (!timingSafeEqual(given, expected)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(request) });
   }
 
