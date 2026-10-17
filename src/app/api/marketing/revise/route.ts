@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { captionRevisionBodySchema } from "@/lib/caption-revision";
 import { queueCaptionRevision, readCaptionRevision } from "@/lib/caption-revision-store";
+import { appendCaptionTurn, readCaptionThread } from "@/lib/caption-thread";
 import { isDashboardOwnerEmail } from "@/lib/client-portal-policy";
 import { loadContentReview } from "@/lib/content-review-store";
 import { isDemoMode } from "@/lib/demo";
@@ -58,6 +59,11 @@ export async function POST(request: Request) {
       context.draft.social,
       context.draft.googleBusiness,
     );
+    await appendCaptionTurn(prisma, auth.orgId, auth.userId, context.draftId, {
+      at: new Date().toISOString(),
+      instruction: body.instruction,
+      status: "queued",
+    });
     return NextResponse.json({
       ok: true,
       id: queued.id,
@@ -104,8 +110,9 @@ export async function GET(request: Request) {
     const proposal = revision
       ? { ...revision, approved: false as const, published: false as const }
       : null;
+    const turns = (await readCaptionThread(prisma, auth.orgId, parsed.data.draftId)) ?? [];
     return NextResponse.json(
-      { ok: true, proposal },
+      { ok: true, proposal, turns },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch {

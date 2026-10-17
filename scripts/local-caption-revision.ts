@@ -4,6 +4,7 @@ import { localReviewRequest } from "./local-review-request";
 import { localAiSettings } from "./local-ai-settings";
 import { loadContentReview } from "../src/lib/content-review-store";
 import { claimCaptionRevision, failCaptionRevision, listQueuedCaptionRevisions, markCaptionRevisionStale, saveCaptionProposal } from "../src/lib/caption-revision-store";
+import { appendCaptionTurn } from "../src/lib/caption-thread";
 
 const proposalSchema = z.object({ social: z.string().max(2200), googleBusiness: z.string().max(1500) });
 
@@ -14,6 +15,14 @@ const SYSTEM = [
   "Do not invent materials, the town, project completion, customer praise, or that RHI Pros built the work. Do not add private names or addresses.",
   'Return JSON only, exactly {"social": string, "googleBusiness": string}, with no other keys or commentary.',
 ].join("\n");
+
+async function appendRevisionTurn(store: PrismaClient, orgId: string, draftId: string, instruction: string, status: "ready" | "failed"): Promise<void> {
+  try {
+    await appendCaptionTurn(store, orgId, null, draftId, { at: new Date().toISOString(), instruction, status });
+  } catch {
+    console.error("Could not append the caption turn.");
+  }
+}
 
 export async function runCaptionRevision(prisma: PrismaClient, orgId: string): Promise<{ revised: boolean }> {
   const [queued] = await listQueuedCaptionRevisions(prisma, orgId);
@@ -32,6 +41,7 @@ export async function runCaptionRevision(prisma: PrismaClient, orgId: string): P
     const model = process.env.INTAKE_OLLAMA_MODEL || "qwen3.5:4b";
     if (model.includes("cloud") || model.includes("/")) throw new Error("Local model required");
     const settings = localAiSettings();
+    // Revision uses the stored transcript and current captions. It does not transcribe or re-inspect photos.
     const response = await localReviewRequest({
       model,
       stream: false,
@@ -50,6 +60,7 @@ export async function runCaptionRevision(prisma: PrismaClient, orgId: string): P
     const googleBusiness = proposal.googleBusiness.trim();
     if ((!social && !googleBusiness) || (social === current.social.trim() && googleBusiness === current.googleBusiness.trim())) throw new Error("UNCHANGED");
     await saveCaptionProposal(prisma, queued.id, social, googleBusiness);
+    await appendRevisionTurn(prisma, orgId, queued.draftId, queued.instruction, "ready");
     return { revised: true };
   } catch (error) {
     const reason = error instanceof Error && error.message === "UNCHANGED" ? "The local model did not change the caption."
@@ -58,6 +69,7 @@ export async function runCaptionRevision(prisma: PrismaClient, orgId: string): P
       : error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError") ? "The local model timed out."
       : "Caption revision failed. Check Ollama and try again.";
     await failCaptionRevision(prisma, queued.id, reason);
+    await appendRevisionTurn(prisma, orgId, queued.draftId, queued.instruction, "failed");
     return { revised: false };
   }
 }
