@@ -24,15 +24,20 @@ const statusLines = [
   },
 ] as const;
 
-export function PreviewStatus() {
+const byChannel = {
+  facebook: statusLines[0],
+  instagram: statusLines[2],
+  "google-business": statusLines[1],
+  "meta-ad": statusLines[3],
+  "google-ad": statusLines[4],
+} as const;
+
+export function PreviewStatus({ active }: { active: keyof typeof byChannel }) {
+  const line = byChannel[active];
   return (
-    <ul className="space-y-1 text-sm text-slate-600">
-      {statusLines.map(({ channel, sentence }) => (
-        <li key={channel}>
-          <span className="font-medium text-slate-800">{channel}: </span>
-          {sentence}
-        </li>
-      ))}
-    </ul>
+    <p className="text-sm text-slate-600">
+      <span className="font-medium text-slate-800">{line.channel}: </span>
+      {line.sentence}
+    </p>
   );
 }

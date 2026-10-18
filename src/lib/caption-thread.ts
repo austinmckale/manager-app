@@ -8,6 +8,7 @@ const turnSchema = z.object({
   at: z.string().min(1).max(40),
   instruction: z.string().trim().min(1).max(400),
   status: z.enum(["queued", "ready", "failed"]),
+  error: z.string().max(200).optional(),
 }).strict();
 
 export const captionThreadSchema = z.object({
@@ -18,6 +19,17 @@ export const captionThreadSchema = z.object({
 
 export type CaptionTurn = z.infer<typeof turnSchema>;
 type CaptionThread = z.infer<typeof captionThreadSchema>;
+
+/** One ask stays one row. A finished rewrite replaces its waiting row instead of adding a second line. */
+export function nextCaptionTurns(turns: CaptionTurn[], turn: CaptionTurn, settle = false): CaptionTurn[] {
+  const nextTurn = turnSchema.parse(turn);
+  if (!settle) return [...turns, nextTurn].slice(-12);
+  const fromEnd = [...turns].reverse().findIndex((item) => item.instruction === nextTurn.instruction && item.status === "queued");
+  if (fromEnd === -1) return [...turns, nextTurn].slice(-12);
+  const copy = turns.slice();
+  copy[turns.length - 1 - fromEnd] = nextTurn;
+  return copy.slice(-12);
+}
 
 export function captionThreadId(orgId: string, draftId: string) {
   const hex = createHash("sha256").update(`rhi-caption-thread-v1:${orgId}:${draftId}`).digest("hex").slice(0, 32);
@@ -34,13 +46,12 @@ export async function readCaptionThread(store: PrismaClient, orgId: string, draf
   return parsed.success ? parsed.data.turns : null;
 }
 
-export async function appendCaptionTurn(store: PrismaClient, orgId: string, actorId: string | null, draftId: string, turn: CaptionTurn) {
+export async function appendCaptionTurn(store: PrismaClient, orgId: string, actorId: string | null, draftId: string, turn: CaptionTurn, settle = false) {
   const id = captionThreadId(orgId, draftId);
-  const nextTurn = turnSchema.parse(turn);
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const row = await store.activityLog.findFirst({ where: { id, action: CAPTION_THREAD_ACTION } });
     const current = captionThreadSchema.safeParse(row?.metadata);
-    const turns = [...(current.success ? current.data.turns : []), nextTurn].slice(-12);
+    const turns = nextCaptionTurns(current.success ? current.data.turns : [], turn, settle);
     const metadata = captionThreadSchema.parse({ version: 1, draftId, turns });
     if (!row) {
       try {

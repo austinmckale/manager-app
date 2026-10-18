@@ -18,62 +18,76 @@ type Proposal = {
   googleBusiness: string;
   approved?: boolean;
   published?: boolean;
-  error?: string;
+  error?: string | null;
+  instruction?: string;
 };
 
 type RevisionTurn = {
   instruction: string;
   status: string;
   at?: string;
+  error?: string;
+};
+
+type RevisionBody = {
+  proposal?: Proposal | null;
+  ready?: Proposal | null;
+  turns?: unknown;
 };
 
 const QUICK_REVISIONS = [
-  {
-    label: "Shorter",
-    instruction: "Make the public captions shorter. Keep every fact.",
-  },
-  {
-    label: "More direct",
-    instruction: "Make the tone plain and direct. Keep every fact.",
-  },
-  {
-    label: "Another option",
-    instruction: "Write another short option with the same facts.",
-  },
+  { label: "Shorter", instruction: "Make the public captions shorter. Keep every fact." },
+  { label: "More direct", instruction: "Make the tone plain and direct. Keep every fact." },
+  { label: "Another option", instruction: "Write another short option with the same facts." },
 ] as const;
 
 function isRevisionTurn(value: unknown): value is RevisionTurn {
   if (!value || typeof value !== "object") return false;
-  const turn = value as { instruction?: unknown; status?: unknown; at?: unknown };
+  const turn = value as { instruction?: unknown; status?: unknown; at?: unknown; error?: unknown };
   return (
     typeof turn.instruction === "string" &&
     typeof turn.status === "string" &&
-    (turn.at === undefined || typeof turn.at === "string")
+    (turn.at === undefined || typeof turn.at === "string") &&
+    (turn.error === undefined || typeof turn.error === "string")
   );
 }
 
-function latestRevisionTurns(value: unknown): RevisionTurn[] {
+function collapsedTurns(value: unknown): RevisionTurn[] {
   if (!Array.isArray(value)) return [];
   const turns = value.filter(isRevisionTurn);
-  const times = turns.map((turn) => Date.parse(turn.at ?? ""));
-  if (turns.length > 0 && times.every((time) => Number.isFinite(time))) {
-    return [...turns]
-      .sort((a, b) => Date.parse(a.at ?? "") - Date.parse(b.at ?? ""))
-      .slice(-4);
-  }
-  return turns.slice(-4);
+  const ordered =
+    turns.length > 0 && turns.every((turn) => Number.isFinite(Date.parse(turn.at ?? "")))
+      ? [...turns].sort((a, b) => Date.parse(a.at ?? "") - Date.parse(b.at ?? ""))
+      : turns;
+  const latest = new Map<string, RevisionTurn>();
+  for (const turn of ordered) latest.set(turn.instruction, turn);
+  return [...latest.values()].reverse().slice(0, 4);
 }
 
-function turnStatusText(status: string) {
-  if (status === "queued" || status === "pending") {
-    return "Waiting to rewrite the descriptions.";
+function turnStatusText(turn: RevisionTurn) {
+  if (turn.status === "failed" || turn.status === "error") {
+    return turn.error || "The rewrite failed.";
   }
-  if (status === "running") return "Rewriting the descriptions.";
-  if (status === "ready") return "Ready";
-  if (status === "failed" || status === "error") return "Failed";
-  if (status === "stale") return "The version changed.";
-  if (status.toLowerCase() === "generating") return "Rewriting the descriptions.";
-  return status;
+  if (turn.status === "queued" || turn.status === "pending") return "Writing on this PC.";
+  if (turn.status === "running" || turn.status.toLowerCase() === "generating") return "Rewriting now.";
+  if (turn.status === "ready") return "Ready. The cards show it.";
+  if (turn.status === "stale") return "The version changed.";
+  return turn.status;
+}
+
+function readyKey(proposal: Proposal) {
+  return `${proposal.instruction ?? ""}:${proposal.social}:${proposal.googleBusiness}`;
+}
+
+function usableReady(proposal: Proposal | null | undefined, hash: string) {
+  return Boolean(
+    proposal &&
+      proposal.status === "ready" &&
+      proposal.inputHash === hash &&
+      !proposal.approved &&
+      !proposal.published &&
+      (proposal.social.trim() || proposal.googleBusiness.trim()),
+  );
 }
 
 export function CaptionRevisionPanel({
@@ -86,22 +100,20 @@ export function CaptionRevisionPanel({
 }: Props) {
   const [instruction, setInstruction] = useState("");
   const [status, setStatus] = useState("");
-  const [proposal, setProposal] = useState<Proposal | null>(null);
+  const [ready, setReady] = useState<Proposal | null>(null);
   const [turns, setTurns] = useState<RevisionTurn[]>([]);
   const [busy, setBusy] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const revisionKeyRef = useRef(`${draftId}:${inputHash}`);
+  const announcedRef = useRef(false);
+  const dismissedRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const ready =
-      proposal?.status === "ready" &&
-      proposal.inputHash === inputHash &&
-      !proposal.approved &&
-      !proposal.published;
     onPreview?.(
-      ready ? { social: proposal.social, googleBusiness: proposal.googleBusiness } : null,
+      usableReady(ready, inputHash)
+        ? { social: ready!.social, googleBusiness: ready!.googleBusiness }
+        : null,
     );
-  }, [proposal, inputHash, onPreview]);
+  }, [ready, inputHash, onPreview]);
 
   useEffect(() => {
     return () => {
@@ -109,19 +121,11 @@ export function CaptionRevisionPanel({
     };
   }, []);
 
-  useEffect(() => {
-    const key = `${draftId}:${inputHash}`;
-    if (revisionKeyRef.current === key) return;
-    revisionKeyRef.current = key;
-    setTurns([]);
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-      setBusy(false);
-      setStatus("");
-      setProposal(null);
-    }
-  }, [draftId, inputHash]);
+  function rememberReady(proposal: Proposal) {
+    const key = readyKey(proposal);
+    if (dismissedRef.current === key) return;
+    setReady((current) => (current && readyKey(current) === key ? current : proposal));
+  }
 
   function clearPoll() {
     if (pollRef.current) {
@@ -130,23 +134,128 @@ export function CaptionRevisionPanel({
     }
   }
 
+  function notifyReady() {
+    if (announcedRef.current) return;
+    announcedRef.current = true;
+    const previous = document.title;
+    document.title = "Suggestion ready · RHI Pros";
+    window.setTimeout(() => {
+      if (document.title === "Suggestion ready · RHI Pros") document.title = previous;
+    }, 20000);
+    if (typeof Notification !== "undefined" && Notification.permission === "granted" && document.hidden) {
+      new Notification("A description suggestion is ready", {
+        body: "It is on the review cards. Nothing is posted.",
+      });
+    }
+  }
+
+  function applyBody(body: RevisionBody, hash: string, announce: boolean) {
+    if (Array.isArray(body.turns)) setTurns(collapsedTurns(body.turns));
+    if (body.ready && usableReady(body.ready, hash)) rememberReady(body.ready);
+    const active = body.proposal;
+    if (!active) return "idle" as const;
+    if (active.status === "queued") {
+      setStatus("Writing the descriptions on this PC. The cards keep the last suggestion until this one is ready.");
+      return "wait" as const;
+    }
+    if (active.status === "running") {
+      setStatus("Rewriting the descriptions now.");
+      return "wait" as const;
+    }
+    if (active.status === "ready") {
+      if (!usableReady(active, hash)) {
+        setStatus(
+          active.approved || active.published
+            ? "This draft is already approved or published. The suggestion cannot be applied."
+            : "The version changed. This suggestion does not match.",
+        );
+        return "done" as const;
+      }
+      rememberReady(active);
+      setStatus("The suggestion is on the cards. Apply it, then save. Nothing is posted.");
+      if (announce) notifyReady();
+      return "done" as const;
+    }
+    if (active.status === "error" || active.status === "failed" || active.status === "stale") {
+      setStatus(
+        active.error ||
+          (active.status === "stale"
+            ? "The version changed. Reload before asking again."
+            : "The rewrite failed."),
+      );
+      return "done" as const;
+    }
+    return "wait" as const;
+  }
+
+  async function loadRevision(hash: string): Promise<RevisionBody | null> {
+    const res = await fetch(
+      `/api/marketing/revise?draftId=${encodeURIComponent(draftId)}&inputHash=${encodeURIComponent(hash)}`,
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as RevisionBody;
+  }
+
+  function startWatch(hash: string) {
+    clearPoll();
+    const deadline = { at: 0 };
+    pollRef.current = setInterval(async () => {
+      if (!deadline.at) deadline.at = Date.now() + 3 * 60 * 1000;
+      if (Date.now() > deadline.at) {
+        clearPoll();
+        setStatus("The rewrite did not finish in time. Refresh this page. It may still finish on this PC.");
+        setBusy(false);
+        return;
+      }
+      try {
+        const body = await loadRevision(hash);
+        if (!body) return;
+        if (applyBody(body, hash, true) === "done") {
+          clearPoll();
+          setBusy(false);
+        }
+      } catch {
+        /* network hiccup — keep polling */
+      }
+    }, 2000);
+  }
+
+  useEffect(() => {
+    if (demo) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const body = await loadRevision(inputHash);
+        if (cancelled || !body) return;
+        if (applyBody(body, inputHash, false) === "wait") {
+          setBusy(true);
+          startWatch(inputHash);
+        }
+      } catch {
+        /* the page still shows the saved captions */
+      }
+    })();
+    return () => {
+      cancelled = true;
+      clearPoll();
+    };
+    // loadRevision and applyBody close over the current draft. Restart only when the version changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftId, inputHash, demo]);
+
   async function submit(requestedInstruction: string) {
     const nextInstruction = requestedInstruction.trim();
     if (demo || disabled || !nextInstruction) return;
     setBusy(true);
+    announcedRef.current = false;
     setStatus("Sending the request…");
-    setProposal(null);
     clearPoll();
 
     try {
       const response = await fetch("/api/marketing/revise", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          draftId,
-          inputHash,
-          instruction: nextInstruction,
-        }),
+        body: JSON.stringify({ draftId, inputHash, instruction: nextInstruction }),
         signal: AbortSignal.timeout(20000),
       });
       if (!response.ok) {
@@ -158,108 +267,40 @@ export function CaptionRevisionPanel({
         throw new Error(error);
       }
     } catch (error) {
-      if (
-        error instanceof DOMException &&
-        (error.name === "TimeoutError" || error.name === "AbortError")
-      ) {
+      if (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")) {
         setStatus("The request timed out. Try again.");
       } else {
-        setStatus(
-          error instanceof Error
-            ? error.message
-            : "Could not submit the revision request."
-        );
+        setStatus(error instanceof Error ? error.message : "Could not submit the revision request.");
       }
       setBusy(false);
       return;
     }
 
-    const deadlineRef = { at: 0 };
-    pollRef.current = setInterval(async () => {
-      if (!deadlineRef.at) deadlineRef.at = Date.now() + 3 * 60 * 1000;
-      if (Date.now() > deadlineRef.at) {
-        clearPoll();
-        setStatus("The rewrite did not finish in time.");
-        setBusy(false);
-        return;
-      }
-      try {
-        const res = await fetch(
-          `/api/marketing/revise?draftId=${encodeURIComponent(draftId)}&inputHash=${encodeURIComponent(inputHash)}`
-        );
-        if (!res.ok) return;
-        const body = (await res.json()) as {
-          ok?: boolean;
-          proposal?: Proposal | null;
-          turns?: unknown;
-        };
-        if (Array.isArray(body.turns)) {
-          setTurns(latestRevisionTurns(body.turns));
-        }
-        const data = body.proposal;
-        if (!data) return;
-
-        if (data.status === "queued") {
-          setStatus("Waiting to rewrite the descriptions.");
-        }
-
-        if (data.status === "ready") {
-          clearPoll();
-          if (data.inputHash !== inputHash) {
-            setStatus("The version changed. This proposal does not match.");
-            setProposal(null);
-          } else if (data.approved || data.published) {
-            setStatus(
-              "This draft is already approved or published. The proposal cannot be applied."
-            );
-            setProposal(null);
-          } else {
-            setStatus("Proposal ready");
-            setProposal(data);
-          }
-          setBusy(false);
-        } else if (data.status === "error" || data.status === "failed" || data.status === "stale") {
-          clearPoll();
-          setStatus(data.error || (data.status === "stale" ? "The version changed. Reload before asking again." : "The rewrite failed."));
-          setBusy(false);
-        }
-      } catch {
-        /* network hiccup — keep polling */
-      }
-    }, 4000);
+    setInstruction("");
+    setStatus("Writing the descriptions on this PC. The cards keep the last suggestion until this one is ready.");
+    startWatch(inputHash);
   }
 
   function applyProposal() {
-    if (
-      !proposal ||
-      disabled ||
-      demo ||
-      proposal.inputHash !== inputHash
-    ) {
-      return;
-    }
-    if (proposal.approved || proposal.published) {
-      setStatus(
-        "This draft is already approved or published. The proposal cannot be applied."
-      );
-      return;
-    }
-    onApply(proposal.social, proposal.googleBusiness);
-    setProposal(null);
-    setStatus("");
+    if (!usableReady(ready, inputHash) || disabled || demo || !ready) return;
+    dismissedRef.current = readyKey(ready);
+    onApply(ready.social, ready.googleBusiness);
+    setReady(null);
+    setStatus("Applied. Save this version before checks or approval. Nothing is posted.");
   }
 
   function keepCurrent() {
-    setProposal(null);
-    setStatus("");
+    if (ready) dismissedRef.current = readyKey(ready);
+    setReady(null);
+    setStatus("Keeping the saved descriptions.");
+    onPreview?.(null);
   }
 
   return (
     <section className="rounded-2xl border border-slate-200 p-4">
       <h3 className="font-semibold">AI assist</h3>
       <p className="mt-1 text-sm text-slate-600">
-        Edit the Facebook and Google descriptions. Apply a suggestion, then
-        save. Nothing is posted.
+        Say what the Facebook and Google descriptions should change. A suggestion shows on the cards below. Apply it, then save. Nothing is posted.
       </p>
 
       {demo ? (
@@ -273,15 +314,13 @@ export function CaptionRevisionPanel({
             <textarea
               className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm"
               maxLength={400}
-              rows={3}
+              rows={2}
               value={instruction}
               placeholder="What should the descriptions say?"
               onChange={(e) => setInstruction(e.target.value)}
               disabled={demo}
             />
-            <span className="text-xs font-normal text-slate-500">
-              {instruction.length}/400
-            </span>
+            <span className="text-xs font-normal text-slate-500">{instruction.length}/400</span>
           </label>
 
           <div className="mt-3 flex flex-wrap gap-2">
@@ -304,77 +343,45 @@ export function CaptionRevisionPanel({
             onClick={() => void submit(instruction)}
             className="mt-3 min-h-11 rounded-xl bg-teal-900 px-4 py-3 text-sm font-semibold text-white disabled:opacity-40"
           >
-            {busy ? "Working…" : "Edit descriptions"}
+            {busy ? "Writing…" : "Edit descriptions"}
           </button>
 
           {status ? (
-            <p
-              role="status"
-              aria-live="polite"
-              className="mt-3 text-sm font-medium text-slate-900"
-            >
+            <p role="status" aria-live="polite" className="mt-3 text-sm font-medium text-slate-900">
               {status}
             </p>
           ) : null}
 
-          {proposal &&
-          proposal.status === "ready" &&
-          proposal.inputHash === inputHash ? (
-            <div className="mt-4 space-y-3">
-              <div className="rounded-xl border border-slate-300 bg-slate-50 p-3">
-                <h4 className="text-sm font-semibold">
-                  Proposed Facebook / Instagram post
-                </h4>
-                <p className="mt-2 whitespace-pre-wrap text-sm">
-                  {proposal.social}
-                </p>
-              </div>
-              <div className="rounded-xl border border-slate-300 bg-slate-50 p-3">
-                <h4 className="text-sm font-semibold">
-                  Proposed Google Business update
-                </h4>
-                <p className="mt-2 whitespace-pre-wrap text-sm">
-                  {proposal.googleBusiness}
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={applyProposal}
-                  disabled={disabled || demo}
-                  className="min-h-11 rounded-xl bg-teal-900 px-4 py-3 text-sm font-semibold text-white"
-                >
-                  Apply proposal
-                </button>
-                <button
-                  type="button"
-                  onClick={keepCurrent}
-                  disabled={disabled || demo}
-                  className="min-h-11 rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-900"
-                >
-                  Keep current
-                </button>
-              </div>
+          {usableReady(ready, inputHash) ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={applyProposal}
+                disabled={disabled || demo}
+                className="min-h-11 rounded-xl bg-teal-900 px-4 py-3 text-sm font-semibold text-white"
+              >
+                Apply suggestion
+              </button>
+              <button
+                type="button"
+                onClick={keepCurrent}
+                disabled={disabled || demo}
+                className="min-h-11 rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-900"
+              >
+                Keep saved text
+              </button>
             </div>
           ) : null}
 
           {turns.length > 0 ? (
-            <div className="mt-4">
-              <h4 className="text-sm font-semibold">Earlier changes</h4>
-              <ul className="mt-2 space-y-2">
-                {turns.map((turn, index) => (
-                  <li
-                    key={`${turn.at ?? index}-${turn.status}-${turn.instruction}`}
-                    className="rounded-xl border border-slate-200 px-3 py-2"
-                  >
-                    <p className="text-sm text-slate-900">{turn.instruction}</p>
-                    <p className="mt-1 text-sm text-slate-600">
-                      {turnStatusText(turn.status)}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <ul className="mt-3 space-y-1">
+              {turns.map((turn) => (
+                <li key={`${turn.instruction}-${turn.status}`} className="text-sm text-slate-600">
+                  <span className="font-medium text-slate-900">{turnStatusText(turn)}</span>{" "}
+                  {turn.instruction}
+                </li>
+              ))}
+            </ul>
           ) : null}
         </>
       )}

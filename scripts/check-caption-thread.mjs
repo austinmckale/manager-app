@@ -67,6 +67,26 @@ test("an instruction longer than 400 characters fails", () => {
   assert.equal(thread.captionThreadSchema.safeParse(boundary).success, true);
 });
 
+test("settling a queued turn replaces that row", () => {
+  const waiting = { ...turn(1), instruction: "Talk about the grass." };
+  const older = turn(0);
+  const settled = thread.nextCaptionTurns(
+    [older, waiting],
+    { ...turn(2), instruction: "Talk about the grass.", status: "ready" },
+    true,
+  );
+  assert.equal(settled.length, 2);
+  assert.equal(settled[1].status, "ready");
+  assert.equal(settled[0].instruction, older.instruction);
+  const failed = thread.nextCaptionTurns(
+    [waiting],
+    { ...turn(3), instruction: "Talk about the grass.", status: "failed", error: "The local model did not change the caption." },
+    true,
+  );
+  assert.equal(failed.length, 1);
+  assert.equal(failed[0].error, "The local model did not change the caption.");
+});
+
 test("approved true is not a field the schema accepts", () => {
   const body = threadBody([turn(0)]);
   assert.equal(thread.captionThreadSchema.safeParse(body).success, true);

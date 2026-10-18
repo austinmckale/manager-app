@@ -140,6 +140,32 @@ export async function readCaptionRevision(
   return row ? parseRevision(row.metadata) : null;
 }
 
+/** Newest finished suggestion for this saved version, even when a later ask is still waiting. */
+export async function readLatestReadyCaptionRevision(
+  store: PrismaClient,
+  orgId: string,
+  draftId: string,
+  inputHash: string,
+): Promise<Revision | null> {
+  const rows = await store.activityLog.findMany({
+    where: {
+      orgId,
+      action: CAPTION_REVISION_ACTION,
+      AND: [
+        { metadata: { path: ["draftId"], equals: draftId } },
+        { metadata: { path: ["inputHash"], equals: inputHash } },
+      ],
+    },
+    orderBy: { createdAt: "desc" },
+    take: 8,
+  });
+  for (const row of rows) {
+    const parsed = parseRevision(row.metadata);
+    if (parsed?.status === "ready" && (parsed.social.trim() || parsed.googleBusiness.trim())) return parsed;
+  }
+  return null;
+}
+
 export async function listQueuedCaptionRevisions(
   store: PrismaClient,
   orgId: string,

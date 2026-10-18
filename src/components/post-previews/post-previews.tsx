@@ -23,16 +23,23 @@ const cards: { key: Card; label: string }[] = [
 export function PostPreviews({
   draft,
   photos,
+  suggestion = false,
 }: {
   draft: PostPreviewDraft
   photos: PreviewPhoto[]
+  suggestion?: boolean
 }) {
   const [active, setActive] = useState<Card>("facebook")
 
   return (
     <section className="space-y-4">
       <h2 className="text-lg font-semibold">How it will look</h2>
-      <PreviewStatus />
+      <p className="text-sm text-slate-600">
+        {suggestion
+          ? "These cards show the suggestion. Apply it, then save. Nothing is posted."
+          : "These cards do not post. Approve this version, then Send to Buffer."}
+      </p>
+      <PreviewStatus active={active} />
 
       <div className="flex flex-wrap gap-2">
         {cards.map(({ key, label }) => (

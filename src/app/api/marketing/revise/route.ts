@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { captionRevisionBodySchema } from "@/lib/caption-revision";
-import { queueCaptionRevision, readCaptionRevision } from "@/lib/caption-revision-store";
+import { queueCaptionRevision, readCaptionRevision, readLatestReadyCaptionRevision } from "@/lib/caption-revision-store";
 import { appendCaptionTurn, readCaptionThread } from "@/lib/caption-thread";
 import { isDashboardOwnerEmail } from "@/lib/client-portal-policy";
 import { loadContentReview } from "@/lib/content-review-store";
@@ -107,12 +107,21 @@ export async function GET(request: Request) {
       parsed.data.draftId,
       parsed.data.inputHash,
     );
+    const readyRevision = await readLatestReadyCaptionRevision(
+      prisma,
+      auth.orgId,
+      parsed.data.draftId,
+      parsed.data.inputHash,
+    );
     const proposal = revision
       ? { ...revision, approved: false as const, published: false as const }
       : null;
+    const ready = readyRevision
+      ? { ...readyRevision, approved: false as const, published: false as const }
+      : null;
     const turns = (await readCaptionThread(prisma, auth.orgId, parsed.data.draftId)) ?? [];
     return NextResponse.json(
-      { ok: true, proposal, turns },
+      { ok: true, proposal, ready, turns },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch {

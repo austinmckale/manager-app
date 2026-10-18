@@ -16,9 +16,14 @@ const SYSTEM = [
   'Return JSON only, exactly {"social": string, "googleBusiness": string}, with no other keys or commentary.',
 ].join("\n");
 
-async function appendRevisionTurn(store: PrismaClient, orgId: string, draftId: string, instruction: string, status: "ready" | "failed"): Promise<void> {
+async function appendRevisionTurn(store: PrismaClient, orgId: string, draftId: string, instruction: string, status: "ready" | "failed", error?: string): Promise<void> {
   try {
-    await appendCaptionTurn(store, orgId, null, draftId, { at: new Date().toISOString(), instruction, status });
+    await appendCaptionTurn(store, orgId, null, draftId, {
+      at: new Date().toISOString(),
+      instruction,
+      status,
+      ...(error ? { error: error.slice(0, 200) } : {}),
+    }, true);
   } catch {
     console.error("Could not append the caption turn.");
   }
@@ -69,7 +74,7 @@ export async function runCaptionRevision(prisma: PrismaClient, orgId: string): P
       : error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError") ? "The local model timed out."
       : "Caption revision failed. Check Ollama and try again.";
     await failCaptionRevision(prisma, queued.id, reason);
-    await appendRevisionTurn(prisma, orgId, queued.draftId, queued.instruction, "failed");
+    await appendRevisionTurn(prisma, orgId, queued.draftId, queued.instruction, "failed", reason);
     return { revised: false };
   }
 }
