@@ -65,13 +65,13 @@ function latestRevisionTurns(value: unknown): RevisionTurn[] {
 
 function turnStatusText(status: string) {
   if (status === "queued" || status === "pending") {
-    return "Waiting for the local worker.";
+    return "Waiting to rewrite the descriptions.";
   }
-  if (status === "running") return "The local worker is writing.";
+  if (status === "running") return "Rewriting the descriptions.";
   if (status === "ready") return "Ready";
   if (status === "failed" || status === "error") return "Failed";
   if (status === "stale") return "The version changed.";
-  if (status.toLowerCase() === "generating") return "The local worker is writing.";
+  if (status.toLowerCase() === "generating") return "Rewriting the descriptions.";
   return status;
 }
 
@@ -121,7 +121,7 @@ export function CaptionRevisionPanel({
     const nextInstruction = requestedInstruction.trim();
     if (demo || disabled || !nextInstruction) return;
     setBusy(true);
-    setStatus("Waiting for this PC…");
+    setStatus("Sending the request…");
     setProposal(null);
     clearPoll();
 
@@ -165,7 +165,7 @@ export function CaptionRevisionPanel({
     pollRef.current = setInterval(async () => {
       if (Date.now() > deadline) {
         clearPoll();
-        setStatus("The local model did not finish in time.");
+        setStatus("The rewrite did not finish in time.");
         setBusy(false);
         return;
       }
@@ -186,7 +186,7 @@ export function CaptionRevisionPanel({
         if (!data) return;
 
         if (data.status === "queued") {
-          setStatus("Waiting for the local worker.");
+          setStatus("Waiting to rewrite the descriptions.");
         }
 
         if (data.status === "ready") {
@@ -206,7 +206,7 @@ export function CaptionRevisionPanel({
           setBusy(false);
         } else if (data.status === "error" || data.status === "failed" || data.status === "stale") {
           clearPoll();
-          setStatus(data.error || (data.status === "stale" ? "The version changed. Reload before asking again." : "The local model returned an error."));
+          setStatus(data.error || (data.status === "stale" ? "The version changed. Reload before asking again." : "The rewrite failed."));
           setBusy(false);
         }
       } catch {
@@ -242,15 +242,15 @@ export function CaptionRevisionPanel({
 
   return (
     <section className="rounded-2xl border border-slate-200 p-4">
-      <h3 className="font-semibold">Ask the local model</h3>
+      <h3 className="font-semibold">AI assist</h3>
       <p className="mt-1 text-sm text-slate-600">
-        This PC writes a proposal. Nothing is saved, approved, or posted until
-        you apply it and use the existing Save and Approve buttons.
+        Edit the Facebook and Google descriptions. Apply a suggestion, then
+        save. Nothing is posted.
       </p>
 
       {demo ? (
         <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
-          Preview only. The local model is not asked.
+          Preview only. Descriptions are not rewritten here.
         </p>
       ) : (
         <>
@@ -289,7 +289,7 @@ export function CaptionRevisionPanel({
             onClick={() => void submit(instruction)}
             className="mt-3 min-h-11 rounded-xl bg-teal-900 px-4 py-3 text-sm font-semibold text-white disabled:opacity-40"
           >
-            {busy ? "Working…" : "Ask local model"}
+            {busy ? "Working…" : "Edit descriptions"}
           </button>
 
           {status ? (

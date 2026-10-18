@@ -10,8 +10,8 @@ const primary = [
   { href: "/marketing/results", label: "Results", icon: ChartColumnBig },
 ];
 const secondary = [
-  { title: "Marketing tools", links: [["/capture", "Add photos"], ["/marketing/intake", "Upload access"], ["/marketing/delivery", "AI processing"], ["/marketing/photo-prep", "Auto-enhance photos"], ["/marketing/buffer", "Buffer"], ["/marketing/connections", "Post to Facebook"], ["/marketing/performance", "Campaign scorecard"]] },
-  { title: "Business tools", links: [["/today", "Overview"], ["/leads", "Leads"], ["/jobs", "Jobs & Joist imports"], ["/reports", "Business reports"], ["/attendance", "Team"], ["/settings/targets", "Settings"]] },
+  { title: "Marketing tools", links: [["/capture", "Add photos"], ["/marketing/intake", "Upload access"], ["/marketing/delivery", "AI processing"], ["/marketing/buffer", "Buffer"]] },
+  { title: "Business tools", links: [["/today", "Overview"], ["/leads", "Leads"], ["/jobs", "Jobs & Joist imports"], ["/reports", "Business reports"], ["/settings/targets", "Settings"]] },
 ];
 export function ManagerNavigation() {
   const pathname = usePathname();
