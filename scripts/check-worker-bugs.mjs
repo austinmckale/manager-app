@@ -32,6 +32,7 @@ test('worker status never preserves arbitrary output, private URLs or error deta
   assert.throws(() => workerSummary('{}'));
   for (const error of ['TimeoutError', 'Local transcription unavailable', 'private storage', 'P1001', 'unknown']) assert.ok(!workerFailure(error + secret).includes(secret));
   assert.match(workerFailure('The operation was aborted due to timeout'), /timed out/);
+  assert.match(workerFailure("Error: Cannot find module '../src/lib/owner-notify'"), /incomplete/);
 });
 
 function recorderHarness({ denied = false, constructorFails = false } = {}) {

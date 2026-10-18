@@ -23,11 +23,22 @@ Open a saved draft's **Review & approve** page. Expand **Review in ChatGPT or Cl
 
 Paste the returned JSON or select its JSON file. **Import as unapproved edits** only changes public draft fields in the editor. Source notes, photos, destination and approval cannot be overwritten by the response. The draft ID and evidence hash must match. Save an edited version and run AI checks before approval. Manual mode uses Ollama for explicitly requested checks; it does not start automatic generation.
 
+## Local models and the fix loop
+
+Local mode uses two models. `INTAKE_OLLAMA_MODEL` (default `qwen3.5:4b`) reads notes and photos, which are many short calls. `INTAKE_OLLAMA_WRITER_MODEL` (set to `qwen3.5:9b` in the worker's `.env.marketing-ai.local`) writes, fixes and fact-checks, which are a few calls where quality matters. Caption rewrites also use the writer. If the writer model is not downloaded, the reader writes instead (`src/lib/local-models.ts`). Measured on this RTX 3070 on October 18, 2026: both run 100% on the GPU at 8K context; the 9B writes about 32 tokens/s against 81 for the 4B and uses about 7.5 of 8 GB with the desktop running. A game holding GPU memory pushes the 9B partly onto the CPU, so turn local AI off with `RHI AI` before gaming; Off unloads both.
+
+Writing is a loop (`scripts/local-write-loop.ts`). Local mode writes two versions at different temperatures and fact-checks each in a separate pass; Hybrid writes one to save paid calls. The version with fewer problems gets up to two fix rounds: the fact-check's findings go back to the writer, which must remove unsupported claims rather than reword them. A checker that skipped the exact text is asked again instead of triggering a rewrite. Only a draft that still has problems after the last round is held for the owner, with those problems listed. Passing the loop is still not owner approval.
+
+Two reading rules keep good jobs from stalling before the writer runs. A concerns or conflicts entry that only says there is nothing wrong ("None", "No visible privacy concerns") is not a hold reason (`isNonConcern` in `src/lib/marketing-evidence.ts`). The "what is missing" pass only runs, and only holds, when the notes gave no usable facts; with facts present it invented demands such as permit approval and inspection reports. Measured October 18, 2026 on the Bethlehem staircase project photo and its published description: before these rules it was held with six such reasons; after, it read in 9 seconds on the 4B and passed one write and one fact-check on the 9B in about 165 seconds.
+
 ## Running and testing locally
+
+Before pointing the scheduled task at a release folder, run `node --import tsx scripts/worker-preflight.ts` inside it. It loads every worker module, checks Ollama has the reader model and reports a missing writer, and makes one read-only database query. A release with a missing file fails there instead of failing every cycle in the background; the worker's status file now names that case too.
 
 The installer `scripts/install-marketing-worker.ps1 -WorkerRoot <release-folder>` points the scheduled task at that release. It requires installed dependencies and the private worker environment file. `scripts/marketing-worker-status.ps1 -WorkerRoot <release-folder>` shows process status. The app uses a separate database heartbeat to show when this worker version last checked in. These paths must refer to the installed release, not an unrelated development checkout.
 
 - `node --test scripts/check-marketing-evidence.mjs scripts/check-content-review.mjs scripts/check-generation-queue.mjs scripts/check-marketing.mjs scripts/check-worker-bugs.mjs`
+- `node --import tsx --test scripts/check-write-loop.mjs`
 - `npx tsc --noEmit --incremental false`
 - `npx tsx scripts/evaluate-marketing-evidence.ts <private-source.json>` performs read-only local evaluation without database writes, paid calls or notifications. Treat actual model evaluations separately from mocked regression tests.
 

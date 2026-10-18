@@ -44,6 +44,7 @@ function Stop-LocalModels {
   $ollamaExe = Get-OllamaExecutable
   if (-not $ollamaExe) { return }
   & $ollamaExe stop 'qwen3.5:4b' 2>&1 | Out-Null
+  & $ollamaExe stop 'qwen3.5:9b' 2>&1 | Out-Null
   & $ollamaExe stop 'qwen2.5vl:3b' 2>&1 | Out-Null
 }
 

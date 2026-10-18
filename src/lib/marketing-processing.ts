@@ -15,8 +15,14 @@ export async function processingSettings(db: PrismaClient, orgId: string) {
   const parsed = processingSettingsSchema.safeParse(row?.metadata);
   return parsed.success ? parsed.data : processingSettingsSchema.parse({});
 }
+// Same rule as localModels() in src/lib/local-models.ts, kept here so this file has no extra imports.
+function localModelLabel() {
+  const reader = process.env.INTAKE_OLLAMA_MODEL || "qwen3.5:4b";
+  const writer = process.env.INTAKE_OLLAMA_WRITER_MODEL || reader;
+  return reader === writer ? reader : `${reader} + ${writer}`;
+}
 export async function workerHeartbeat(db: PrismaClient, orgId: string, state: "paused" | "processing" | "idle" | "error", mode: ProcessingSettings["mode"]) {
-  const metadata = { checkedAt: new Date().toISOString(), state, mode, apiKeyReady: Boolean(process.env.OPENAI_API_KEY), model: mode === "hybrid" ? process.env.MARKETING_OPENAI_MODEL || "gpt-4.1-mini" : process.env.INTAKE_OLLAMA_MODEL || "qwen3.5:4b" };
+  const metadata = { checkedAt: new Date().toISOString(), state, mode, apiKeyReady: Boolean(process.env.OPENAI_API_KEY), model: mode === "hybrid" ? process.env.MARKETING_OPENAI_MODEL || "gpt-4.1-mini" : localModelLabel() };
   const id = processingId(orgId, "heartbeat");
   await db.activityLog.upsert({ where: { id }, create: { id, orgId, action: PROCESSING_HEARTBEAT, metadata }, update: { metadata } });
 }

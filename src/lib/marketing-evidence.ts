@@ -82,15 +82,21 @@ function cosmeticFinding(detail: string) {
   const text = detail.replace(/\s+/g, " ");
   return cosmeticPatterns.some((pattern) => pattern.test(text));
 }
+// Small models fill a concerns or conflicts list with "None" or "No visible privacy concerns".
+// Those say there is nothing wrong, so they must not hold a draft.
+const nonConcern = /^(?:none\b|n\/?a\b|nothing\b|no (?:visible |obvious |apparent |other |notable )*(?:privacy )?(?:concerns?|conflicts?|issues?|problems?)\b)/i;
+export function isNonConcern(text: string) {
+  return nonConcern.test(text.trim().replace(/^[-•*]\s*/, ""));
+}
 export function assessEvidence(input: { postType: z.infer<typeof postTypeSchema>; photos: z.infer<typeof photoEvidenceSchema>[]; notes: z.infer<typeof noteEvidenceSchema>; sources: EvidenceSources; assetIds: string[]; voicePending?: boolean }): MarketingEvidence {
   const reasons: string[] = [];
   const photos = input.photos.map((photo) => photoEvidenceSchema.parse(photo));
   if (input.voicePending) reasons.push("Wait for the voice recording to finish transcription.");
   if (new Set(photos.map((photo) => photo.assetId)).size !== input.assetIds.length || photos.length !== input.assetIds.length || input.assetIds.some((id) => !photos.some((photo) => photo.assetId === id))) reasons.push("Every selected photo must be inspected before drafting.");
   for (const photo of photos) {
-    reasons.push(...photo.concerns.map((concern) => `Photo ${photo.assetId}: ${concern}`).filter((line) => !cosmeticFinding(line)));
+    reasons.push(...photo.concerns.filter((concern) => !isNonConcern(concern)).map((concern) => `Photo ${photo.assetId}: ${concern}`).filter((line) => !cosmeticFinding(line)));
   }
-  reasons.push(...input.notes.conflicts);
+  reasons.push(...input.notes.conflicts.filter((conflict) => !isNonConcern(conflict)));
   const traced = verifiedNoteFacts(input.notes, input.sources);
   if (traced.length !== input.notes.facts.length) reasons.push("Some extracted facts could not be traced to the original notes. Check the notes and retry.");
   const facts = traced.filter((fact) => isUsableQuote(fact.quote));
@@ -104,12 +110,12 @@ export function classifyEvidence(evidence: MarketingEvidence) {
   const concerns: string[] = [];
   const unrelated: string[] = [];
   for (const photo of evidence.photos) {
-    concerns.push(...photo.concerns);
+    concerns.push(...photo.concerns.filter((concern) => !isNonConcern(concern)));
     if (photo.relevance === "construction" || photo.relevance === "company_life") visual.push(...photo.observations);
     else unrelated.push(...photo.observations);
   }
   const claimed = verifiedNoteFacts(evidence.notes, evidence.sources).filter((fact) => isUsableQuote(fact.quote)).map((fact) => fact.quote);
-  return { visual: capEvidenceLines(visual), claimed: capEvidenceLines(claimed), unsupported: capEvidenceLines([...concerns, ...evidence.notes.conflicts, ...unrelated]) };
+  return { visual: capEvidenceLines(visual), claimed: capEvidenceLines(claimed), unsupported: capEvidenceLines([...concerns, ...evidence.notes.conflicts.filter((conflict) => !isNonConcern(conflict)), ...unrelated]) };
 }
 type NoteRead = z.infer<typeof noteEvidenceSchema>;
 type PhotoRead = z.infer<typeof photoEvidenceSchema>;

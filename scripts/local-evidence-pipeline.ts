@@ -29,6 +29,10 @@ export async function inspectSubmission(input: { model: string; photos: { id: st
     photos.push(mergePhotoReads({ assetId: photo.id, ...looks[0] }, { assetId: photo.id, ...looks[1] }));
   }
   const evidence = assessEvidence({ ...input, photos, notes, assetIds: input.photos.map((photo) => photo.id) });
+  // With usable facts there is something true to write from. Asking a small model what else is
+  // "missing" then invents demands (permits, inspection reports) that hold good jobs, so only ask
+  // when the notes gave no usable facts and the owner really has to add details.
+  if (evidence.notes.facts.length > 0) return evidence;
   try {
     const compared = await readJson(request, { model: input.model, stream: false, think: false, format: z.toJSONSchema(missingSchema), options: { ...options, num_predict: 400 }, messages: [
       { role: "system", content: `${rules} Compare the two note reads and the merged photo reads. Do not add facts. Return at most 4 missing items. Each item is one short sentence under 80 characters naming what a person must add. No photo IDs and no repeated advice.` },

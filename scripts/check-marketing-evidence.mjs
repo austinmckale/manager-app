@@ -146,7 +146,8 @@ test('inspection passes raw voice and owner corrections to each photo and inspec
     const textCalls = calls.filter((call) => !call.messages[1].images);
     return response(textCalls.length <= 2 ? notes : { missing: [] });
   });
-  assert.equal(calls.length, 13);
+  // Two note reads and two looks per photo. With usable facts, the missing-details pass is skipped.
+  assert.equal(calls.length, 12);
   assert.equal(result.photos.length, 5);
   assert.equal(result.reasons.length, 0);
   for (const call of calls) assert.ok(JSON.stringify(call.messages).includes(sources.voice));
@@ -170,6 +171,22 @@ test('two reads keep every grounded quote, drop a disputed photo, and show short
     { detail: 'No usable project facts were supplied. Add job details or choose a company-personality post and explain the photo.' },
     { detail: 'No usable project facts were supplied.' },
   ]), ['The note does not match these photos.', 'Add what work was done.']);
+});
+test('"None" in a concerns list does not hold a draft, but a real concern still does', () => {
+  const base = { postType: 'project', notes, sources, assetIds: [photoId] };
+  const quiet = evidence.assessEvidence({ ...base, photos: [{ ...photo, concerns: ['None', 'No visible privacy concerns or conflicts with stated subject.'] }], notes: { ...notes, conflicts: ['None.'] } });
+  assert.deepEqual(quiet.reasons, []);
+  const real = evidence.assessEvidence({ ...base, photos: [{ ...photo, concerns: ['House number visible on the mailbox.'] }] });
+  assert.equal(real.reasons.length, 1);
+  assert.equal(evidence.isNonConcern('No railing on the upper landing.'), false);
+});
+test('missing-detail demands only hold a submission when the notes gave no usable facts', async () => {
+  const demands = { missing: ['Add proof of permit approval.'] };
+  const look = { relevance: 'construction', observations: ['Paver patio.'], concerns: [] };
+  const withFacts = await pipeline.inspectSubmission({ model: 'test', sources, postType: 'project', photos: [{ id: photoId, image: 'image' }] }, async (body) => response(body.messages[1].images ? look : body.format?.properties?.missing ? demands : notes));
+  assert.deepEqual(withFacts.reasons, []);
+  const noFacts = await pipeline.inspectSubmission({ model: 'test', sources, postType: 'project', photos: [{ id: photoId, image: 'image' }] }, async (body) => response(body.messages[1].images ? look : body.format?.properties?.missing ? demands : { facts: [], conflicts: [] }));
+  assert.ok(noFacts.reasons.includes('Add proof of permit approval.'));
 });
 test('malformed model inspection never becomes a pass', async () => {
   await assert.rejects(pipeline.inspectSubmission({ model: 'test', sources, postType: 'project', photos: [{ id: photoId, image: 'image' }] }, async () => response({ facts: 'bad' })));

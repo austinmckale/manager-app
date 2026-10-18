@@ -2,6 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { localReviewRequest } from "./local-review-request";
 import { localAiSettings } from "./local-ai-settings";
+import { installedLocalModels } from "../src/lib/local-models";
 import { loadContentReview } from "../src/lib/content-review-store";
 import { claimCaptionRevision, failCaptionRevision, listQueuedCaptionRevisions, markCaptionRevisionStale, saveCaptionProposal } from "../src/lib/caption-revision-store";
 import { appendCaptionTurn } from "../src/lib/caption-thread";
@@ -43,7 +44,8 @@ export async function runCaptionRevision(prisma: PrismaClient, orgId: string): P
     const current = { social: context.draft.social, googleBusiness: context.draft.googleBusiness };
     const rawVoiceFull = context.audio.map((item) => item.transcript).filter(Boolean).join("\n\n");
     const rawVoice = rawVoiceFull.slice(0, 12000);
-    const model = process.env.INTAKE_OLLAMA_MODEL || "qwen3.5:4b";
+    // Rewriting is writing, so it uses the writer model when one is downloaded.
+    const model = (await installedLocalModels()).writer;
     if (model.includes("cloud") || model.includes("/")) throw new Error("Local model required");
     const settings = localAiSettings();
     // Revision uses the stored transcript and current captions. It does not transcribe or re-inspect photos.
