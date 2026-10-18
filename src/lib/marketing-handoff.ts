@@ -10,13 +10,16 @@ export function handoffCopy(draft: MarketingDraft) {
 export function handoffPublishability(draft: MarketingDraft, originalNotes = "", photoDescriptions: readonly string[] = []) {
   return draftPublishability(draft, { receiptNotes: originalNotes ? [originalNotes] : [], photos: photoDescriptions.map((description) => ({ description })) });
 }
+export function handoffReviewable(result: { blocked: boolean; reasons: string[] }) {
+  return !result.blocked || (result.reasons.length > 0 && result.reasons.every((reason) => reason === "test submission"));
+}
 export function importChatReview(raw: string, draftId: string, inputHash: string, current: MarketingDraft, sources?: { originalNotes?: string; photoDescriptions?: readonly string[] }) {
   const text = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   const value = handoffReturnSchema.parse(JSON.parse(text));
   if (value.draftId !== draftId || value.inputHash !== inputHash) throw new Error("This result belongs to a different draft or evidence version. Export this version again.");
   const merged = { ...current, ...value.copy };
   const publishability = draftPublishability(merged, { receiptNotes: sources?.originalNotes ? [sources.originalNotes] : [], photos: (sources?.photoDescriptions ?? []).map((description) => ({ description })) });
-  if (publishability.blocked) throw new Error(publishability.reasons.join(", "));
+  if (!handoffReviewable(publishability)) throw new Error(publishability.reasons.join(", "));
   const original = JSON.parse(text) as { copy: Record<string, unknown> };
   for (const key of Object.keys(handoffCopySchema.shape)) if (!Object.hasOwn(original.copy, key)) throw new Error(`The returned copy is missing ${key}. Ask the chat to return the full JSON.`);
   // Only public copy is merged. Sources, photos, destination, review and approval
@@ -26,7 +29,7 @@ export function importChatReview(raw: string, draftId: string, inputHash: string
 export function chatBundlePrompt(draftId: string, inputHash: string, draft: MarketingDraft, originals: { submittedNotes?: string; photos?: { description?: string }[]; voice?: { transcript?: string }[] }) {
   const rawNotes = [originals.submittedNotes, ...(originals.voice ?? []).map((item) => item.transcript)].filter(Boolean).join("\n\n");
   const publishability = handoffPublishability(draft, rawNotes, (originals.photos ?? []).map((photo) => photo.description ?? ""));
-  if (publishability.blocked) return null;
+  if (!handoffReviewable(publishability)) return null;
   return chatReviewPrompt(draftId, inputHash, draft, originals);
 }
 export function chatReviewPrompt(draftId: string, inputHash: string, draft: MarketingDraft, originals: unknown) {

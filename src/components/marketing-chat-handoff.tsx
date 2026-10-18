@@ -1,13 +1,15 @@
 "use client";
 import { useState } from "react";
-import { chatBundlePrompt, handoffPublishability, importChatReview } from "@/lib/marketing-handoff";
+import { chatBundlePrompt, handoffPublishability, handoffReviewable, importChatReview } from "@/lib/marketing-handoff";
 import type { MarketingDraft } from "@/lib/marketing";
 
 export function MarketingChatHandoff({ draftId, inputHash, draft, originalNotes, photos, audio, onImport, disabled }: { draftId: string; inputHash: string; draft: MarketingDraft; originalNotes?: string; photos: { id: string; fileName: string; url: string; description: string }[]; audio: { id: string; transcript: string; status: string }[]; onImport: (draft: MarketingDraft) => void; disabled: boolean }) {
   const [raw, setRaw] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const gate = handoffPublishability(draft, originalNotes || "", photos.map((photo) => photo.description));
+  const evidence = [originalNotes || "", ...audio.map((item) => item.transcript)].filter(Boolean).join("\n\n");
+  const gate = handoffPublishability(draft, evidence, photos.map((photo) => photo.description));
+  const reviewable = handoffReviewable(gate);
   const blockedReason = gate.reasons.join(", ");
   async function download() {
     setBusy(true); setMessage("");
@@ -31,14 +33,15 @@ export function MarketingChatHandoff({ draftId, inputHash, draft, originalNotes,
     } catch (error) { setMessage(error instanceof Error ? error.message : "Could not export the review bundle."); }
     finally { setBusy(false); }
   }
-  return <details className="rounded-2xl border bg-slate-50 p-4"><summary className="cursor-pointer font-semibold">Review in ChatGPT or Claude instead</summary>
-    {gate.blocked ? <p role="status" className="mt-3 text-sm">{blockedReason}</p> : <>
+  return <details className="rounded-2xl border bg-slate-50 p-4"><summary className="cursor-pointer font-semibold">Ask ChatGPT or Claude instead</summary>
+    {reviewable ? <>
+    {gate.blocked ? <p className="mt-3 text-sm">This draft is held from posting. Asking ChatGPT or Claude does not approve or post.</p> : null}
     <p className="mt-3 text-sm">1. Download the bundle. 2. Unzip and attach its photos and prompt to your chat. 3. Paste the returned JSON below. The bundle includes private notes and transcripts for your chosen chat service.</p>
     <button disabled={disabled || busy || !photos.length} onClick={() => void download()} className="mt-3 rounded-xl border bg-white px-4 py-3 disabled:opacity-40">Download ChatGPT / Claude review bundle</button>
     <label className="mt-4 block text-sm font-medium">Paste the returned JSON<textarea value={raw} maxLength={100000} rows={6} onChange={(event) => setRaw(event.target.value)} className="mt-2 w-full rounded-xl border p-3 font-mono text-xs" /></label>
     <label className="mt-2 block text-sm">Or choose the returned JSON file<input type="file" accept=".json,.txt,application/json,text/plain" className="mt-2 block w-full" onChange={async (event) => { const file = event.target.files?.[0]; if (!file) return; if (file.size > 100000) { setMessage("Choose a JSON response under 100 KB."); return; } setRaw(await file.text()); }} /></label>
-    <button disabled={disabled || busy || !raw.trim()} onClick={() => { try { onImport(importChatReview(raw, draftId, inputHash, draft, { originalNotes, photoDescriptions: photos.map((photo) => photo.description) })); setMessage("Imported into the editor. Review changes, save a new version and run checks before approval."); } catch (error) { setMessage(error instanceof Error && !error.message.startsWith("[") ? error.message : "The response does not match the required JSON format. Ask your chat to follow the exported prompt."); } }} className="mt-3 rounded-xl bg-teal-700 px-4 py-3 text-white disabled:opacity-40">Import as unapproved edits</button>
+    <button disabled={disabled || busy || !raw.trim()} onClick={() => { try { onImport(importChatReview(raw, draftId, inputHash, draft, { originalNotes: evidence, photoDescriptions: photos.map((photo) => photo.description) })); setMessage("Imported into the editor. Review changes, save a new version and run checks before approval."); } catch (error) { setMessage(error instanceof Error && !error.message.startsWith("[") ? error.message : "The response does not match the required JSON format. Ask your chat to follow the exported prompt."); } }} className="mt-3 rounded-xl bg-teal-700 px-4 py-3 text-white disabled:opacity-40">Import as unapproved edits</button>
     <p role="status" className="mt-3 text-sm">{message}</p>
-    </>}
+    </> : <p role="status" className="mt-3 text-sm">This stays in the app. The notes say not to publish it.</p>}
   </details>;
 }

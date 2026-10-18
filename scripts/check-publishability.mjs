@@ -152,6 +152,12 @@ test("exact sample cannot be imported, while identity and version checks still f
     });
   }
   assert.equal(handoff.chatBundlePrompt(draftId, hash, blockedDraft, { submittedNotes: sample, photos: [{ description: sample }] }), null);
+  const micDraft = { ...draft, sourceNotes: "testing testing okay so I'm recording a voice memo" };
+  const micPrompt = handoff.chatBundlePrompt(draftId, hash, micDraft, { voice: [{ transcript: micDraft.sourceNotes }] });
+  assert.match(micPrompt, /RETURN JSON/);
+  const importedMic = handoff.importChatReview(JSON.stringify({ ...returned, copy: { ...returned.copy, social: "A shorter description." } }), draftId, hash, micDraft);
+  assert.equal(importedMic.social, "A shorter description.");
+  assert.equal(Object.hasOwn(importedMic, "approved"), false);
 });
 
 test("importing a normal project does not add an approved flag", () => {
@@ -236,10 +242,14 @@ test("blocked chat handoff shows the reason and does not offer an import", () =>
   const { renderToStaticMarkup } = require("react-dom/server");
   const ui = load("src/components/marketing-chat-handoff.tsx", { react: React, "react/jsx-runtime": require("react/jsx-runtime"), "@/lib/marketing-handoff": handoff });
   const blockedHtml = renderToStaticMarkup(React.createElement(ui.MarketingChatHandoff, { draftId, inputHash: hash, draft: blockedDraft, originalNotes: sample, photos: [{ id: photoId, fileName: "patio.jpg", url: "https://example.test/patio.jpg", description: sample }], audio: [], onImport: () => { throw new Error("import offered"); }, disabled: false }));
-  assert.match(blockedHtml, new RegExp(reason));
+  assert.match(blockedHtml, /The notes say not to publish it/);
+  assert.equal(blockedHtml.includes(reason), false);
   assert.equal(blockedHtml.includes("RETURN JSON"), false);
   assert.equal(blockedHtml.includes("Import as unapproved edits"), false);
   assert.equal(blockedHtml.includes("Imported into the editor"), false);
+  const micHtml = renderToStaticMarkup(React.createElement(ui.MarketingChatHandoff, { draftId, inputHash: hash, draft: { ...draft, sourceNotes: "testing testing" }, originalNotes: "", photos: [{ id: photoId, fileName: "patio.jpg", url: "https://example.test/patio.jpg", description: "" }], audio: [{ id: "audio", transcript: "testing testing", status: "ready" }], onImport() {}, disabled: false }));
+  assert.match(micHtml, /held from posting/);
+  assert.match(micHtml, /Import as unapproved edits/);
   const openHtml = renderToStaticMarkup(React.createElement(ui.MarketingChatHandoff, { draftId, inputHash: hash, draft, originalNotes: "Paver patio and pavilion in Reading.", photos: [{ id: photoId, fileName: "patio.jpg", url: "https://example.test/patio.jpg", description: "Paver patio." }], audio: [], onImport() {}, disabled: false }));
   assert.match(openHtml, /Import as unapproved edits/);
   assert.equal(openHtml.includes(reason), false);
