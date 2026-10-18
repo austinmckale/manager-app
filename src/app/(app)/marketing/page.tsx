@@ -238,7 +238,10 @@ async function readSetup(orgId: string) {
     const storedHeartbeat = heartbeat && typeof heartbeat.checkedAt === "string" && typeof heartbeat.state === "string" ? { checkedAt: heartbeat.checkedAt, state: heartbeat.state } : null;
     const channels = channelRow?.metadata && typeof channelRow.metadata === "object" && Array.isArray((channelRow.metadata as { channels?: unknown }).channels) ? (channelRow.metadata as { channels: unknown[] }).channels.length : 0;
     const automatic = settings.enabled && settings.mode !== "manual" ? "Automatic processing is on" : "Automatic processing is off";
-    const ai = storedHeartbeat ? `${automatic}. Worker ${storedHeartbeat.state}, last seen ${new Date(storedHeartbeat.checkedAt).toLocaleString("en-US", { timeZone: "America/New_York" })} Eastern.` : `${automatic}. No worker check-in is stored.`;
+    const checkedAt = storedHeartbeat ? Date.parse(storedHeartbeat.checkedAt) : Number.NaN;
+    const fresh = Number.isFinite(checkedAt) && Date.now() - checkedAt <= 5 * 60 * 1000;
+    const stale = storedHeartbeat && !fresh ? " Last check-in was over 5 minutes ago. Local AI may be off or this PC may be asleep. This is the last stored check-in, not live GPU use." : "";
+    const ai = storedHeartbeat ? `${automatic}. Worker ${storedHeartbeat.state}, last seen ${new Date(storedHeartbeat.checkedAt).toLocaleString("en-US", { timeZone: "America/New_York" })} Eastern.${stale}` : `${automatic}. No worker check-in is stored. Local AI may be off.`;
     const keySet = Boolean(process.env.BUFFER_API_KEY);
     const buffer = !keySet && channels === 0 ? "Buffer is not configured." : !keySet ? `Buffer API key is not set. ${channels} saved ${channels === 1 ? "channel" : "channels"}.` : channels === 0 ? "Buffer key is set, and no channel is saved." : `Buffer key is set. ${channels} saved ${channels === 1 ? "channel" : "channels"}.`;
     return { ai, buffer, heartbeat: storedHeartbeat };

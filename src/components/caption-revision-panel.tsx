@@ -38,6 +38,7 @@ type RevisionBody = {
 };
 
 const QUICK_REVISIONS = [
+  { label: "Rewrite the post", instruction: "Rewrite the Facebook and Google Business captions so they are short and ready to post. Keep every fact already in the text and the voice note. Do not add materials, a town, completion, praise, or a claim that RHI Pros built the work. Do not paste the recording." },
   { label: "Shorter", instruction: "Make the public captions shorter. Keep every fact." },
   { label: "More direct", instruction: "Make the tone plain and direct. Keep every fact." },
   { label: "Another option", instruction: "Write another short option with the same facts." },

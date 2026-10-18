@@ -8,6 +8,7 @@ import { reportingWeek } from "@/lib/marketing-reporting/week";
 import { RetryDeliveryButton } from "@/components/publishing/retry-delivery-button";
 import { prisma } from "@/lib/prisma";
 import { isMissingRelation } from "@/lib/publishing/http";
+import { bufferDeliveries } from "@/lib/publishing/buffer-store";
 
 function MetricBlock({ metric }: { metric: ReportMetric }) {
   const display = metricDisplay(metric);
@@ -49,6 +50,7 @@ export default async function MarketingResultsPage() {
       }), null] as const
     : await Promise.all([loadWeeklyReport(auth.orgId, now), savedReportTime(auth.orgId, week.start)]);
   const weekly = await weeklyPromise;
+  const bufferRows = demo ? [] : await bufferDeliveries(auth.orgId).catch(() => []);
 
   return (
     <div className="space-y-5">
@@ -84,6 +86,8 @@ export default async function MarketingResultsPage() {
           </ul>
         ) : <p className="mt-2 text-sm text-slate-600">No live posts were recorded in this period.</p>}
         {report.mockDeliveries.length ? <p className="mt-3 text-sm text-slate-600">{report.mockDeliveries.length} mock {report.mockDeliveries.length === 1 ? "delivery was" : "deliveries were"} saved locally and not sent.</p> : null}
+        <h3 className="mt-4 font-semibold">Buffer</h3>
+        {bufferRows.length ? <ul className="mt-2 space-y-2 text-sm">{bufferRows.slice(0, 12).map((row) => <li key={row.id}>{row.channelName || row.service} · {row.status}{row.postId ? ` · ${row.postId}` : ""}</li>)}</ul> : <p className="mt-2 text-sm text-slate-600">No Buffer drafts or posts are stored yet. A private Buffer draft is not a published post.</p>}
       </section>
       <section className="rounded-2xl border border-slate-200 p-4">
         <h3 className="font-semibold">Failed deliveries</h3>

@@ -34,6 +34,19 @@ export function contentReviewId(draftId: string, hash: string) {
   const hex = contentHash(["rhi-content-review-v2", draftId, hash]);
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
+export function needsResolutionNote(findings: readonly { severity: string; detail: string }[]) {
+  return findings.some((finding) => finding.severity === "warning" && !cosmeticFinding(finding.detail));
+}
+export function allowedPhotoSelection(next: readonly string[], current: readonly string[]) {
+  if (next.length < 1 || next.length > current.length) return false;
+  const allowed = new Set(current);
+  const seen = new Set<string>();
+  for (const id of next) {
+    if (!allowed.has(id) || seen.has(id)) return false;
+    seen.add(id);
+  }
+  return true;
+}
 export function canApproveContent(hash: string, review: ContentReview | null, superseded: boolean, voicePending: boolean) {
   return !superseded && !voicePending && review?.inputHash === hash && review.status === "completed" && review.policyVersion === REVIEW_POLICY_VERSION && !!review.evidence && !review.evidence.reasons.some((reason) => !cosmeticFinding(reason)) && !!review.result && !review.result.findings.some((finding) => finding.severity === "blocker" && !cosmeticFinding(finding.detail));
 }

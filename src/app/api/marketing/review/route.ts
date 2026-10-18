@@ -6,7 +6,7 @@ import { isDemoMode } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
 import { DRAFT_SAVED_ACTION, marketingDraftSchema } from "@/lib/marketing";
 import { loadContentReview } from "@/lib/content-review-store";
-import { REVIEW_APPROVAL, REVIEW_REQUEST, REVIEW_SUPERSEDED, canApproveContent, copyChecks } from "@/lib/content-review";
+import { REVIEW_APPROVAL, REVIEW_REQUEST, REVIEW_SUPERSEDED, allowedPhotoSelection, canApproveContent, copyChecks, needsResolutionNote } from "@/lib/content-review";
 import { PROCESSING_SETTINGS, processingId, processingSettingsSchema } from "@/lib/marketing-processing";
 import { draftPublishability } from "@/lib/publishability";
 
@@ -33,7 +33,7 @@ export async function POST(request: Request) {
       if (publishability.blocked || incoming.blocked) throw new Error(`This submission cannot be saved, checked, approved, queued, or posted. ${(publishability.blocked ? publishability : incoming).reasons.join(", ")}.`);
       const base = { orgId: auth.orgId, actorId: auth.userId, jobId: context.jobId };
       if (body.action === "save") {
-        if (JSON.stringify(body.draft.assetIds) !== JSON.stringify(context.draft.assetIds)) throw new Error("Photo selection cannot change in this editor.");
+        if (!allowedPhotoSelection(body.draft.assetIds, context.draft.assetIds)) throw new Error("Photo selection cannot add photos that are not already on this version.");
         const version = await tx.activityLog.create({ data: { ...base, action: DRAFT_SAVED_ACTION, metadata: { ...body.draft, photoNotes: context.draft.photoNotes, parentDraftId: context.draftId } } });
         await tx.activityLog.create({ data: { ...base, action: REVIEW_SUPERSEDED, metadata: { draftId: context.draftId, replacementDraftId: version.id } } });
         return { draftId: version.id };
@@ -52,7 +52,7 @@ export async function POST(request: Request) {
         return { queued: true };
       }
       if (!canApproveContent(context.inputHash, context.review, context.superseded, context.voicePending) || copyChecks(context.draft).some((finding) => finding.severity === "blocker")) throw new Error("A completed review with no blocking findings is required.");
-      if (context.review?.result?.findings.some((finding) => finding.severity === "warning") && body.resolution.length < 10) throw new Error("Explain how you checked the warnings before approving.");
+      if (needsResolutionNote(context.review?.result?.findings ?? []) && body.resolution.length < 10) throw new Error("Explain how you checked the warnings before approving.");
       if (!context.approvedAt) await tx.activityLog.create({ data: { ...base, action: REVIEW_APPROVAL, metadata: { draftId: context.draftId, inputHash: context.inputHash, reviewId: context.reviewId, factsChecked: true, photosCleared: true, resolution: body.resolution } } });
       return { approved: true };
     }, { isolationLevel: "Serializable", timeout: 20000 });

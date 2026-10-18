@@ -2,8 +2,8 @@ import type { MarketingDraft } from "@/lib/marketing";
 
 const danglingEnding = /\b(?:in|and|or|with|the|a|to|for|of)$/i;
 const curbEnding = /\bhome['’]s curb$/i;
-const headlineFallbacks = ["RHI Pros", "Your next project", "Request an estimate", "Local home projects", "Ask about a project"];
-const descriptionFallbacks = ["Request an estimate.", "See recent projects.", "Ask about your project.", "Contact RHI Pros."];
+const headlineFallbacks = ["RHI Pros", "Project photos", "Recent work", "Home projects", "See the photos"];
+const descriptionFallbacks = ["See the photos.", "Recent project photos.", "Photos from the job.", "RHI Pros."];
 
 function oneSpace(value: string) {
   return value.replace(/[ \t]{2,}/g, " ").replace(/[-–—]+$/g, "").trim();
@@ -63,7 +63,7 @@ export function repairCheckedCopy(draft: MarketingDraft): MarketingDraft {
     metaPrimary: oneSpace(draft.metaPrimary),
     publicLocation: oneSpace(draft.publicLocation),
     service: oneSpace(draft.service),
-    metaHeadline: fit(draft.metaHeadline, 40, "Tell us about your project"),
+    metaHeadline: fit(draft.metaHeadline, 40, "Project photos"),
     imageHeadline: fit(draft.imageHeadline, 60, "Project photos"),
     googleHeadlines: uniqueLines(draft.googleHeadlines, 30, headlineFallbacks, 3),
     googleDescriptions: uniqueLines(draft.googleDescriptions, 90, descriptionFallbacks, 2),

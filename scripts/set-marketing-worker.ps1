@@ -90,13 +90,17 @@ function Get-ActionDetailText {
 }
 
 function Test-PassStillRunning {
-  if (-not (Test-Path -LiteralPath $StatusPath)) { return $false }
-  try {
-    $report = Get-Content -LiteralPath $StatusPath -Raw -ErrorAction Stop | ConvertFrom-Json
-    return [string]$report.state -eq 'processing'
-  } catch {
-    return $false
+  $hybridStatus = Join-Path (Split-Path -Parent $RepoRoot) 'manager-app-marketing-hybrid-20261017\.vercel\marketing-worker-service\status.json'
+  foreach ($path in @($StatusPath, $hybridStatus)) {
+    if (-not (Test-Path -LiteralPath $path)) { continue }
+    try {
+      $report = Get-Content -LiteralPath $path -Raw -ErrorAction Stop | ConvertFrom-Json
+      if ([string]$report.state -eq 'processing') { return $true }
+    } catch {
+      continue
+    }
   }
+  return $false
 }
 
 function Set-WorkerOff {

@@ -32,6 +32,15 @@ test('review identity changes with edited text, selected photos or original evid
   assert.equal(id, review.contentReviewId(draftId, hash));
   for (const changed of [{ draft: { ...draft, social: 'Edited' }, originals: 'raw notes' }, { draft: { ...draft, assetIds: [nextId] }, originals: 'raw notes' }, { draft, originals: 'corrected transcript' }]) assert.notEqual(review.contentReviewId(draftId, review.contentHash(changed)), id);
 });
+test('photo order can drop or reorder photos already on the version', () => {
+  assert.equal(review.allowedPhotoSelection([photoId], [photoId, nextId]), true);
+  assert.equal(review.allowedPhotoSelection([nextId, photoId], [photoId, nextId]), true);
+  assert.equal(review.allowedPhotoSelection([], [photoId]), false);
+  assert.equal(review.allowedPhotoSelection([photoId, photoId], [photoId]), false);
+  assert.equal(review.allowedPhotoSelection(['40000000-0000-4000-8000-000000000001'], [photoId]), false);
+  assert.equal(review.needsResolutionNote([{ severity: 'warning', detail: 'Unsupported warranty.' }]), true);
+  assert.equal(review.needsResolutionNote([{ severity: 'warning', detail: 'The image is an existing photo used for verification purposes.' }]), false);
+});
 test('approval requires completed current review without blockers, pending speech or supersession', () => {
   assert.equal(review.canApproveContent(hash, completed, false, false), true);
   assert.equal(review.canApproveContent(hash, { ...completed, policyVersion: 2 }, false, false), false);
@@ -144,6 +153,11 @@ test('stale, missing, superseded, pending and blocked drafts never produce appro
   for (const options of [{ missing: true }, { context: { superseded: true } }, { context: { voicePending: true } }, { context: { review: null } }, { context: { inputHash: 'x'.repeat(64) } }, { context: { review: { ...completed, result: { ...completed.result, findings: [blocker] } } } }]) {
     const h = harness(options); assert.equal((await h.request(approval)).status, 409); assert.equal(h.writes.length, 0);
   }
+});
+test('a photo cosmetic warning does not require a resolution note', async () => {
+  const warning = { ...blocker, category: 'images', severity: 'warning', detail: 'The image is an existing photo used for verification purposes.' };
+  const h = harness({ context: { review: { ...completed, result: { ...completed.result, findings: [warning] } } } });
+  assert.equal((await h.request(approval)).status, 200);
 });
 test('owner confirmation and warning resolution are mandatory; exact approval is idempotent', async () => {
   assert.equal((await harness().request({ ...approval, factsChecked: false })).status, 400);

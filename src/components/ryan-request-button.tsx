@@ -17,38 +17,38 @@ export function RyanRequestButton({ uploadPath, demo }: { uploadPath: string; de
   async function copyRequest() {
     const text = ryanRequestText(uploadPath);
     try {
+      if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
       await navigator.clipboard.writeText(text);
-      setStatus("Copied. Paste it into your own text. This app did not send it.");
+      setStatus("Copied. Paste it into a text to Ryan. This app did not send it.");
     } catch {
-      setStatus("Could not copy automatically. Select the message above and copy it. This app did not send it.");
+      setStatus("Could not copy. Select the note above and copy it. This app did not send it.");
     }
   }
 
   async function shareRequest() {
-    const text = ryanRequestText(uploadPath);
-    if (!navigator.share) {
-      await copyRequest();
+    const share = navigator.share?.bind(navigator);
+    if (!share) {
+      setStatus("The share sheet is not on this computer. Select the note above and copy it. This app did not send it.");
       return;
     }
     try {
-      await navigator.share({ text });
-      setStatus("Share sheet opened. The app did not send the message.");
+      await share({ text: ryanRequestText(uploadPath) });
+      setStatus("Share sheet opened. This app did not send it.");
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") return;
-      setStatus("Request not shared. You can copy it instead.");
+      setStatus("The share sheet did not open. Select the note above and copy it. This app did not send it.");
     }
   }
 
   if (demo) return null;
   const preview = ryanRequestText(uploadPath);
-  return <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+  return <div className="mt-3 rounded-xl border border-dashed border-slate-400 bg-slate-100 p-3">
     <p className="text-sm font-semibold text-slate-900">Ask Ryan for recent job photos</p>
     <p className="mt-1 text-sm text-slate-700">You send this yourself. Nothing is texted or emailed from here.</p>
-    <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-900">{preview}</div>
-    <div className="mt-3 flex flex-wrap items-center gap-3">
-      <button type="button" className="inline-flex min-h-11 items-center justify-center rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white" onClick={() => void copyRequest()}>Copy message for Ryan</button>
-      {canShare ? <button type="button" className="inline-flex min-h-11 items-center text-sm font-semibold text-slate-700 underline underline-offset-2" onClick={() => void shareRequest()}>Share from this phone</button> : null}
-    </div>
-    {status ? <p role="status" className="mt-2 text-sm font-medium text-teal-950">{status}</p> : null}
+    <p id="ryan-note-label" className="mt-3 text-sm font-semibold text-slate-900">Note to paste into your own text</p>
+    <div aria-labelledby="ryan-note-label" className="mt-1 select-text whitespace-pre-wrap break-words rounded-lg border border-slate-300 bg-white p-3 text-sm leading-6 text-slate-900">{preview}</div>
+    <button type="button" className="mt-3 inline-flex min-h-11 items-center justify-center rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white" onClick={() => void copyRequest()}>Copy this note to text Ryan</button>
+    {canShare ? <button type="button" className="mt-2 block bg-transparent p-0 text-left text-sm text-slate-600 underline decoration-slate-400 underline-offset-2" onClick={() => void shareRequest()}>Open share sheet</button> : null}
+    {status ? <p role="status" className="mt-2 text-sm font-medium text-slate-900">{status}</p> : null}
   </div>;
 }
