@@ -97,7 +97,7 @@ export function FacebookPreview({ caption, photos }: FacebookPreviewProps) {
         </div>
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-slate-900">RHI Pros</p>
-          <p className="text-xs text-slate-500">Just now · Preview</p>
+          <p className="text-xs text-slate-500">Preview</p>
         </div>
       </header>
 
@@ -115,22 +115,6 @@ export function FacebookPreview({ caption, photos }: FacebookPreviewProps) {
         </div>
       ) : null}
 
-      <div className="flex border-b border-slate-100 px-2 py-1" aria-hidden>
-        {(["Like", "Comment", "Share"] as const).map((label) => (
-          <button
-            key={label}
-            type="button"
-            disabled
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-sm font-medium text-slate-500 disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      <p className="px-4 py-3 text-xs leading-relaxed text-slate-500">
-        Preview only. After approval, Send to Buffer sends this card to Facebook.
-      </p>
     </article>
   );
 }

@@ -64,17 +64,6 @@ function collapsedTurns(value: unknown): RevisionTurn[] {
   return [...latest.values()].reverse().slice(0, 4);
 }
 
-function turnStatusText(turn: RevisionTurn) {
-  if (turn.status === "failed" || turn.status === "error") {
-    return turn.error || "The rewrite failed.";
-  }
-  if (turn.status === "queued" || turn.status === "pending") return "Writing on this PC.";
-  if (turn.status === "running" || turn.status.toLowerCase() === "generating") return "Rewriting now.";
-  if (turn.status === "ready") return "";
-  if (turn.status === "stale") return "The version changed.";
-  return turn.status;
-}
-
 function readyKey(proposal: Proposal) {
   return `${proposal.instruction ?? ""}:${proposal.social}:${proposal.googleBusiness}`;
 }
@@ -101,7 +90,7 @@ export function CaptionRevisionPanel({
   const [instruction, setInstruction] = useState("");
   const [status, setStatus] = useState("");
   const [ready, setReady] = useState<Proposal | null>(null);
-  const [turns, setTurns] = useState<RevisionTurn[]>([]);
+  const [, setTurns] = useState<RevisionTurn[]>([]);
   const [busy, setBusy] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const announcedRef = useRef(false);
@@ -155,7 +144,7 @@ export function CaptionRevisionPanel({
     const active = body.proposal;
     if (!active) return "idle" as const;
     if (active.status === "queued") {
-      setStatus("Writing the descriptions on this PC. The cards keep the last suggestion until this one is ready.");
+      setStatus("Writing the descriptions on this PC.");
       return "wait" as const;
     }
     if (active.status === "running") {
@@ -172,7 +161,7 @@ export function CaptionRevisionPanel({
         return "done" as const;
       }
       rememberReady(active);
-      setStatus("The suggestion is on the cards. Apply it, then save. Nothing is posted.");
+      setStatus("");
       if (announce) notifyReady();
       return "done" as const;
     }
@@ -299,9 +288,6 @@ export function CaptionRevisionPanel({
   return (
     <section className="rounded-2xl border border-slate-200 p-4">
       <h3 className="font-semibold">AI assist</h3>
-      <p className="mt-1 text-sm text-slate-600">
-        Say what the Facebook and Google descriptions should change. A suggestion shows on the cards below. Apply it, then save. Nothing is posted.
-      </p>
 
       {demo ? (
         <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
@@ -316,7 +302,6 @@ export function CaptionRevisionPanel({
               maxLength={400}
               rows={2}
               value={instruction}
-              placeholder="What should the descriptions say?"
               onChange={(e) => setInstruction(e.target.value)}
               disabled={demo}
             />
@@ -373,16 +358,6 @@ export function CaptionRevisionPanel({
             </div>
           ) : null}
 
-          {turns.some((turn) => turn.status !== "ready") ? (
-            <ul className="mt-3 space-y-1">
-              {turns.filter((turn) => turn.status !== "ready").map((turn) => (
-                <li key={`${turn.instruction}-${turn.status}`} className="text-sm text-slate-600">
-                  <span className="font-medium text-slate-900">{turnStatusText(turn)}</span>{" "}
-                  {turn.instruction}
-                </li>
-              ))}
-            </ul>
-          ) : null}
         </>
       )}
     </section>
