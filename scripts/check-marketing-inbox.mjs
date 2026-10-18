@@ -73,6 +73,12 @@ test("a saved draft is review work until an approval exists, and a superseded ap
   const approved = inbox.buildInboxCards([photo({ onWebsite: false })], [saved, { id: "approval", action: "marketing.content.approved", createdAt: "2026-10-17T18:00:00.000Z", metadata: { draftId } }]);
   assert.equal(approved[0].status, "ready_to_schedule");
   assert.match(approved[0].detail, /not a scheduled or published post/);
+  const queued = inbox.buildInboxCards([photo({})], [saved, { id: "approval", action: "marketing.content.approved", createdAt: "2026-10-17T18:00:00.000Z", metadata: { draftId } }, { id: "buffer", action: "marketing.buffer.delivery", createdAt: "2026-10-17T18:30:00.000Z", metadata: { draftId, status: "queued", dueAt: "2026-10-18T14:00:00.000Z", sentAt: "" } }]);
+  assert.equal(queued[0].status, "scheduled");
+  assert.match(queued[0].detail, /2026-10-18T14:00:00.000Z/);
+  const posted = inbox.buildInboxCards([photo({})], [saved, { id: "approval", action: "marketing.content.approved", createdAt: "2026-10-17T18:00:00.000Z", metadata: { draftId } }, { id: "buffer", action: "marketing.buffer.delivery", createdAt: "2026-10-17T18:30:00.000Z", metadata: { draftId, status: "published", dueAt: "", sentAt: "2026-10-18T14:05:00.000Z" } }]);
+  assert.equal(posted[0].status, "posted");
+  assert.match(posted[0].detail, /2026-10-18T14:05:00.000Z/);
   const replaced = inbox.buildInboxCards([photo({})], [saved, { id: "approval", action: "marketing.content.approved", createdAt: "2026-10-17T18:00:00.000Z", metadata: { draftId } }, { id: "old", action: "marketing.content.superseded", createdAt: "2026-10-17T19:00:00.000Z", metadata: { draftId } }]);
   assert.equal(replaced[0].status, "needs_review");
 });

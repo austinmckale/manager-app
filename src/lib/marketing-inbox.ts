@@ -10,8 +10,9 @@ const DRAFT_SAVED = "marketing.draft.saved";
 const APPROVED = "marketing.content.approved";
 const SUPERSEDED = "marketing.content.superseded";
 const INTAKE_PACK = "marketing.intake.pack.ready";
+const BUFFER_DELIVERY = "marketing.buffer.delivery";
 
-export const inboxStatusOrder = ["needs_details", "needs_review", "ready_to_schedule", "processing", "received"] as const;
+export const inboxStatusOrder = ["needs_details", "needs_review", "ready_to_schedule", "processing", "received", "scheduled", "posted"] as const;
 export type InboxStatus = (typeof inboxStatusOrder)[number];
 export type InboxAction = "review" | "notes" | "open";
 
@@ -94,6 +95,17 @@ function newest<T extends { createdAt: string }>(rows: T[]) {
   return rows.reduce<T | null>((best, row) => !best || row.createdAt > best.createdAt ? row : best, null);
 }
 
+function bufferDelivery(logs: InboxLogInput[], draftId: string) {
+  const rank: Record<string, number> = { published: 6, sending: 5, queued: 4, draft: 3, unknown: 2, preparing: 2, needs_approval: 2, failed: 1, rejected: 1 };
+  const rows = logs.filter((log) => log.action === BUFFER_DELIVERY && text(meta(log.metadata)?.draftId) === draftId);
+  const best = rows.reduce<InboxLogInput | null>((chosen, row) => {
+    if (!chosen) return row;
+    return (rank[text(meta(row.metadata)?.status)] ?? 0) >= (rank[text(meta(chosen.metadata)?.status)] ?? 0) ? row : chosen;
+  }, null);
+  if (!best) return null;
+  return { status: text(meta(best.metadata)?.status), dueAt: text(meta(best.metadata)?.dueAt), sentAt: text(meta(best.metadata)?.sentAt) };
+}
+
 function derive(input: {
   note: string;
   transcript: string;
@@ -101,6 +113,7 @@ function derive(input: {
   generation: "none" | "queued" | "running" | "completed" | "failed" | "held";
   draft: boolean;
   approved: boolean;
+  buffer: { status: string; dueAt: string; sentAt: string } | null;
 }) {
   if (input.voice === "pending") {
     return { status: "processing" as const, statusLabel: "Processing", detail: "Voice transcription is not finished. The recording stays saved.", actionLabel: "View progress", action: "open" as const };
@@ -113,6 +126,17 @@ function derive(input: {
   }
   if (input.draft && input.approved) {
     const extra = input.generation === "queued" || input.generation === "running" ? " Another generation is still in progress." : "";
+    if (input.buffer?.status === "published") {
+      const when = input.buffer.sentAt ? ` at ${input.buffer.sentAt}` : "";
+      return { status: "posted" as const, statusLabel: "Posted", detail: `Buffer published this${when}.${extra}`, actionLabel: "View delivery", action: "review" as const };
+    }
+    if (input.buffer?.status === "queued" || input.buffer?.status === "sending") {
+      const when = input.buffer.dueAt ? ` Buffer's slot is ${input.buffer.dueAt}.` : " Buffer will publish it at the next open slot on your Buffer schedule.";
+      return { status: "scheduled" as const, statusLabel: "Scheduled", detail: `This is in Buffer's queue.${when}${extra}`, actionLabel: "View delivery", action: "review" as const };
+    }
+    if (input.buffer?.status === "draft") {
+      return { status: "ready_to_schedule" as const, statusLabel: "Draft in Buffer", detail: `Buffer is holding this as a draft. It posts when you set a time in Buffer.${extra}`, actionLabel: "Open approved draft", action: "review" as const };
+    }
     return { status: "ready_to_schedule" as const, statusLabel: "Ready to schedule", detail: `This saved version is approved. Approval is not a scheduled or published post.${extra}`, actionLabel: "Open approved draft", action: "review" as const };
   }
   if (input.generation === "queued" || input.generation === "running") {
@@ -189,7 +213,7 @@ export function buildInboxCards(photos: InboxPhotoInput[], logs: InboxLogInput[]
     const photoNotes = items.map((photo) => submissionNote(photo.description).trim()).filter(Boolean);
     const markedNote = packs.some((log) => meta(log.metadata)?.isTest === true) || receipts.some((log) => meta(log.metadata)?.isTest === true) || isMarkedTestText(note);
     const test = submissionId ? markedNote : photoNotes.length > 0 && photoNotes.every((value) => isMarkedTestText(value));
-    const status = derive({ note, transcript, voice: voiceState, generation: generationStatus, draft: Boolean(draft), approved });
+    const status = derive({ note, transcript, voice: voiceState, generation: generationStatus, draft: Boolean(draft), approved, buffer: draftLog ? bufferDelivery(logs, draftLog.id) : null });
     cards.push({
       id,
       jobId: first.jobId,

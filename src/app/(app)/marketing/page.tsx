@@ -19,6 +19,7 @@ import { parseSavedPack } from "@/lib/saved-marketing";
 import { buildInboxCards, type InboxCardModel } from "@/lib/marketing-inbox";
 import { processingId, processingSettings } from "@/lib/marketing-processing";
 import { bufferSelectionId } from "@/lib/publishing/buffer";
+import { BUFFER_DELIVERY } from "@/lib/publishing/buffer-delivery";
 
 export const dynamic = "force-dynamic";
 
@@ -54,6 +55,7 @@ function inboxQuery(input: { tests?: boolean; page?: number; jobId?: string; ope
 }
 
 function cardHref(card: InboxCardModel, tests: boolean, jobId: string) {
+  if (card.draftId && (card.status === "scheduled" || card.status === "posted")) return `/marketing/buffer/send/${card.draftId}`;
   if ((card.action === "review") && card.draftId) return `/marketing/review/${card.draftId}`;
   return inboxQuery({ tests, jobId, open: card.id, hash: card.action === "notes" ? "#submission-notes" : "#submission-editor" });
 }
@@ -117,7 +119,7 @@ export default async function MarketingPage({ searchParams }: { searchParams: Pr
   const baseLogs = [...contextLogs, ...draftLogs].map(mapLog);
   const preliminary = buildInboxCards(photoList, baseLogs);
   const draftIds = [...new Set(preliminary.flatMap((card) => card.draftId ? [card.draftId] : []))];
-  const reviewLogs = draftIds.length ? await prisma.activityLog.findMany({ where: { orgId: auth.orgId, action: { in: [REVIEW_APPROVAL, REVIEW_SUPERSEDED] }, OR: draftIds.map((id) => ({ metadata: { path: ["draftId"], equals: id } })) }, take: 200 }) : [];
+  const reviewLogs = draftIds.length ? await prisma.activityLog.findMany({ where: { orgId: auth.orgId, action: { in: [REVIEW_APPROVAL, REVIEW_SUPERSEDED, BUFFER_DELIVERY] }, OR: draftIds.map((id) => ({ metadata: { path: ["draftId"], equals: id } })) }, take: 200 }) : [];
   const cards = reviewLogs.length ? buildInboxCards(photoList, [...baseLogs, ...reviewLogs.map(mapLog)]) : preliminary;
   const scoped = jobFilter ? cards.filter((card) => card.jobId === jobFilter) : cards;
   const hiddenTests = scoped.filter((card) => card.test).length;
