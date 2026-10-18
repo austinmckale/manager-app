@@ -199,7 +199,7 @@ test('claim audits must cover every exact field with existing evidence; changed 
   assert.equal(evidence.checkedFieldsMatch(copy, evidence.publicFields(copy)), true);
   assert.equal(evidence.checkedFieldsMatch({ ...copy, social: 'Lifetime warranty.' }, evidence.publicFields(copy)), false);
 });
-test('chat round trip preserves originals, photos and destination and rejects stale or injected fields', () => {
+test('chat round trip preserves originals, photos and destination, and ignores stale or injected fields instead of applying them', () => {
   const draft = marketing.prepareMarketingDraft({ assetIds: [photoId], notes: ['Private original notes'] });
   const json = { version: 1, draftId, inputHash: hash, copy: { ...handoff.handoffCopy(draft), social: 'An improved patio description.' } };
   const imported = handoff.importChatReview(JSON.stringify(json), draftId, hash, draft);
@@ -207,7 +207,32 @@ test('chat round trip preserves originals, photos and destination and rejects st
   assert.equal(imported.sourceNotes, draft.sourceNotes);
   assert.equal(imported.landingUrl, draft.landingUrl);
   assert.deepEqual(imported.assetIds, draft.assetIds);
-  for (const bad of [{ ...json, inputHash: 'b'.repeat(64) }, { ...json, approved: true }, { ...json, copy: { ...json.copy, sourceNotes: 'Overwrite evidence' } }, { ...json, copy: { social: 'Missing fields' } }]) assert.throws(() => handoff.importChatReview(JSON.stringify(bad), draftId, hash, draft));
+  for (const loose of [{ ...json, inputHash: 'b'.repeat(64) }, { ...json, approved: true }, { ...json, copy: { ...json.copy, sourceNotes: 'Overwrite evidence' } }, { ...json, copy: { social: 'Missing fields' } }]) {
+    const result = handoff.importChatReview(JSON.stringify(loose), draftId, hash, draft);
+    assert.equal(result.sourceNotes, draft.sourceNotes);
+    assert.equal(result.landingUrl, draft.landingUrl);
+    assert.equal(JSON.stringify(result.assetIds), JSON.stringify(draft.assetIds));
+    assert.equal(JSON.stringify(result).includes('"approved"'), false);
+    assert.ok(result.notes.length > 0);
+  }
+  const partial = handoff.importChatReview(JSON.stringify({ ...json, copy: { social: 'Missing fields' } }), draftId, hash, draft);
+  assert.equal(partial.social, 'Missing fields');
+  assert.equal(JSON.stringify(partial.googleHeadlines), JSON.stringify(draft.googleHeadlines));
+  assert.throws(() => handoff.importChatReview(JSON.stringify({ ...json, draftId: '30000000-0000-4000-8000-000000000009' }), draftId, hash, draft), /different draft/);
+});
+test('a chat reply with prose around the JSON, a trailing comma and over-limit lines still imports and says what it kept', () => {
+  const draft = marketing.prepareMarketingDraft({ assetIds: [photoId], notes: ['Private original notes'] });
+  const copy = { ...handoff.handoffCopy(draft), social: 'A gray paver patio with a seat wall.', metaHeadline: 'x'.repeat(55), googleHeadlines: ['Paver patio', 'y'.repeat(40), 'Seat wall', 'Reading patio'] };
+  const json = JSON.stringify({ version: 1, draftId, inputHash: hash, photoIds: [photoId, '40000000-0000-4000-8000-000000000001'], copy }).replace(/}$/, ',}');
+  const reply = ['Here is the improved pack:', '', '```json', json, '```', 'Let me know if you want changes.'].join('\n');
+  const imported = handoff.importChatReview(reply, draftId, hash, draft, undefined, [photoId]);
+  assert.equal(imported.social, copy.social);
+  assert.equal(imported.metaHeadline, draft.metaHeadline);
+  assert.equal(JSON.stringify(imported.googleHeadlines), JSON.stringify(['Paver patio', 'Seat wall', 'Reading patio']));
+  assert.equal(JSON.stringify(imported.assetIds), JSON.stringify([photoId]));
+  assert.ok(imported.notes.some((note) => /Meta ad headline/.test(note)));
+  assert.ok(imported.notes.some((note) => /not on this version/.test(note)));
+  assert.throws(() => handoff.importChatReview('Sorry, I cannot help with that.', draftId, hash, draft), /Could not find the JSON/);
 });
 test('processing defaults to off, and a reserved-call cap blocks additional requests', async () => {
   assert.equal(processing.processingSettingsSchema.parse({}).enabled, false);

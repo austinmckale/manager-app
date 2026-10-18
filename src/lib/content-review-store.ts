@@ -14,7 +14,10 @@ export async function loadContentReview(orgId: string, draftId: string, db: Data
   const assets = await db.fileAsset.findMany({ where: { id: { in: draft.assetIds }, type: "PHOTO", jobId: saved.jobId, job: { orgId } }, orderBy: { id: "asc" } });
   if (assets.length !== new Set(draft.assetIds).size) return null;
   const pairs = new Map<string, { inviteId: string; submissionId: string }>();
-  for (const asset of assets) {
+  // An edited copy has no upload tags of its own; its original photo leads to the notes and voice.
+  const originalIds = assets.flatMap((asset) => (asset.derivedFromAssetId && !asset.tags.some((tag) => tag.startsWith("intake:")) ? [asset.derivedFromAssetId] : []));
+  const originalTags = originalIds.length ? await db.fileAsset.findMany({ where: { id: { in: originalIds }, jobId: saved.jobId, job: { orgId } }, select: { tags: true } }) : [];
+  for (const asset of [...assets, ...originalTags]) {
     const inviteId = asset.tags.find((tag) => tag.startsWith("intake:"))?.slice(7);
     const submissionId = asset.tags.find((tag) => tag.startsWith("submission:"))?.slice(11);
     if (inviteId && submissionId) pairs.set(`${inviteId}:${submissionId}`, { inviteId, submissionId });

@@ -37,6 +37,10 @@ export function contentReviewId(draftId: string, hash: string) {
 export function needsResolutionNote(findings: readonly { severity: string; detail: string }[]) {
   return findings.some((finding) => finding.severity === "warning" && !cosmeticFinding(finding.detail));
 }
+// An edited copy of a photo (from ChatGPT or another editor) is a new file linked to the photo it
+// replaces. A save may swap it in only when that photo is on the version being saved.
+export const CHAT_EDIT_TAG = "chat-edit";
+export function editedFromTag(photoId: string) { return `edited-from:${photoId}`; }
 export function allowedPhotoSelection(next: readonly string[], current: readonly string[]) {
   if (next.length < 1 || next.length > current.length) return false;
   const allowed = new Set(current);

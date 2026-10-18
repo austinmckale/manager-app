@@ -6,7 +6,7 @@ import { isDemoMode } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
 import { DRAFT_SAVED_ACTION, marketingDraftSchema } from "@/lib/marketing";
 import { loadContentReview } from "@/lib/content-review-store";
-import { REVIEW_APPROVAL, REVIEW_REQUEST, REVIEW_SUPERSEDED, allowedPhotoSelection, canApproveContent, copyChecks, needsResolutionNote } from "@/lib/content-review";
+import { CHAT_EDIT_TAG, REVIEW_APPROVAL, REVIEW_REQUEST, REVIEW_SUPERSEDED, allowedPhotoSelection, canApproveContent, copyChecks, editedFromTag, needsResolutionNote } from "@/lib/content-review";
 import { PROCESSING_SETTINGS, processingId, processingSettingsSchema } from "@/lib/marketing-processing";
 import { draftPublishability } from "@/lib/publishability";
 
@@ -33,7 +33,9 @@ export async function POST(request: Request) {
       if (publishability.blocked || incoming.blocked) throw new Error(`This submission cannot be saved, checked, approved, queued, or posted. ${(publishability.blocked ? publishability : incoming).reasons.join(", ")}.`);
       const base = { orgId: auth.orgId, actorId: auth.userId, jobId: context.jobId };
       if (body.action === "save") {
-        if (!allowedPhotoSelection(body.draft.assetIds, context.draft.assetIds)) throw new Error("Photo selection cannot add photos that are not already on this version.");
+        const added = body.draft.assetIds.filter((id) => !context.draft.assetIds.includes(id));
+        const edits = added.length ? await tx.fileAsset.findMany({ where: { id: { in: added }, jobId: context.jobId, type: "PHOTO", job: { orgId: auth.orgId }, AND: [{ tags: { has: CHAT_EDIT_TAG } }, { tags: { hasSome: context.draft.assetIds.map(editedFromTag) } }] }, select: { id: true } }) : [];
+        if (!allowedPhotoSelection(body.draft.assetIds, [...context.draft.assetIds, ...edits.map((edit) => edit.id)])) throw new Error("Photo selection cannot add photos that are not already on this version.");
         const version = await tx.activityLog.create({ data: { ...base, action: DRAFT_SAVED_ACTION, metadata: { ...body.draft, photoNotes: context.draft.photoNotes, parentDraftId: context.draftId } } });
         await tx.activityLog.create({ data: { ...base, action: REVIEW_SUPERSEDED, metadata: { draftId: context.draftId, replacementDraftId: version.id } } });
         return { draftId: version.id };

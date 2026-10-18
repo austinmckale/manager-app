@@ -132,13 +132,14 @@ test("a normal project note is not blocked", () => {
   }
 });
 
-test("exact sample cannot be imported, while identity and version checks still fail first", () => {
+test("exact sample cannot be imported; a reply for another draft fails first, and a changed version only adds a note", () => {
   for (const current of [blockedDraft, draft]) {
     assert.throws(() => handoff.importChatReview(JSON.stringify({ ...returned, draftId: otherId }), draftId, hash, current), /different draft/);
-    assert.throws(() => handoff.importChatReview(JSON.stringify({ ...returned, inputHash: "b".repeat(64) }), draftId, hash, current), /different draft/);
-    assert.throws(() => handoff.importChatReview(JSON.stringify({ ...returned, version: 2 }), draftId, hash, current), { name: "ZodError" });
     assert.throws(() => handoff.importChatReview(JSON.stringify({ ...returned, copy: { ...returned.copy, social: sample } }), draftId, hash, draft), /test submission/);
   }
+  assert.throws(() => handoff.importChatReview(JSON.stringify({ ...returned, inputHash: "b".repeat(64) }), draftId, hash, blockedDraft), (error) => error.message === reason);
+  const changed = handoff.importChatReview(JSON.stringify({ ...returned, inputHash: "b".repeat(64), version: 2 }), draftId, hash, draft);
+  assert.ok(changed.notes.some((note) => /changed after the bundle/.test(note)));
   for (const [current, sources] of [
     [blockedDraft, undefined],
     [draft, { originalNotes: sample }],
@@ -167,7 +168,9 @@ test("importing a normal project does not add an approved flag", () => {
   assert.equal(imported.sourceNotes, draft.sourceNotes);
   assert.equal(Object.hasOwn(imported, "approved"), false);
   assert.equal(JSON.stringify(imported).includes('"approved"'), false);
-  assert.throws(() => handoff.importChatReview(JSON.stringify({ ...returned, approved: true }), draftId, hash, draft));
+  const sneaky = handoff.importChatReview(JSON.stringify({ ...returned, approved: true }), draftId, hash, draft);
+  assert.equal(JSON.stringify(sneaky).includes('"approved"'), false);
+  assert.ok(sneaky.notes.some((note) => note.includes("approved")));
   const prompt = handoff.chatBundlePrompt(draftId, hash, draft, { submittedNotes: "Paver patio and pavilion in Reading.", photos: [{ description: "Paver patio." }] });
   assert.match(prompt, /RETURN JSON/);
   assert.equal(prompt.includes(reason), false);
