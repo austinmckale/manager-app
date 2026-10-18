@@ -9,6 +9,8 @@ type Props = {
   demo?: boolean;
   onApply: (social: string, googleBusiness: string) => void;
   onPreview?: (next: { social: string; googleBusiness: string } | null) => void;
+  currentSocial?: string;
+  currentGoogle?: string;
 };
 
 type Proposal = {
@@ -91,6 +93,8 @@ export function CaptionRevisionPanel({
   demo,
   onApply,
   onPreview,
+  currentSocial = "",
+  currentGoogle = "",
 }: Props) {
   const [instruction, setInstruction] = useState("");
   const [status, setStatus] = useState("");
@@ -167,7 +171,7 @@ export function CaptionRevisionPanel({
         return "done" as const;
       }
       rememberReady(active);
-      setStatus("");
+      setStatus("Suggestion is ready below. Apply it to replace the Facebook and Google text.");
       if (announce) notifyReady();
       return "done" as const;
     }
@@ -360,25 +364,37 @@ export function CaptionRevisionPanel({
             </button>
           ) : null}
 
-          {usableReady(ready, inputHash) ? (
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={applyProposal}
-                disabled={disabled || demo}
-                className="min-h-11 rounded-xl bg-teal-900 px-4 py-3 text-sm font-semibold text-white"
-              >
-                Apply suggestion
-              </button>
-              <button
-                type="button"
-                onClick={keepCurrent}
-                disabled={disabled || demo}
-                className="min-h-11 rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-900"
-              >
-                Keep saved text
-              </button>
-            </div>
+          {usableReady(ready, inputHash) && ready ? (
+            <>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={applyProposal}
+                  disabled={disabled || demo}
+                  className="min-h-11 rounded-xl bg-teal-900 px-4 py-3 text-sm font-semibold text-white"
+                >
+                  Apply suggestion
+                </button>
+                <button
+                  type="button"
+                  onClick={keepCurrent}
+                  disabled={disabled || demo}
+                  className="min-h-11 rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-900"
+                >
+                  Keep saved text
+                </button>
+              </div>
+              <p className="mt-3 text-sm text-slate-800">
+                {ready.social.trim() === currentSocial.trim() &&
+                ready.googleBusiness.trim() === currentGoogle.trim()
+                  ? "This suggestion matches the text already in the editor."
+                  : "This suggestion is on the preview. Apply suggestion replaces the Facebook and Google text in the editor. Nothing is posted."}
+              </p>
+              <h4 className="mt-4 text-sm font-semibold">Suggested Facebook / Instagram post</h4>
+              <p className="mt-1 whitespace-pre-wrap text-sm">{ready.social}</p>
+              <h4 className="mt-4 text-sm font-semibold">Suggested Google Business update</h4>
+              <p className="mt-1 whitespace-pre-wrap text-sm">{ready.googleBusiness}</p>
+            </>
           ) : null}
 
         </>

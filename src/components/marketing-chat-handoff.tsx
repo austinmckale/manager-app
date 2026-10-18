@@ -23,12 +23,12 @@ export function MarketingChatHandoff({ draftId, inputHash, draft, originalNotes,
       zip.file("review-prompt.txt", prompt);
       zip.file("raw-input.json", JSON.stringify({ note: "Private source. Keep public posts short. Do not invent facts that are not in this file or the photos.", submittedNotes: originalNotes || "", voice: audio, photos: photos.map(({ id, fileName, description }) => ({ id, fileName, description })) }, null, 2));
       for (const [index, photo] of photos.entries()) {
-        const response = await fetch(photo.url, { signal: AbortSignal.timeout(30000) });
-        if (!response.ok) throw new Error("A private photo link expired. Refresh and export again.");
+        const response = await fetch(`/api/marketing/review/media?draftId=${encodeURIComponent(draftId)}&photoId=${encodeURIComponent(photo.id)}`, { credentials: "same-origin", signal: AbortSignal.timeout(30000) });
+        if (!response.ok) { setMessage("Could not attach a photo. Refresh this page and try the download again."); return; }
         zip.file(`photos/${index + 1}-${photo.id}.${photo.fileName.split(".").at(-1)?.replace(/[^a-z0-9]/gi, "") || "jpg"}`, await response.blob());
       }
       const url = URL.createObjectURL(await zip.generateAsync({ type: "blob" }));
-      const link = document.createElement("a"); link.href = url; link.download = `rhi-chat-review-${draftId}.zip`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 10000);
+      const link = document.createElement("a"); link.href = url; link.download = `rhi-chat-review-${draftId}.zip`; document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 10000);
       setMessage("Bundle downloaded. Unzip it and attach the photos and review-prompt.txt in your chat app.");
     } catch (error) { setMessage(error instanceof Error ? error.message : "Could not export the review bundle."); }
     finally { setBusy(false); }
@@ -37,10 +37,12 @@ export function MarketingChatHandoff({ draftId, inputHash, draft, originalNotes,
     {reviewable ? <>
     {gate.blocked ? <p className="mt-3 text-sm">This draft is held from posting. Asking ChatGPT or Claude does not approve or post.</p> : null}
     <p className="mt-3 text-sm">1. Download the bundle. 2. Unzip and attach its photos and prompt to your chat. 3. Paste the returned JSON below. The bundle includes private notes and transcripts for your chosen chat service.</p>
-    <button disabled={disabled || busy || !photos.length} onClick={() => void download()} className="mt-3 rounded-xl border bg-white px-4 py-3 disabled:opacity-40">Download ChatGPT / Claude review bundle</button>
+    <button type="button" disabled={disabled || busy || !photos.length} onClick={() => void download()} className="mt-3 rounded-xl border bg-white px-4 py-3 disabled:opacity-40">Download ChatGPT / Claude review bundle</button>
+    {disabled ? <p className="mt-2 text-sm">Download is unavailable while a save is running or on a replaced version.</p> : null}
+    {photos.length ? null : <p className="mt-2 text-sm">This draft has no photos to attach.</p>}
     <label className="mt-4 block text-sm font-medium">Paste the returned JSON<textarea value={raw} maxLength={100000} rows={6} onChange={(event) => setRaw(event.target.value)} className="mt-2 w-full rounded-xl border p-3 font-mono text-xs" /></label>
     <label className="mt-2 block text-sm">Or choose the returned JSON file<input type="file" accept=".json,.txt,application/json,text/plain" className="mt-2 block w-full" onChange={async (event) => { const file = event.target.files?.[0]; if (!file) return; if (file.size > 100000) { setMessage("Choose a JSON response under 100 KB."); return; } setRaw(await file.text()); }} /></label>
-    <button disabled={disabled || busy || !raw.trim()} onClick={() => { try { onImport(importChatReview(raw, draftId, inputHash, draft, { originalNotes: evidence, photoDescriptions: photos.map((photo) => photo.description) })); setMessage("Imported into the editor. Review changes, save a new version and run checks before approval."); } catch (error) { setMessage(error instanceof Error && !error.message.startsWith("[") ? error.message : "The response does not match the required JSON format. Ask your chat to follow the exported prompt."); } }} className="mt-3 rounded-xl bg-teal-700 px-4 py-3 text-white disabled:opacity-40">Import as unapproved edits</button>
+    <button type="button" disabled={disabled || busy || !raw.trim()} onClick={() => { try { onImport(importChatReview(raw, draftId, inputHash, draft, { originalNotes: evidence, photoDescriptions: photos.map((photo) => photo.description) })); setMessage("Imported into the editor. Review changes, save a new version and run checks before approval."); } catch (error) { setMessage(error instanceof Error && !error.message.startsWith("[") ? error.message : "The response does not match the required JSON format. Ask your chat to follow the exported prompt."); } }} className="mt-3 rounded-xl bg-teal-700 px-4 py-3 text-white disabled:opacity-40">Import as unapproved edits</button>
     <p role="status" className="mt-3 text-sm">{message}</p>
     </> : <p role="status" className="mt-3 text-sm">This stays in the app. The notes say not to publish it.</p>}
   </details>;
