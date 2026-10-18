@@ -37,7 +37,7 @@ The Manager App uses Next.js, TypeScript, Prisma, Supabase/Postgres/private stor
 
 ## 3. People and boundaries
 
-- **Ryan:** simple phone upload, voice/dictation/text and history of his submissions. Google entry at `app.rhipros.com`; his permitted identities map to the same limited portal. Test actual OAuth completion on his iPhone. Do not give him Austin's dashboard or make content approval his job by default.
+- **Ryan:** simple phone upload, voice/dictation/text and history of his submissions. Google entry at `app.rhipros.com`; his permitted identities map to the same limited portal. Test actual OAuth completion on his iPhone. Do not give him Austin's dashboard or make content approval his job by default. On October 18, 2026 the owner noted a possible later split into two Ryan entries, one for photos and video that still need an estimate and one for finished photo uploads. Do not build that second entry until the single upload path works through a confirmed post.
 - **Austin:** full operations dashboard, factual corrections, AI revisions, quality review, explicit publishing approval, scheduling and results.
 - **AI/worker:** proposes and checks content. It does not grant owner approval, invent job facts, choose ad spend or decide that content is published.
 - **Buffer:** intended primary delivery route for supported organic social posts. Google/Meta paid advertising is a separate integration.
@@ -183,17 +183,26 @@ Before declaring launch-ready:
 
 Keep explicit public-use clearance. The existing website photo-feed action does not automatically update curated homepage features, service pages, project stories, SEO copy or before/after case studies. Build reviewed placement metadata and a website publish adapter when that work is scheduled. Preserve the public site's curation, image-stage rules, original evidence and approved voice. Verify actual refresh/removal on the public site.
 
-### Paid ads
+### Paid ads and website search
 
-Treat ad creation, spend authorization, campaigns, tracking and reporting as a later separate workflow. A social post is not a paid ad. Draft/paused campaign code and mocked tests do not prove live account access, serving, billing or measurement. No model may activate a campaign, change budget or claim ROAS without the relevant authorization and data.
+On October 18, 2026 the owner asked for a second workflow under this same roof: Google Ads, Facebook ads, and Search Console, read and drafted from the assistant, with the weekly numbers on the results screen. Organic posting through Buffer remains the current milestone. A social post is not a paid ad.
+
+The later sequence is read, then draft, then an explicit spend change:
+
+1. One weekly results page shows what went out, what the ads did, what ordinary Google search did, and what became a quote, call, or booked job. Unknown stays blank.
+2. The app stores read-only access for the Google Ads customer, the Meta ad account, and the `rhipros.com` Search Console property. An assistant may use that same read scope. It does not receive a token that can change a budget.
+3. The assistant saves suggested negatives, headlines, and budget notes as drafts. Nothing in that step changes a live campaign.
+4. A later, separately authorized action may apply one named change. Pause is the first kind to consider. Creating or raising spend stays off until that action has its own approval and a ceiling the assistant cannot raise.
+
+Google and Meta still bill the accounts and still handle policy, identity, and payment methods. Draft/paused campaign code and mocked tests do not prove live account access, serving, billing, or measurement. No model may activate a campaign, change a budget, or claim ROAS without that authorization and the underlying data.
 
 ## 12. Results, reviews and service operation
 
 Build measurement around business outcomes: attributable quote requests/calls, qualified inquiries, estimates, booked work and collected revenue. Record campaign/source IDs, UTMs, date ranges, timezone, source timestamps and attribution assumptions. Deduplicate leads rather than adding all platform conversions as unique people. Revenue is not profit; missing spend/data cannot produce a meaningful ROAS.
 
-The existing manual scorecard is useful while imports are built. Platform insights/ad-spend import, website attribution, call tracking, lead outcome entry and weekly reporting need individual verification. Do not assume Buffer's currently available API covers every requested analytics metric; check its current documentation.
+The existing manual scorecard is the fallback while imports are built. The results page and that scorecard should become one weekly view, not two reports. Platform insights, ad-spend import, Search Console, website attribution, call tracking, lead outcome entry, and weekly reporting each need their own verification. Buffer delivery records belong on that page; the native delivery table does not represent a Buffer post. Do not assume Buffer's currently available API covers every requested analytics metric; check its current documentation.
 
-Later: completion-triggered review requests, customer follow-up and verified integrations/imports for Joist, Houzz, Yelp or other channels. Check current vendor APIs and platform rules before promising automation. Do not rebuild estimating/invoicing/Joist as a dependency for getting social posts live.
+Later: completion-triggered review requests, customer follow-up and verified integrations/imports for Joist, Houzz, Yelp or other channels. A later learning set can pair Joist estimate lines with Ryan's uploads once those uploads are marked as estimate input or finished photos. Joist stays the place estimates are written. Check current vendor APIs and platform rules before promising automation. Do not rebuild estimating/invoicing/Joist, and do not add a second Ryan upload, as a dependency for getting social posts live.
 
 Austin's service should be defined by deliverables and measured outcomes: content preparation/editing, scheduled publishing, selected website updates and reporting, with paid-ad management separately scoped. AI efficiency does not need to be disguised as manual labor. Scheduling/turnaround labels describe actual delivery timing, not hours supposedly worked. Pricing is a separate owner decision; this roadmap sets no rates.
 
@@ -223,11 +232,11 @@ Choose the always-on hosting/engine route with the owner. Keep the cloud queue i
 
 Prove: an upload while the PC is off is retained; its true wait is shown; the selected engine eventually processes it once; Austin receives the appropriate event notification; outage detection does not depend on the offline PC.
 
-### P4 — Reporting, website automation and ads
+### P4 — One results roof, then read-only ads and search
 
-Connect real metrics and lead attribution, produce a useful weekly report, then expand reviewed website placement and customer follow-up. Add paid-ad account/budget/measurement work separately. Expand platforms only after Facebook/Google Business are dependable.
+After Facebook and Google Business posting are dependable, replace the thin results screen and the separate manual scorecard with one weekly page: Buffer outcomes, ad results, Search Console for `rhipros.com`, and quote, call, and booked-job counts. Connect read-only Google Ads, Meta ads, and Search Console accounts. Let an assistant draft changes from those reads. Do not give that assistant a token that can spend. Apply a live campaign change only as a later package with its own approval. Reviewed website placement and customer follow-up stay in this package and do not block the weekly numbers.
 
-Prove: reports distinguish measured zero from unavailable data; inquiries can be traced to sources where evidence exists; website changes appear in the intended placement; ad budgets and publication actions remain explicitly authorized.
+Prove: a measured zero stays different from unavailable data; a Buffer post appears as a Buffer post; inquiries are traced only where a source was actually stored; a read connection cannot change a budget; a suggested ad change stays a draft until a separate authorization.
 
 ## 14. Release and agent handoff rules
 
