@@ -32,6 +32,18 @@ test("finished work, missing branding, and notes that are not in the image are c
   assert.equal(findings.cosmeticFinding("There is no logo on the finished patio."), true);
 });
 
+test("off-topic photos, unmatched voice memos, and missing project facts are cosmetic", () => {
+  const lines = [
+    "add a relevant photo or explain its connection to the intended post.",
+    "The image shows a dog and a tennis court, which are unrelated to construction or company life.",
+    "The image contains no visible construction activity, equipment, or company-related context.",
+    `Photo ${photoId}: The presence of a dog and caution tape does not indicate that our company built anything or completed any work.`,
+    "The voice memo content is unrelated to the visual content of the image.",
+    "No usable project facts were supplied. Add job details or choose a company-personality post and explain the photo.",
+  ];
+  for (const detail of lines) assert.equal(findings.cosmeticFinding(detail), true, detail);
+});
+
 test("a Do not publish sentence is not cosmetic", () => {
   assert.equal(findings.cosmeticFinding("Do not publish this photo."), false);
   assert.equal(findings.cosmeticFinding("Don't publish this finished patio. All work appears complete."), false);

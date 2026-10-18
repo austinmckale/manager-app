@@ -12,6 +12,12 @@ const cosmeticPatterns = [
   /\b(?:company name|ownership)\b[^.]{0,80}\bnot visible\b/i,
   /\bno\b[^.]{0,180}\b(?:company name|project ownership)\b/i,
   /\b(?:voice|notes?|messages?)\b[^.]{0,220}\b(?:do not|don['’]t|does not|doesn['’]t) appear in the (?:image|photo)\b/i,
+  /\brelevant photo\b/i,
+  /\bunrelated to construction\b/i,
+  /\bno visible construction activity\b/i,
+  /\bdoes not indicate that our company built\b/i,
+  /\bunrelated to the visual content\b/i,
+  /\bno usable project facts\b/i,
 ];
 
 export function cosmeticFinding(detail: string): boolean {

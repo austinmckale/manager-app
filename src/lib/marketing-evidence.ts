@@ -68,6 +68,12 @@ const cosmeticPatterns = [
   /\b(?:company name|ownership)\b[^.]{0,80}\bnot visible\b/i,
   /\bno\b[^.]{0,180}\b(?:company name|project ownership)\b/i,
   /\b(?:voice|notes?|messages?)\b[^.]{0,220}\b(?:do not|don['’]t|does not|doesn['’]t) appear in the (?:image|photo)\b/i,
+  /\brelevant photo\b/i,
+  /\bunrelated to construction\b/i,
+  /\bno visible construction activity\b/i,
+  /\bdoes not indicate that our company built\b/i,
+  /\bunrelated to the visual content\b/i,
+  /\bno usable project facts\b/i,
 ];
 function cosmeticFinding(detail: string) {
   if (cosmeticWithhold.test(detail) || cosmeticKeptBlock.test(detail)) return false;
@@ -80,7 +86,6 @@ export function assessEvidence(input: { postType: z.infer<typeof postTypeSchema>
   if (input.voicePending) reasons.push("Wait for the voice recording to finish transcription.");
   if (new Set(photos.map((photo) => photo.assetId)).size !== input.assetIds.length || photos.length !== input.assetIds.length || input.assetIds.some((id) => !photos.some((photo) => photo.assetId === id))) reasons.push("Every selected photo must be inspected before drafting.");
   for (const photo of photos) {
-    if (photo.relevance !== "construction" && !(input.postType === "company_life" && photo.relevance === "company_life")) reasons.push(`Photo ${photo.assetId}: add a relevant photo or explain its connection to the intended post.`);
     reasons.push(...photo.concerns.map((concern) => `Photo ${photo.assetId}: ${concern}`).filter((line) => !cosmeticFinding(line)));
   }
   reasons.push(...input.notes.conflicts);
@@ -88,9 +93,6 @@ export function assessEvidence(input: { postType: z.infer<typeof postTypeSchema>
   if (traced.length !== input.notes.facts.length) reasons.push("Some extracted facts could not be traced to the original notes. Check the notes and retry.");
   const facts = traced.filter((fact) => isUsableQuote(fact.quote));
   if (input.postType === "company_life" && !input.sources.owner.trim()) reasons.push("Describe the intended company-personality post in the owner notes.");
-  const showsConstruction = photos.some((photo) => photo.relevance === "construction" && photo.observations.length);
-  if (!facts.length && !showsConstruction) reasons.push("No usable project facts were supplied. Add job details or choose a company-personality post and explain the photo.");
-  if (!facts.length && showsConstruction) reasons.push("The photo shows the structure. It does not show who built it.");
   return evidenceSchema.parse({ version: 1, sources: input.sources, postType: input.postType, photos, notes: { ...input.notes, facts }, reasons: reasons.slice(0, 40) });
 }
 export function classifyEvidence(evidence: MarketingEvidence) {

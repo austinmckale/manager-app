@@ -8,6 +8,7 @@ type Props = {
   disabled: boolean;
   demo?: boolean;
   onApply: (social: string, googleBusiness: string) => void;
+  onPreview?: (next: { social: string; googleBusiness: string } | null) => void;
 };
 
 type Proposal = {
@@ -81,6 +82,7 @@ export function CaptionRevisionPanel({
   disabled,
   demo,
   onApply,
+  onPreview,
 }: Props) {
   const [instruction, setInstruction] = useState("");
   const [status, setStatus] = useState("");
@@ -89,6 +91,17 @@ export function CaptionRevisionPanel({
   const [busy, setBusy] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const revisionKeyRef = useRef(`${draftId}:${inputHash}`);
+
+  useEffect(() => {
+    const ready =
+      proposal?.status === "ready" &&
+      proposal.inputHash === inputHash &&
+      !proposal.approved &&
+      !proposal.published;
+    onPreview?.(
+      ready ? { social: proposal.social, googleBusiness: proposal.googleBusiness } : null,
+    );
+  }, [proposal, inputHash, onPreview]);
 
   useEffect(() => {
     return () => {
@@ -161,9 +174,10 @@ export function CaptionRevisionPanel({
       return;
     }
 
-    const deadline = Date.now() + 3 * 60 * 1000;
+    const deadlineRef = { at: 0 };
     pollRef.current = setInterval(async () => {
-      if (Date.now() > deadline) {
+      if (!deadlineRef.at) deadlineRef.at = Date.now() + 3 * 60 * 1000;
+      if (Date.now() > deadlineRef.at) {
         clearPoll();
         setStatus("The rewrite did not finish in time.");
         setBusy(false);
@@ -261,8 +275,9 @@ export function CaptionRevisionPanel({
               maxLength={400}
               rows={3}
               value={instruction}
+              placeholder="What should the descriptions say?"
               onChange={(e) => setInstruction(e.target.value)}
-              disabled={disabled || busy}
+              disabled={demo}
             />
             <span className="text-xs font-normal text-slate-500">
               {instruction.length}/400
