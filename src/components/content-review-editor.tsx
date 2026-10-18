@@ -47,7 +47,7 @@ export function ContentReviewEditor(props: Props) {
   const warnings = reviewFindings.filter((finding) => finding.severity === "warning");
   const visibleWarnings = distinctFindings([...warnings.filter((finding) => !cosmeticFinding(finding.detail)), ...copyFindings.filter((finding) => finding.severity === "warning" && !cosmeticFinding(finding.detail))]);
   const evidenceClear = !!props.review?.evidence && !props.review.evidence.reasons.some((reason) => !cosmeticFinding(reason));
-  const passed = props.review?.status === "completed" && props.review.policyVersion === 2 && evidenceClear && props.review.inputHash === props.inputHash && blockers.length === 0;
+  const passed = props.review?.status === "completed" && props.review.policyVersion === 3 && evidenceClear && props.review.inputHash === props.inputHash && blockers.length === 0;
   const checksFinished = props.review?.status === "completed";
   const checksBusy = props.review?.status === "queued" || props.review?.status === "running";
   const approveDisabled = !passed || dirty || !facts || !permission || busy || props.voicePending || props.superseded || props.demo || (warnings.length > 0 && resolution.trim().length < 10);

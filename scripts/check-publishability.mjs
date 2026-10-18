@@ -51,6 +51,8 @@ test("a microphone test is blocked", () => {
   assert.equal(block("TEST microphone check").code, "test_content");
   assert.equal(block("testing the upload link").code, "test_content");
   assert.equal(block("Please test Ryan's upload before the real job.").code, "test_content");
+  assert.equal(block("", "testing testing okay so I'm recording a voice memo testing it doesn't seem like it's working so maybe have some bar shown that it's working or something like that").code, "test_content");
+  assert.equal(block("We tested the newly installed pump."), null);
 });
 
 test("an instruction hidden in the note is not treated as permission to publish", () => {
@@ -73,7 +75,8 @@ const nextId = "30000000-0000-4000-8000-000000000001";
 const marketing = load("src/lib/marketing.ts", { zod: require("zod") });
 const evidence = load("src/lib/marketing-evidence.ts", { zod: require("zod") });
 const processing = load("src/lib/marketing-processing.ts", { zod: require("zod"), "node:crypto": require("node:crypto") });
-const review = load("src/lib/content-review.ts", { zod: require("zod"), "node:crypto": require("node:crypto"), "@/lib/marketing": marketing, "@/lib/marketing-evidence": evidence });
+const findings = load("src/lib/review-findings.ts", {});
+const review = load("src/lib/content-review.ts", { zod: require("zod"), "node:crypto": require("node:crypto"), "@/lib/marketing": marketing, "@/lib/marketing-evidence": evidence, "@/lib/review-findings": findings });
 const handoff = load("src/lib/marketing-handoff.ts", { zod: require("zod"), "@/lib/marketing": marketing, "@/lib/publishability": publishability });
 const types = load("src/lib/publishing/types.ts", {});
 const approval = load("src/lib/publishing/approval.ts", {
@@ -120,6 +123,7 @@ test("a normal project note is not blocked", () => {
     "Latest testimonial: the finished patio is ready to publish on the website.",
     "Publish this paver patio after the homeowner reviews the photos.",
     "The homeowner asked us to test the stain in a hidden spot.",
+    "We tested the newly installed pump.",
   ]) {
     const result = publishability.assessPublishability({ notes: [note], photoDescriptions: ["Paver patio and pavilion."] });
     assert.equal(result.blocked, false);

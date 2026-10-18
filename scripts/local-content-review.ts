@@ -30,7 +30,7 @@ export async function runContentReview(prisma: PrismaClient, supabase: typeof Su
     const drafts = await prisma.activityLog.findMany({ where: { orgId, action: DRAFT_SAVED_ACTION }, orderBy: { createdAt: "desc" }, take: 50 });
     for (const row of drafts) {
       const candidate = await loadContentReview(orgId, row.id);
-      if (!candidate || candidate.superseded || (candidate.review && candidate.review.policyVersion === 2) || candidate.voicePending || (!includeTest && /\bTEST\s*[—:-]/i.test(candidate.draft.sourceNotes))) continue;
+      if (!candidate || candidate.superseded || (candidate.review && candidate.review.policyVersion === 3) || candidate.voicePending || (!includeTest && /\bTEST\s*[—:-]/i.test(candidate.draft.sourceNotes))) continue;
       context = candidate; break;
     }
   }
@@ -62,7 +62,7 @@ export async function runContentReview(prisma: PrismaClient, supabase: typeof Su
     // Re-read evidence before committing a result for an immutable input hash.
     const latest = await loadContentReview(orgId, current.draftId);
     if (!latest || latest.superseded || latest.inputHash !== current.inputHash) throw new Error("Source changed during review");
-    await prisma.activityLog.update({ where: { id: current.reviewId }, data: { metadata: { ...metadata, status: "completed", completedAt: new Date().toISOString(), engine: model, policyVersion: 2, evidence, imagesChecked: images.length, result: { summary, findings: [...findings.filter((finding) => finding.severity === "blocker"), ...findings.filter((finding) => finding.severity === "warning")].slice(0, 30) } } } });
+    await prisma.activityLog.update({ where: { id: current.reviewId }, data: { metadata: { ...metadata, status: "completed", completedAt: new Date().toISOString(), engine: model, policyVersion: 3, evidence, imagesChecked: images.length, result: { summary, findings: [...findings.filter((finding) => finding.severity === "blocker"), ...findings.filter((finding) => finding.severity === "warning")].slice(0, 30) } } } });
     return { reviewed: true };
   } catch (error) {
     const reason = error instanceof z.ZodError || error instanceof SyntaxError ? "Local reviewer returned invalid structured findings." : error instanceof Error && /^Local reviewer returned HTTP \d{3}$/.test(error.message) ? error.message + "." : error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError") ? "Local reviewer timed out." : "Local review failed or evidence changed.";

@@ -40,8 +40,13 @@ function routeHarness(options = {}) {
 test("draft starting points use supplied notes and respect platform text limits", () => {
   const draft = marketing.prepareMarketingDraft({ assetIds: [assetId], notes: ["Installed the shower tile.", "Installed the shower tile."] });
   assert.equal(marketing.marketingDraftSchema.safeParse(draft).success, true);
-  assert.equal(draft.social.match(/Installed/g).length, 1);
+  assert.equal(draft.sourceNotes.includes("Installed the shower tile."), true);
+  assert.equal(draft.social.includes("Installed"), false);
   assert.doesNotMatch(draft.social, /insurance|warranty|Reading|customer|quartz/i);
+  const privateDraft = marketing.prepareMarketingDraft({ assetIds: [assetId], notes: ["Customer Jane at 12 Oak Street, 610-555-0100."] });
+  assert.equal(privateDraft.sourceNotes.includes("Jane"), true);
+  assert.equal(privateDraft.social.includes("Jane"), false);
+  assert.equal(privateDraft.social.includes("610-555-0100"), false);
   const large = marketing.prepareMarketingDraft({ assetIds: [assetId], notes: ["a".repeat(24000)] });
   assert.equal(marketing.marketingDraftSchema.safeParse(large).success, true);
   assert.equal(marketing.marketingDraftSchema.safeParse({ ...draft, googleHeadlines: ["x".repeat(31), "two", "three"] }).success, false);

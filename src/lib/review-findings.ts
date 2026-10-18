@@ -2,7 +2,7 @@
 // painted on the picture are not publish blocks. A withhold phrase is.
 // "Internal test data" is not a withhold by itself.
 const withhold = /^TEST\b|do\s+not\s+publish|don['’]t\s+publish|not\s+for\s+publication|microphone\s+test/im;
-const keptBlock = /\bRHI\b|\baddress\b|\bemail\b|\bphone\b|\bcontradict|\bconflicts?\b|\bdisagree|\bwho built\b/i;
+const keptBlock = /\bRHI\b|\baddress\b|\bemail\b|\bphone\b|\bcontradict|\bconflicts?\b|\bdisagree|\bwho built\b|\bunsupported claim\b|\bneeds details\b/i;
 const cosmeticPatterns = [
   /\bwork appears complete\b/i,
   /\bno\b[^.]{0,180}\bunfinished elements\b/i,
@@ -17,7 +17,6 @@ const cosmeticPatterns = [
   /\bno visible construction activity\b/i,
   /\bdoes not indicate that our company built\b/i,
   /\bunrelated to the visual content\b/i,
-  /\bno usable project facts\b/i,
 ];
 
 export function cosmeticFinding(detail: string): boolean {

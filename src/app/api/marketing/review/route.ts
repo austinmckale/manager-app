@@ -40,7 +40,7 @@ export async function POST(request: Request) {
       }
       if (context.voicePending) throw new Error("Wait for the original voice recording to finish transcription.");
       if (body.action === "check") {
-        if (context.review?.status === "completed" && context.review.policyVersion === 2) return { alreadyChecked: true };
+        if (context.review?.status === "completed" && context.review.policyVersion === 3) return { alreadyChecked: true };
         if (context.review?.status === "running" && Date.now() - new Date(context.review.startedAt || "").getTime() < 20 * 60000) return { queued: true };
         const metadata = { draftId: context.draftId, inputHash: context.inputHash, status: "queued", requestedAt: new Date().toISOString() };
         await tx.activityLog.upsert({ where: { id: context.reviewId }, create: { ...base, id: context.reviewId, action: REVIEW_REQUEST, metadata }, update: { metadata } });

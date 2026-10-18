@@ -87,7 +87,7 @@ function fixture() {
     const context = await store.loadContentReview(orgId, draftId);
     assert.ok(context);
     const evidence = { version: 1, sources: { notes: "Built a pavilion.", voice: "We built a pavilion in Reading.", owner: "" }, postType: "project", photos: [{ assetId, relevance: "construction", observations: ["A pavilion is visible."], concerns: [] }], notes: { facts: [{ source: "voice", quote: "We built a pavilion in Reading.", fact: "Pavilion in Reading" }], conflicts: [] }, reasons: [] };
-    activity.push({ id: context.reviewId, orgId, jobId, action: review.REVIEW_REQUEST, metadata: { draftId, inputHash: context.inputHash, requestedAt: new Date().toISOString(), status: "completed", policyVersion: 2, evidence, result: { summary: "Synthetic test review passed.", findings: [] } }, createdAt: new Date() });
+    activity.push({ id: context.reviewId, orgId, jobId, action: review.REVIEW_REQUEST, metadata: { draftId, inputHash: context.inputHash, requestedAt: new Date().toISOString(), status: "completed", policyVersion: 3, evidence, result: { summary: "Synthetic test review passed.", findings: [] } }, createdAt: new Date() });
     activity.push({ id: `approval-${activity.length}`, orgId, jobId, action: review.REVIEW_APPROVAL, metadata: { draftId, inputHash: context.inputHash, reviewId: context.reviewId }, createdAt: new Date() });
     return context.inputHash;
   }

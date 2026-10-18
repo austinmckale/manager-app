@@ -58,7 +58,7 @@ export function verifiedNoteFacts(notes: z.infer<typeof noteEvidenceSchema>, sou
 // evidence checks can load it with zod alone. A finished patio, a missing logo,
 // and a voice note that is not on the photo are not publish blocks.
 const cosmeticWithhold = /^TEST\b|do\s+not\s+publish|don['’]t\s+publish|not\s+for\s+publication|microphone\s+test/im;
-const cosmeticKeptBlock = /\bRHI\b|\baddress\b|\bemail\b|\bphone\b|\bcontradict|\bconflicts?\b|\bdisagree|\bwho built\b/i;
+const cosmeticKeptBlock = /\bRHI\b|\baddress\b|\bemail\b|\bphone\b|\bcontradict|\bconflicts?\b|\bdisagree|\bwho built\b|\bunsupported claim\b|\bneeds details\b/i;
 const cosmeticPatterns = [
   /\bwork appears complete\b/i,
   /\bno\b[^.]{0,180}\bunfinished elements\b/i,
@@ -73,7 +73,6 @@ const cosmeticPatterns = [
   /\bno visible construction activity\b/i,
   /\bdoes not indicate that our company built\b/i,
   /\bunrelated to the visual content\b/i,
-  /\bno usable project facts\b/i,
 ];
 function cosmeticFinding(detail: string) {
   if (cosmeticWithhold.test(detail) || cosmeticKeptBlock.test(detail)) return false;
@@ -93,6 +92,8 @@ export function assessEvidence(input: { postType: z.infer<typeof postTypeSchema>
   if (traced.length !== input.notes.facts.length) reasons.push("Some extracted facts could not be traced to the original notes. Check the notes and retry.");
   const facts = traced.filter((fact) => isUsableQuote(fact.quote));
   if (input.postType === "company_life" && !input.sources.owner.trim()) reasons.push("Describe the intended company-personality post in the owner notes.");
+  const hasProjectPhoto = photos.some((photo) => photo.relevance === "construction");
+  if (input.postType === "project" && facts.length === 0 && !hasProjectPhoto) reasons.push("Needs details: these photos and notes do not establish a project.");
   return evidenceSchema.parse({ version: 1, sources: input.sources, postType: input.postType, photos, notes: { ...input.notes, facts }, reasons: reasons.slice(0, 40) });
 }
 export function classifyEvidence(evidence: MarketingEvidence) {

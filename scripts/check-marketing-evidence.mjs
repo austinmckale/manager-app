@@ -32,6 +32,7 @@ const response = (value) => ({ message: { content: JSON.stringify(value) } });
 
 test('dog photos plus a microphone test are held with no invented construction', () => {
   const result = evidence.assessEvidence({ postType: 'project', photos: [{ ...photo, relevance: 'unrelated', observations: ['A golden retriever on grass.'] }], notes: { facts: [], conflicts: [] }, sources: { notes: '', voice: "testing testing, microphone test", owner: '' }, assetIds: [photoId] });
+  assert.ok(result.reasons.some((reason) => /Needs details/.test(reason)));
   assert.ok(!result.reasons.some((reason) => /relevant photo|No usable project facts/.test(reason)));
   const split = evidence.classifyEvidence(result);
   same(split.visual, []);

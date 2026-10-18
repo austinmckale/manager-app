@@ -15,14 +15,15 @@ function load(file, imports) {
 const marketing = load('src/lib/marketing.ts', { zod: require('zod') });
 const evidence = load('src/lib/marketing-evidence.ts', { zod: require('zod') });
 const processing = load('src/lib/marketing-processing.ts', { zod: require('zod'), 'node:crypto': require('node:crypto') });
-const review = load('src/lib/content-review.ts', { zod: require('zod'), 'node:crypto': require('node:crypto'), '@/lib/marketing': marketing, '@/lib/marketing-evidence': evidence });
+const findings = load('src/lib/review-findings.ts', {});
+const review = load('src/lib/content-review.ts', { zod: require('zod'), 'node:crypto': require('node:crypto'), '@/lib/marketing': marketing, '@/lib/marketing-evidence': evidence, '@/lib/review-findings': findings });
 const publishability = load('src/lib/publishability.ts', {});
 const draftId = '10000000-0000-4000-8000-000000000001';
 const photoId = '20000000-0000-4000-8000-000000000001';
 const nextId = '30000000-0000-4000-8000-000000000001';
 const draft = marketing.prepareMarketingDraft({ assetIds: [photoId], notes: ['Built a pavilion in Reading.'] });
 const hash = review.contentHash({ draft, originals: 'raw notes' });
-const completed = { draftId, inputHash: hash, requestedAt: new Date().toISOString(), status: 'completed', policyVersion: 2, evidence: { version: 1, sources: { notes: '', voice: '', owner: '' }, postType: 'project', photos: [{ assetId: photoId, relevance: 'construction', observations: ['A pavilion.'], concerns: [] }], notes: { facts: [], conflicts: [] }, reasons: [] }, result: { summary: 'Checked against supplied evidence.', findings: [] } };
+const completed = { draftId, inputHash: hash, requestedAt: new Date().toISOString(), status: 'completed', policyVersion: 3, evidence: { version: 1, sources: { notes: '', voice: '', owner: '' }, postType: 'project', photos: [{ assetId: photoId, relevance: 'construction', observations: ['A pavilion.'], concerns: [] }], notes: { facts: [], conflicts: [] }, reasons: [] }, result: { summary: 'Checked against supplied evidence.', findings: [] } };
 const blocker = { category: 'facts', severity: 'blocker', detail: 'Unsupported warranty.', evidence: 'Original notes contain no warranty.', suggestion: 'Remove it.' };
 test('review identity changes with edited text, selected photos or original evidence', () => {
   const id = review.contentReviewId(draftId, hash);
@@ -31,6 +32,7 @@ test('review identity changes with edited text, selected photos or original evid
 });
 test('approval requires completed current review without blockers, pending speech or supersession', () => {
   assert.equal(review.canApproveContent(hash, completed, false, false), true);
+  assert.equal(review.canApproveContent(hash, { ...completed, policyVersion: 2 }, false, false), false);
   for (const candidate of [null, { ...completed, status: 'queued' }, { ...completed, status: 'failed' }, { ...completed, inputHash: 'x'.repeat(64) }, { ...completed, result: { ...completed.result, findings: [blocker] } }]) assert.equal(review.canApproveContent(hash, candidate, false, false), false);
   assert.equal(review.canApproveContent(hash, completed, true, false), false);
   assert.equal(review.canApproveContent(hash, completed, false, true), false);
@@ -52,8 +54,8 @@ test('copy checks block cut-off headlines, repeated descriptions, cloned ads, do
   assert.ok(google.some((finding) => finding.detail === 'Finish Google description 1 so it is not cut off.'));
   assert.equal(google.some((finding) => finding.detail === 'Finish Google description 2 so it is not cut off.'), false);
   const seeded = review.copyChecks(draft);
-  assert.ok(seeded.some((finding) => finding.detail === 'Finish Google headline 2 so it is not cut off.'));
-  assert.ok(seeded.some((finding) => finding.detail === 'Finish Google headline 3 so it is not cut off.'));
+  assert.equal(seeded.some((finding) => finding.detail === 'Finish Google headline 2 so it is not cut off.'), false);
+  assert.equal(seeded.some((finding) => finding.detail === 'Finish Google headline 3 so it is not cut off.'), false);
   assert.equal(seeded.some((finding) => finding.detail.startsWith('Finish Google description')), false);
   const repeated = review.copyChecks({ ...draft, googleHeadlines: ['RHI Pros', 'Short headline', 'Another headline'], googleDescriptions: ['Same description.', ' same description. '] });
   assert.ok(repeated.some((finding) => finding.detail === 'Rewrite the repeated Google description.'));

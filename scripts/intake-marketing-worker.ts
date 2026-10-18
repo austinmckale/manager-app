@@ -189,7 +189,7 @@ async function main() {
         const current = await loadContentReview(orgId, draftId);
         const evidence = state.data.evidence;
         if (current && !current.voicePending && current.audio.map((audio) => audio.transcript).join("\n\n") === evidence.sources.voice && current.originals.receiptNotes.includes(evidence.sources.notes)) {
-          const review = { draftId, inputHash: current.inputHash, status: "completed", policyVersion: 2, requestedAt: new Date().toISOString(), completedAt: new Date().toISOString(), engine: input.generator, imagesChecked: evidence.photos.length, evidence, result: { summary: "All selected photos and public fields passed evidence checks in a separate review pass. Owner approval is still required.", findings: [] } };
+          const review = { draftId, inputHash: current.inputHash, status: "completed", policyVersion: 3, requestedAt: new Date().toISOString(), completedAt: new Date().toISOString(), engine: input.generator, imagesChecked: evidence.photos.length, evidence, result: { summary: "All selected photos and public fields passed evidence checks in a separate review pass. Owner approval is still required.", findings: [] } };
           await prisma.activityLog.upsert({ where: { id: current.reviewId }, create: { id: current.reviewId, orgId, jobId: batch.invite.jobId, action: REVIEW_REQUEST, metadata: review }, update: { metadata: review } });
           reviewed = true;
         }

@@ -39,9 +39,9 @@ test("off-topic photos, unmatched voice memos, and missing project facts are cos
     "The image contains no visible construction activity, equipment, or company-related context.",
     `Photo ${photoId}: The presence of a dog and caution tape does not indicate that our company built anything or completed any work.`,
     "The voice memo content is unrelated to the visual content of the image.",
-    "No usable project facts were supplied. Add job details or choose a company-personality post and explain the photo.",
   ];
   for (const detail of lines) assert.equal(findings.cosmeticFinding(detail), true, detail);
+  assert.equal(findings.cosmeticFinding("No usable project facts were supplied. Add job details or choose a company-personality post and explain the photo."), false);
 });
 
 test("a Do not publish sentence is not cosmetic", () => {
@@ -84,6 +84,12 @@ test("auditIssues drops cosmetic photo lines and keeps real blocks", () => {
     reasons: [],
   }, { fields: [{ field: "social", text: copy.social, supported: false, factIds: ["note:0"], issues: [finished] }] });
   same(cosmeticOnly, []);
+  const missingFacts = evidence.auditIssues(copy, {
+    photos: [{ assetId: photoId, observations: ["A golden retriever on grass."] }],
+    notes: { facts: [], conflicts: [] },
+    reasons: [],
+  }, { fields: [{ field: "social", text: copy.social, supported: false, factIds: [`photo:${photoId}:0`], issues: ["No usable project facts were supplied."] }] });
+  same(missingFacts, ["social: No usable project facts were supplied."]);
   const authorship = evidence.auditIssues(copy, {
     photos: [{ assetId: photoId, observations: ["A finished paver patio."] }],
     notes: { facts: [{ source: "voice", quote: "We laid a paver patio.", fact: "Patio" }] },

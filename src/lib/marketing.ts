@@ -26,7 +26,6 @@ export type MarketingDraft = z.infer<typeof marketingDraftSchema>;
 // names are deliberately excluded from public copy.
 export function prepareMarketingDraft(input: { assetIds: string[]; notes: string[]; area?: string | null; location?: string; packName?: string; photoNotes?: MarketingDraft["photoNotes"] }): MarketingDraft {
   const sourceNotes = [...new Set(input.notes.map((note) => note.trim()).filter(Boolean))].join("\n\n").slice(0, 6000);
-  const facts = sourceNotes.slice(0, 1400);
   const subject = input.area && input.area !== "Other" ? input.area : "Project";
   return {
     postType: "project",
@@ -36,11 +35,11 @@ export function prepareMarketingDraft(input: { assetIds: string[]; notes: string
     service: input.area?.slice(0, 100) ?? "",
     photoNotes: input.photoNotes ?? [],
     assetIds: input.assetIds,
-    social: `${facts ? `${facts}\n\n` : ""}Planning a project of your own? Contact RHI Pros.`,
-    googleBusiness: `${facts ? `${facts}\n\n` : ""}Have a project in mind? Get in touch with RHI Pros.`,
-    metaPrimary: `${facts ? `${facts}\n\n` : ""}Tell RHI Pros what you have in mind for your home.`,
+    social: "Planning a project of your own? Contact RHI Pros.",
+    googleBusiness: "Have a project in mind? Get in touch with RHI Pros.",
+    metaPrimary: "Tell RHI Pros what you have in mind for your home.",
     metaHeadline: "Tell us about your project",
-    googleHeadlines: ["RHI Pros", "Tell Us About Your Project", "Request a Project Estimate"],
+    googleHeadlines: ["RHI Pros", "Your next project", "Request an estimate"],
     googleDescriptions: ["Tell RHI Pros what you have in mind for your home. Request a project estimate.", "Explore our work and get in touch to discuss your project."],
     imageHeadline: `${subject} by RHI Pros`.slice(0, 60),
     landingUrl: "https://rhipros.com/request-a-quote",

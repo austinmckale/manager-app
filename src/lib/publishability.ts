@@ -11,7 +11,8 @@ function markedTest(text: string) {
   if (text.split(/\r?\n/).some((line) => /^TEST\b/i.test(line.trim()))) return true;
   return /\btest(?:ing)?\s+ryan'?s?\s+upload\b/i.test(text)
     || /\btest(?:ing)?\s+the\s+upload\s+link\b/i.test(text)
-    || /\bmicrophone\s+tests?\b/i.test(text);
+    || /\bmicrophone\s+tests?\b/i.test(text)
+    || /\btesting testing\b/i.test(text);
 }
 
 function withheld(text: string) {
@@ -37,7 +38,7 @@ export function publicationBlock(sources: PublicationSources): PublicationBlock 
   const lines: string[] = [];
   if (reused && test) lines.push("The notes say this is existing website content used to test an upload.");
   else if (reused) lines.push("The notes say this is existing website content being reused.");
-  else if (/\bmicrophone\s+tests?\b/i.test(text)) lines.push("The notes say this is a microphone test.");
+  else if (/\bmicrophone\s+tests?\b/i.test(text) || /\btesting testing\b/i.test(text)) lines.push("The notes say this is a microphone test.");
   else if (test) lines.push("The notes say this is a test submission.");
   if (held) lines.push("The notes say not to publish it again.");
   lines.push(closing);

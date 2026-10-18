@@ -70,7 +70,7 @@ function turnStatusText(turn: RevisionTurn) {
   }
   if (turn.status === "queued" || turn.status === "pending") return "Writing on this PC.";
   if (turn.status === "running" || turn.status.toLowerCase() === "generating") return "Rewriting now.";
-  if (turn.status === "ready") return "Ready. The cards show it.";
+  if (turn.status === "ready") return "";
   if (turn.status === "stale") return "The version changed.";
   return turn.status;
 }
@@ -373,9 +373,9 @@ export function CaptionRevisionPanel({
             </div>
           ) : null}
 
-          {turns.length > 0 ? (
+          {turns.some((turn) => turn.status !== "ready") ? (
             <ul className="mt-3 space-y-1">
-              {turns.map((turn) => (
+              {turns.filter((turn) => turn.status !== "ready").map((turn) => (
                 <li key={`${turn.instruction}-${turn.status}`} className="text-sm text-slate-600">
                   <span className="font-medium text-slate-900">{turnStatusText(turn)}</span>{" "}
                   {turn.instruction}
