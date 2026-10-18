@@ -7,6 +7,7 @@ import type { MarketingDraft } from "@/lib/marketing";
 import { plainGaps } from "@/lib/marketing-evidence";
 import type { ContentReview, ReviewFinding } from "@/lib/content-review";
 import { cosmeticFinding } from "@/lib/review-findings";
+import { copyChecks } from "@/lib/copy-checks";
 import { repairCheckedCopy } from "@/lib/repair-checked-copy";
 import { MarketingChatHandoff } from "@/components/marketing-chat-handoff";
 import { CaptionRevisionPanel } from "@/components/caption-revision-panel";
@@ -39,7 +40,7 @@ export function ContentReviewEditor(props: Props) {
   const [suggestion, setSuggestion] = useState<{ social: string; googleBusiness: string } | null>(null);
   const dirty = JSON.stringify(draft) !== JSON.stringify(props.initialDraft);
   const reviewFindings = props.review?.result?.findings ?? [];
-  const copyFindings = props.copyFindings ?? [];
+  const copyFindings = dirty ? copyChecks(draft) : (props.copyFindings ?? []);
   const realBlocker = (finding: { severity: string; detail: string }) => finding.severity === "blocker" && !cosmeticFinding(finding.detail);
   const blockers = distinctFindings([...reviewFindings.filter(realBlocker), ...copyFindings.filter(realBlocker)]);
   const cosmeticNotes = distinctFindings([...reviewFindings, ...copyFindings].filter((finding) => cosmeticFinding(finding.detail)));

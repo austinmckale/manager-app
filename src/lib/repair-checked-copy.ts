@@ -64,7 +64,7 @@ export function repairCheckedCopy(draft: MarketingDraft): MarketingDraft {
     publicLocation: oneSpace(draft.publicLocation),
     service: oneSpace(draft.service),
     metaHeadline: fit(draft.metaHeadline, 40, "Tell us about your project"),
-    imageHeadline: fit(draft.imageHeadline, 60, "Project by RHI Pros"),
+    imageHeadline: fit(draft.imageHeadline, 60, "Project photos"),
     googleHeadlines: uniqueLines(draft.googleHeadlines, 30, headlineFallbacks, 3),
     googleDescriptions: uniqueLines(draft.googleDescriptions, 90, descriptionFallbacks, 2),
   };

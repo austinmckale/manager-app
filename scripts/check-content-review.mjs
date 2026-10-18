@@ -17,7 +17,8 @@ const evidence = load('src/lib/marketing-evidence.ts', { zod: require('zod') });
 const processing = load('src/lib/marketing-processing.ts', { zod: require('zod'), 'node:crypto': require('node:crypto') });
 const findings = load('src/lib/review-findings.ts', {});
 const repair = load('src/lib/repair-checked-copy.ts', {});
-const review = load('src/lib/content-review.ts', { zod: require('zod'), 'node:crypto': require('node:crypto'), '@/lib/marketing': marketing, '@/lib/marketing-evidence': evidence, '@/lib/review-findings': findings });
+const copyChecks = load('src/lib/copy-checks.ts', { '@/lib/marketing': marketing, '@/lib/review-findings': findings });
+const review = load('src/lib/content-review.ts', { zod: require('zod'), 'node:crypto': require('node:crypto'), '@/lib/marketing': marketing, '@/lib/marketing-evidence': evidence, '@/lib/review-findings': findings, '@/lib/copy-checks': copyChecks });
 const publishability = load('src/lib/publishability.ts', {});
 const draftId = '10000000-0000-4000-8000-000000000001';
 const photoId = '20000000-0000-4000-8000-000000000001';
@@ -213,4 +214,7 @@ test('fixing copy checks clears ad-line blocks and leaves a real claim block in 
   assert.equal(findings.cosmeticFinding('Photo abc: The image appears to be an existing photo used for verification purposes, not necessarily showing completed work by our company.'), true);
   assert.equal(findings.cosmeticFinding('Photo abc: No explicit connection to our company team or projects is visible in the image itself.'), true);
   assert.equal(findings.cosmeticFinding('Unsupported claim: the notes do not say RHI built it.'), false);
+  assert.equal(repair.repairCheckedCopy({ ...draft, imageHeadline: '' }).imageHeadline, 'Project photos');
+  const claim = review.copyChecks({ ...draft, sourceNotes: 'Photos of a finished pavilion.', social: 'Our crew built this pavilion.' });
+  assert.equal(claim.filter((finding) => finding.detail === 'The caption says RHI Pros did this work, and the notes do not.' && finding.severity === 'blocker').length, 1);
 });

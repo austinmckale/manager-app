@@ -41,6 +41,11 @@ const QUICK_REVISIONS = [
   { label: "Another option", instruction: "Write another short option with the same facts." },
 ] as const;
 
+const STILL_WRITING_STATUS =
+  "Still writing on this PC. This page will show the suggestion when it finishes.";
+const STOPPED_WATCHING_STATUS =
+  "Still running on this PC. Open this draft again later for the suggestion.";
+
 function isRevisionTurn(value: unknown): value is RevisionTurn {
   if (!value || typeof value !== "object") return false;
   const turn = value as { instruction?: unknown; status?: unknown; at?: unknown; error?: unknown };
@@ -93,6 +98,7 @@ export function CaptionRevisionPanel({
   const [, setTurns] = useState<RevisionTurn[]>([]);
   const [busy, setBusy] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const watchToken = useRef(0);
   const announcedRef = useRef(false);
   const dismissedRef = useRef<string | null>(null);
 
@@ -187,24 +193,33 @@ export function CaptionRevisionPanel({
 
   function startWatch(hash: string) {
     clearPoll();
+    const token = ++watchToken.current;
     const started = Date.now();
     pollRef.current = setInterval(async () => {
       try {
         const body = await loadRevision(hash);
-        if (!body) return;
+        if (token !== watchToken.current || !body) return;
         const result = applyBody(body, hash, true);
+        if (token !== watchToken.current) return;
         if (result === "done") {
           clearPoll();
           setBusy(false);
           return;
         }
         if (result === "wait" && Date.now() - started > 600_000) {
-          setStatus("Still writing on this PC. This page will show the suggestion when it finishes.");
+          setStatus(STILL_WRITING_STATUS);
         }
       } catch {
         /* network hiccup — keep polling */
       }
     }, 2000);
+  }
+
+  function stopWatching() {
+    watchToken.current += 1;
+    clearPoll();
+    setBusy(false);
+    setStatus(STOPPED_WATCHING_STATUS);
   }
 
   useEffect(() => {
@@ -333,6 +348,16 @@ export function CaptionRevisionPanel({
             <p role="status" aria-live="polite" className="mt-3 text-sm font-medium text-slate-900">
               {status}
             </p>
+          ) : null}
+
+          {status === STILL_WRITING_STATUS ? (
+            <button
+              type="button"
+              onClick={stopWatching}
+              className="mt-3 min-h-11 rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-900"
+            >
+              Stop watching
+            </button>
           ) : null}
 
           {usableReady(ready, inputHash) ? (
