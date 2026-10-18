@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { z } from 'zod';
-import { writeCheckedCopy, writeLoopPlan } from './local-write-loop.ts';
+import { proposeCaptionFixes, writeCheckedCopy, writeLoopPlan } from './local-write-loop.ts';
 
 const schema = z.object({ social: z.string(), googleBusiness: z.string() });
 const evidence = { postType: 'project', photos: [{ assetId: 'p1', observations: ['Gray paver patio'] }], notes: { facts: [{ source: 'voice', quote: 'We laid a paver patio.' }] }, reasons: [] };
@@ -77,4 +77,28 @@ test('broken JSON is retried once, and a pack is never released when every write
 test('paid hybrid calls write one version; free local calls write two', () => {
   assert.equal(writeLoopPlan('hybrid').candidates, 1);
   assert.equal(writeLoopPlan('local').candidates, 2);
+});
+
+const pack = {
+  packName: 'Staircase', publicLocation: 'Bethlehem, PA', service: 'Exterior stairs',
+  social: 'We built this staircase for every family in town.', googleBusiness: 'New staircase in Bethlehem.',
+  metaPrimary: 'New exterior staircase.', metaHeadline: 'New staircase', imageHeadline: 'New staircase',
+  googleHeadlines: ['New staircase', 'Safer entry', 'Black railings'], googleDescriptions: ['A new staircase and landing.', 'White posts and black railings.'],
+};
+
+test('suggested fixes return only the captions that changed, and never the pack name', async () => {
+  const fixed = { ...pack, packName: 'Renamed', social: 'A new exterior staircase with white posts and black railings.' };
+  const request = async () => ({ message: { content: JSON.stringify(fixed) } });
+  const audit = async () => ({ audit: { fields: [] }, issues: [] });
+  const result = await proposeCaptionFixes({ request, audit, model: 'writer', evidence, draft: { ...pack, sourceNotes: 'private' }, issues: ['social: claims every family in town'], options: {} });
+  assert.deepEqual(Object.keys(result.copy), ['social']);
+  assert.equal(result.copy.social, fixed.social);
+  assert.equal(result.remaining, 0);
+});
+
+test('no suggestion is stored when the fix is not better than the current captions', async () => {
+  const request = async () => ({ message: { content: JSON.stringify({ ...pack, social: 'Still says every family in town.' }) } });
+  const audit = async () => ({ audit: { fields: [] }, issues: ['social: claims every family in town'] });
+  assert.equal(await proposeCaptionFixes({ request, audit, model: 'writer', evidence, draft: pack, issues: ['social: claims every family in town'], options: {} }), undefined);
+  assert.equal(await proposeCaptionFixes({ request, audit, model: 'writer', evidence, draft: pack, issues: [], options: {} }), undefined);
 });

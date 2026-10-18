@@ -17,6 +17,12 @@ Every selected photo is inspected. Exact source quotes are retained separately f
 
 Sources are rechecked before saving a generated draft. The exact public fields must match the reviewed fields. Passed generation checks become a review of that immutable draft and source hash; they do not approve it. Owner approval remains separate. Editing text, changing evidence or replacing a version invalidates the applicable review. Older reviews require the new evidence policy before approval/publishing. The existing publishing service still checks exact owner approval.
 
+## Check all captions before release
+
+On a draft's **Review & approve** page, **Check all captions with AI** is the last step before approval. If the editor has unsaved changes, including text or photos imported from ChatGPT or Claude, it saves them as a new version and queues the AI check on that version in one request (`save` with `check: true`). Otherwise it queues the check on the current version. The local worker reads every photo and note again, then the writer model fact-checks every caption: Facebook/Instagram, Google Business, Meta ad text and headline, Google ad headlines and descriptions, the graphic headline, the town and the service.
+
+When a caption fails, the worker runs the fix loop on the owner's current text (`proposeCaptionFixes` in `scripts/local-write-loop.ts`) and stores only the captions it improved, with how many problems remain, in the review record's `fixes`. Nothing is applied. The page lists each suggested fix with **Accept** and **Accept all fixes**; accepting puts it in the editor, and pressing the button again saves and checks it. A suggestion that does not parse is dropped without hiding the review. Owner approval is still separate.
+
 ## ChatGPT / Claude round trip
 
 Open a saved draft's **Review & approve** page and expand **Ask ChatGPT or Claude instead**. Download the bundle and follow its START-HERE.txt: attach every photo, `review-prompt.txt` and `raw-input.json` to the chat. The bundle contains private notes and voice transcripts; inspect what you share. The prompt asks the chat to pick and order the photos (best first), improve the text in Ryan's own way of talking using only the evidence, and, if it can edit images (ChatGPT can, Claude cannot), return lightly improved copies named `edited-photo-<n>-<id>.jpg` with nothing added, removed or restyled.

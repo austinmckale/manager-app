@@ -6,7 +6,7 @@ A code push is not a deployment. The live site is https://app.rhipros.com and fo
 
 ## Do not do these unless the owner asks again
 
-- Do not email or text Ryan. His addresses `rhisolutions316@gmail.com` and `ryanran321@gmail.com` are not destinations. Outbound email and SMS stay off. The only email address that may ever be used is `austinmck17@gmail.com`, and even that stays off until the owner chooses to send. The only SMS number is `6104514099`.
+- The app never emails or texts Ryan by itself. Outbound email and SMS from the app stay off. Owner decision, October 18, 2026: the inbox's "Email this note to Ryan" button is a `mailto:` link that opens the owner's own mail app addressed to `rhisolutions316@gmail.com`; the owner presses send. `ryanran321@gmail.com` is not a destination. The only email address that may ever be used is `austinmck17@gmail.com`, and even that stays off until the owner chooses to send. The only SMS number is `6104514099`.
 - Do not set `MARKETING_PUBLISH_MODE=live`. Do not create, queue, or publish a Buffer post unless the owner asks for that exact action. A private Buffer draft is a real object in Buffer.
 - Models (owner decision, October 18, 2026): `qwen3.5:4b` reads notes and photos; `qwen3.5:9b` writes, fixes, fact-checks and rewrites captions (`INTAKE_OLLAMA_WRITER_MODEL` in the worker's `.env.marketing-ai.local`). Measured on this RTX 3070 8 GB: both run 100% on the GPU at 8K context, and the 9B uses about 7.5 of 8 GB. Do not go larger than 9B on this card.
 - Do not build ads spend controls, Search Console pulls, Joist, a second Ryan portal, or native Facebook as part of finishing the organic post. Buffer is the only organic posting path.
@@ -21,7 +21,8 @@ A code push is not a deployment. The live site is https://app.rhipros.com and fo
 - Processing and review shows whether the stored worker check-in is older than 5 minutes. The website cannot see the GPU.
 - Caption suggestions show in the AI assist panel, the Facebook and Google fields, and the preview. Save uses that visible text.
 - The ChatGPT bundle downloads photos through `/api/marketing/review/media?draftId=&photoId=`. Import fills the text boxes, reorders existing photos, and can show a short "Improve:" note. Branch `marketing/write-fix-loop` adds forgiving imports and edited-photo uploads (see MARKETING-AI-WORKFLOW.md). They go live after that branch merges and Vercel deploys.
-- The inbox shows the note to Ryan before the copy button. The button label is "Copy this note to text Ryan". Nothing is sent.
+- The inbox shows a short note to Ryan pointing him to app.rhipros.com (no private upload link) and an "Email this note to Ryan" button that opens the owner's mail app (on branch `marketing/write-fix-loop`). The app sends nothing.
+- "Check all captions with AI" on the review page saves any unsaved edits (including a ChatGPT/Claude import), queues the AI check of every caption, and shows suggested fixes with Accept / Accept all (on branch `marketing/write-fix-loop`; needs the worker release built from it).
 
 ## Included in this commit
 

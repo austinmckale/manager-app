@@ -7,7 +7,7 @@ import { isDemoMode } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { DRAFT_SAVED_ACTION } from "@/lib/marketing";
-import { INVITE_CREATED, INVITE_REVOKED, PHOTO_RECEIVED, uploadInviteToken } from "@/lib/field-intake";
+import { PHOTO_RECEIVED } from "@/lib/field-intake";
 import { AUDIO_RECEIVED } from "@/lib/intake-audio";
 import { GENERATION_ACTION } from "@/lib/marketing-evidence";
 import { INTAKE_PACK } from "@/lib/intake-delivery";
@@ -147,16 +147,6 @@ export default async function MarketingPage({ searchParams }: { searchParams: Pr
   const signedUrls = new Map<string, string | undefined>((signed?.data ?? []).flatMap((item) => (item.path ? [[item.path, item.signedUrl ?? undefined] as const] : [])));
   const editorJobs = jobs.filter((job) => !job.categoryTags.includes("photo-dump"));
   const showProcessingBanner = Boolean(opened?.status === "processing" && (!setup?.heartbeat || setup.heartbeat.state === "error"));
-  const [invites, revokedInvites] = await Promise.all([
-    prisma.activityLog.findMany({ where: { orgId: auth.orgId, action: INVITE_CREATED }, orderBy: { createdAt: "desc" }, take: 30 }),
-    prisma.activityLog.findMany({ where: { orgId: auth.orgId, action: INVITE_REVOKED }, orderBy: { createdAt: "desc" }, take: 300, select: { metadata: true } }),
-  ]);
-  const revokedInviteIds = new Set(revokedInvites.map((record) => (record.metadata as { inviteId?: string } | null)?.inviteId));
-  const uploadPath = invites.flatMap((record) => {
-    const expiresAt = (record.metadata as { expiresAt?: string } | null)?.expiresAt;
-    if (!expiresAt || new Date(expiresAt).getTime() <= Date.now() || revokedInviteIds.has(record.id)) return [];
-    return [`/send-photos/${uploadInviteToken(record.id)}`];
-  })[0] ?? "";
 
   return <div className="space-y-4">
     <section className="rounded-2xl border border-slate-300 p-4">
@@ -167,7 +157,7 @@ export default async function MarketingPage({ searchParams }: { searchParams: Pr
         {next ? <Link href={cardHref(next, showTests, jobFilter, owner)} className={primaryLink}>{next.actionLabel}</Link> : <Link href="/capture" className={primaryLink}>Upload photos</Link>}
         {next ? <Link href="/capture" className={secondaryLink}>Upload photos</Link> : null}
       </div>
-      <RyanRequestButton uploadPath={uploadPath} demo={demo} />
+      <RyanRequestButton demo={demo} />
     </section>
     <p className="text-sm text-slate-800">{setup ? <>{setup.ai} <Link href="/marketing/delivery" className="font-semibold text-teal-950 underline">AI setup</Link>. {setup.buffer} <Link href="/marketing/buffer" className="font-semibold text-teal-950 underline">Buffer setup</Link>.</> : "AI and Buffer status could not be read."} {setup ? null : <Link href="/marketing/delivery" className="font-semibold text-teal-950 underline">AI setup</Link>}</p>
     {showProcessingBanner ? <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-950">{setup?.heartbeat?.state === "error" ? "This submission is still processing, and the worker’s last stored state is error." : "This submission is still processing, and no worker check-in is stored."} <Link href="/marketing/delivery" className="font-semibold underline">Open AI setup</Link></p> : null}

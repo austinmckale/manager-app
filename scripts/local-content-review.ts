@@ -5,6 +5,7 @@ import { inspectSubmission, auditDraft } from "./local-evidence-pipeline";
 import { localReviewRequest } from "./local-review-request";
 import { localAiSettings } from "./local-ai-settings";
 import { localModels } from "../src/lib/local-models";
+import { proposeCaptionFixes, type CaptionFixes } from "./local-write-loop";
 import { DRAFT_SAVED_ACTION } from "../src/lib/marketing";
 import { loadContentReview } from "../src/lib/content-review-store";
 import { REVIEW_REQUEST, copyChecks, reviewRecordSchema, type ReviewFinding } from "../src/lib/content-review";
@@ -62,10 +63,17 @@ export async function runContentReview(prisma: PrismaClient, supabase: typeof Su
       ? block.lines.map((line) => ({ category: "facts" as const, severity: "blocker" as const, detail: line, evidence: "The notes match a publication block.", suggestion: "Use a new verified submission." }))
       : [...copyChecks(current.draft), ...issues.map((issue) => ({ category: "facts" as const, severity: cosmeticFinding(issue) ? "warning" as const : "blocker" as const, detail: issue.slice(0, 800), evidence: "Compared with all selected photos and the original notes and voice transcript.", suggestion: "Correct the notes or public copy, or choose relevant photos, then save a new version and run checks again." }))];
     const summary = block ? block.title : findings.length ? "Changes or context are required before approval." : "Every selected photo and public field was checked against source evidence. Owner approval is still required.";
+    // When captions fail the fact-check, suggest fixes the owner can accept. Nothing is applied here,
+    // and a failed suggestion never fails the review.
+    let fixes: CaptionFixes | undefined;
+    if (audit?.issues.length) {
+      try { fixes = await proposeCaptionFixes({ request: ai?.request ?? localReviewRequest, model: checker, evidence, draft: current.draft, issues: audit.issues, options: { num_ctx: 8192, num_predict: 2200, ...settings.options } }); }
+      catch { fixes = undefined; }
+    }
     // Re-read evidence before committing a result for an immutable input hash.
     const latest = await loadContentReview(orgId, current.draftId);
     if (!latest || latest.superseded || latest.inputHash !== current.inputHash) throw new Error("Source changed during review");
-    await prisma.activityLog.update({ where: { id: current.reviewId }, data: { metadata: { ...metadata, status: "completed", completedAt: new Date().toISOString(), engine: model === checker ? model : `${model} + ${checker}`, policyVersion: 3, evidence, imagesChecked: images.length, result: { summary, findings: [...findings.filter((finding) => finding.severity === "blocker"), ...findings.filter((finding) => finding.severity === "warning")].slice(0, 30) } } } });
+    await prisma.activityLog.update({ where: { id: current.reviewId }, data: { metadata: { ...metadata, status: "completed", completedAt: new Date().toISOString(), engine: model === checker ? model : `${model} + ${checker}`, policyVersion: 3, evidence, imagesChecked: images.length, ...(fixes ? { fixes } : {}), result: { summary, findings: [...findings.filter((finding) => finding.severity === "blocker"), ...findings.filter((finding) => finding.severity === "warning")].slice(0, 30) } } } });
     return { reviewed: true };
   } catch (error) {
     const reason = error instanceof z.ZodError || error instanceof SyntaxError ? "Local reviewer returned invalid structured findings." : error instanceof Error && /^Local reviewer returned HTTP \d{3}$/.test(error.message) ? error.message + "." : error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError") ? "Local reviewer timed out." : "Local review failed or evidence changed.";
