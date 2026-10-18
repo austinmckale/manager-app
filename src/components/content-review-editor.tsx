@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { MarketingDraft } from "@/lib/marketing";
 import { plainGaps } from "@/lib/marketing-evidence";
@@ -28,6 +28,24 @@ function withholdsPublication(finding: { detail: string; suggestion: string; evi
   const text = `${finding.detail}\n${finding.suggestion}\n${finding.evidence ?? ""}`;
   return /do not publish/i.test(text) || /\bTEST\b/i.test(text) || /not for publication/i.test(text);
 }
+type ReviewPhoto = Props["photos"][number];
+function photosForIds(catalog: ReviewPhoto[], ids: string[]) {
+  const byId = new Map(catalog.map((photo) => [photo.id, photo]));
+  const seen = new Set<string>();
+  const next: ReviewPhoto[] = [];
+  for (const id of ids) {
+    if (seen.has(id)) continue;
+    const photo = byId.get(id);
+    if (!photo) continue;
+    seen.add(id);
+    next.push(photo);
+  }
+  return next;
+}
+function samePhotoIds(current: ReviewPhoto[], next: ReviewPhoto[]) {
+  return current.length === next.length && current.every((photo, index) => photo.id === next[index]?.id);
+}
+const importedPhotoNote = "Imported the text and the selected photo order. Save this version before checks or approval. Nothing is posted.";
 export function ContentReviewEditor(props: Props) {
   const router = useRouter();
   const [draft, setDraft] = useState(props.initialDraft);
@@ -38,6 +56,35 @@ export function ContentReviewEditor(props: Props) {
   const [permission, setPermission] = useState(false);
   const [resolution, setResolution] = useState("");
   const [suggestion, setSuggestion] = useState<{ social: string; googleBusiness: string } | null>(null);
+  const [photos, setPhotos] = useState(props.photos);
+  const [photoNotes, setPhotoNotes] = useState<Record<string, string>>({});
+  const photoList = useRef(props.photos);
+  function commitPhotoOrder(ids: string[]) {
+    const next = photosForIds(props.photos, ids);
+    if (!next.length || samePhotoIds(photoList.current, next)) return null;
+    photoList.current = next;
+    setPhotos(next);
+    return next.map((photo) => photo.id);
+  }
+  function importDraft(imported: MarketingDraft) {
+    const assetIds = commitPhotoOrder(imported.assetIds);
+    setDraft(assetIds ? { ...imported, assetIds } : imported);
+    setSuggestion(null);
+    setFacts(false);
+    setPermission(false);
+    setSaveNote(assetIds ? importedPhotoNote : "");
+  }
+  function acceptPhotoIds(photoIds: string[], improvements?: { id: string; note: string }[]) {
+    const notes = Object.fromEntries((improvements ?? []).flatMap((item) => item.note.trim() ? [[item.id, item.note.trim()]] : []));
+    setPhotoNotes(notes);
+    const assetIds = commitPhotoOrder(photoIds);
+    if (!assetIds) return;
+    setDraft((current) => ({ ...current, assetIds }));
+    setSuggestion(null);
+    setFacts(false);
+    setPermission(false);
+    setSaveNote(importedPhotoNote);
+  }
   const visibleDraft = suggestion ? { ...draft, social: suggestion.social, googleBusiness: suggestion.googleBusiness } : draft;
   const dirty = JSON.stringify(visibleDraft) !== JSON.stringify(props.initialDraft);
   const reviewFindings = props.review?.result?.findings ?? [];
@@ -81,7 +128,7 @@ export function ContentReviewEditor(props: Props) {
     <header><Link href="/marketing/saved" className="text-sm text-teal-700 underline">← Drafts</Link><h2 className="mt-3 text-2xl font-semibold">Review & approve</h2><p className="mt-1 text-slate-600">{props.jobName} · {draft.packName || "Untitled pack"}</p></header>
     {props.demo ? <p className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900">Example workflow using website photos. Review findings below are illustrative, not a completed AI review. Saves and approvals are disabled.</p> : null}
     {props.superseded ? <p className="rounded-xl bg-amber-50 p-4">This version was replaced and cannot be approved. {props.replacementDraftId ? <Link className="underline" href={`/marketing/review/${props.replacementDraftId}`}>Open its replacement</Link> : null}</p> : null}
-    <PostPreviews draft={{ social: suggestion?.social ?? draft.social, googleBusiness: suggestion?.googleBusiness ?? draft.googleBusiness, metaPrimary: draft.metaPrimary, metaHeadline: draft.metaHeadline, imageHeadline: draft.imageHeadline, publicLocation: draft.publicLocation, service: draft.service, landingUrl: draft.landingUrl, googleHeadlines: draft.googleHeadlines, googleDescriptions: draft.googleDescriptions }} photos={props.photos} />
+    <PostPreviews draft={{ social: suggestion?.social ?? draft.social, googleBusiness: suggestion?.googleBusiness ?? draft.googleBusiness, metaPrimary: draft.metaPrimary, metaHeadline: draft.metaHeadline, imageHeadline: draft.imageHeadline, publicLocation: draft.publicLocation, service: draft.service, landingUrl: draft.landingUrl, googleHeadlines: draft.googleHeadlines, googleDescriptions: draft.googleDescriptions }} photos={photos} />
     <CaptionRevisionPanel
       draftId={props.draftId}
       inputHash={props.inputHash}
@@ -93,7 +140,7 @@ export function ContentReviewEditor(props: Props) {
       onApply={(social, googleBusiness) => { setDraft((current) => ({ ...current, social, googleBusiness })); setSuggestion(null); setFacts(false); setPermission(false); setSaveNote("Applied the suggestion. Save this version before checks or approval. Nothing is posted."); }}
     />
     <div className="grid items-start gap-5 lg:grid-cols-2">
-      <section className="rounded-2xl border border-slate-200 p-4"><h3 className="font-semibold">Photos</h3><div className="mt-4 grid grid-cols-2 gap-3">{props.photos.map((photo) => <figure key={photo.id}><img src={photo.url} alt={photo.description || "Selected job photo"} className="aspect-square w-full rounded-xl object-cover" /></figure>)}</div>{props.audio.length ? props.audio.map((audio) => <div key={audio.id} className="mt-4"><audio controls className="w-full" src={`/api/marketing/review/media?draftId=${props.draftId}&audioId=${audio.id}`} />{audio.transcript ? <details className="mt-2 text-sm"><summary className="cursor-pointer font-medium">Transcript</summary><p className="mt-2 whitespace-pre-wrap">{audio.transcript}</p></details> : <p className="mt-2 text-sm text-slate-500">Waiting for local transcription.</p>}</div>) : null}{props.originalNotes ? <details className="mt-4 text-sm"><summary className="cursor-pointer font-medium">Original notes</summary><p className="mt-2 whitespace-pre-wrap">{props.originalNotes}</p></details> : null}</section>
+      <section className="rounded-2xl border border-slate-200 p-4"><h3 className="font-semibold">Photos</h3><div className="mt-4 grid grid-cols-2 gap-3">{photos.map((photo) => <figure key={photo.id}><img src={photo.url} alt={photo.description || "Selected job photo"} className="aspect-square w-full rounded-xl object-cover" />{photoNotes[photo.id] ? <figcaption className="mt-1 text-xs text-slate-700">Improve: {photoNotes[photo.id]}</figcaption> : null}</figure>)}</div>{props.audio.length ? props.audio.map((audio) => <div key={audio.id} className="mt-4"><audio controls className="w-full" src={`/api/marketing/review/media?draftId=${props.draftId}&audioId=${audio.id}`} />{audio.transcript ? <details className="mt-2 text-sm"><summary className="cursor-pointer font-medium">Transcript</summary><p className="mt-2 whitespace-pre-wrap">{audio.transcript}</p></details> : <p className="mt-2 text-sm text-slate-500">Waiting for local transcription.</p>}</div>) : null}{props.originalNotes ? <details className="mt-4 text-sm"><summary className="cursor-pointer font-medium">Original notes</summary><p className="mt-2 whitespace-pre-wrap">{props.originalNotes}</p></details> : null}</section>
       <section className="rounded-2xl border border-slate-200 p-4"><h3 className="font-semibold">Descriptions</h3>
         <label className="mt-4 block text-sm font-medium">Intended post<select className={box} value={draft.postType} disabled={busy || props.superseded} onChange={(event) => edit("postType", event.target.value as MarketingDraft["postType"])}><option value="project">Job / construction update</option><option value="company_life">Company personality / team life</option></select></label>
         {([['sourceNotes', 'Corrected job notes', 6000, 4], ['publicLocation', 'Public town', 100, 1]] as const).map(([key, label, limit, rows]) => <label key={key} className="mt-4 block text-sm font-medium">{label}<textarea className={box} value={draft[key]} maxLength={limit} rows={rows} disabled={busy || props.superseded} onChange={(event) => edit(key, event.target.value)} /><span className="text-xs font-normal text-slate-500">{draft[key].length}/{limit}</span></label>)}
@@ -107,7 +154,7 @@ export function ContentReviewEditor(props: Props) {
       </section>
     </div>
     <section className="rounded-2xl border border-slate-200 p-4"><h3 className="font-semibold">Checks</h3><p className="mt-3 font-medium">{props.review?.status === "completed" ? blockers.length ? "Changes required" : "Ready for your judgment" : props.review?.status === "running" ? "Local reviewer is working…" : props.review?.status === "queued" ? "Waiting for your local worker" : props.review?.status === "failed" ? "Review needs retry" : "Not checked yet"}</p>{blockers.length ? <div className="mt-3 rounded-xl border border-red-300 bg-red-50 p-3"><p className="font-semibold text-red-950">{blockers.some(withholdsPublication) ? "Not publishable" : "Check this before approving"}</p><ul className="mt-2 space-y-3">{blockers.map((finding, index) => <li key={`${finding.detail}-${index}`}><p className="text-sm font-medium text-red-950">{finding.detail}</p>{finding.suggestion ? <p className="mt-1 text-sm text-red-900">What to fix: {finding.suggestion}</p> : null}</li>)}</ul></div> : null}{cosmeticNotes.length ? <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3"><p className="font-semibold">Notes from the photo check</p><p className="mt-1 text-sm text-slate-600">These do not stop the post.</p><ul className="mt-2 space-y-2 text-sm">{cosmeticNotes.map((finding, index) => <li key={`note-${finding.detail}-${index}`}>{finding.detail}</li>)}</ul></div> : null}{visibleWarnings.length ? <ul className="mt-3 space-y-2 text-sm text-slate-800">{visibleWarnings.map((finding, index) => <li key={`${finding.detail}-${index}`}><p>{finding.detail}</p>{finding.suggestion ? <p className="mt-1">What to fix: {finding.suggestion}</p> : null}</li>)}</ul> : null}{dirty ? <p className="mt-3 text-sm text-slate-800">Copy fixes are in the editor. This list still describes the last saved version until you save and run checks again.</p> : null}{checkReason ? <p className="mt-3 text-sm text-slate-800">{checkReason}</p> : null}{props.review?.error ? <p className="mt-2 text-sm text-red-700">{props.review.error}</p> : null}{gaps.length ? <ul className="mt-3 list-disc space-y-2 pl-5 text-base font-medium text-slate-950">{gaps.map((gap) => <li key={gap}>{gap}</li>)}</ul> : props.review?.result && blockers.length === 0 ? <p className="mt-2 text-sm">{props.review.result.summary}</p> : null}<button type="button" onClick={() => { setDraft(repairCheckedCopy(visibleDraft)); setSuggestion(null); setFacts(false); setPermission(false); setSaveNote("Ad lines were shortened so they are complete. The Facebook and Google Business text was only cleaned of extra spaces. Photo notes were not rewritten. Save this version, then run checks again."); }} disabled={busy || props.superseded || props.demo} className="mt-4 min-h-11 rounded-xl border-2 border-slate-900 bg-white px-4 py-3 text-sm font-semibold text-slate-900 disabled:border-slate-300 disabled:text-slate-500">Fix the copy checks</button><button type="button" onClick={() => void act("check")} disabled={Boolean(checkReason) || busy || props.demo} className="mt-4 ml-3 min-h-11 rounded-xl border-2 border-slate-900 bg-white px-4 py-3 text-sm font-semibold text-slate-900 disabled:border-slate-300 disabled:text-slate-500">{props.review?.status === "failed" ? "Retry local checks" : "Run AI checks"}</button><button type="button" onClick={() => router.refresh()} className="ml-3 min-h-11 text-sm font-semibold text-slate-900 underline">Refresh status</button></section>
-    <MarketingChatHandoff draftId={props.draftId} inputHash={props.inputHash} draft={visibleDraft} originalNotes={props.originalNotes} photos={props.photos} audio={props.audio} disabled={busy || props.superseded || Boolean(props.demo)} onImport={(imported) => { setDraft(imported); setSuggestion(null); setFacts(false); setPermission(false); setSaveNote(""); }} />
+    <MarketingChatHandoff draftId={props.draftId} inputHash={props.inputHash} draft={visibleDraft} originalNotes={props.originalNotes} photos={props.photos} audio={props.audio} disabled={busy || props.superseded || Boolean(props.demo)} onImport={importDraft} onPhotos={acceptPhotoIds} />
     <section className="rounded-2xl border border-teal-200 bg-teal-50 p-4"><h3 className="font-semibold">Approval</h3><p className="mt-2 text-sm text-slate-600">It does not publish, send email, release a client pack or start ads.</p>{props.approvedAt && !props.superseded && !dirty ? <p className="mt-3 font-semibold text-teal-900">Approved {new Date(props.approvedAt).toLocaleString()}</p> : <><label className="mt-4 flex items-start gap-3 text-sm"><input type="checkbox" checked={facts} onChange={(event) => setFacts(event.target.checked)} />I checked the original evidence, corrected the facts and verified the destination link.</label><label className="mt-3 flex items-start gap-3 text-sm"><input type="checkbox" checked={permission} onChange={(event) => setPermission(event.target.checked)} />I inspected every photo and have permission to use the selected photos publicly.</label><label className="mt-4 block text-sm">How you resolved warnings / approval notes<textarea className={box} rows={3} maxLength={2000} value={resolution} onChange={(event) => setResolution(event.target.value)} /></label><button type="button" onClick={() => void act("approve")} disabled={approveDisabled} className="mt-4 rounded-xl bg-teal-800 px-4 py-3 font-semibold text-white disabled:opacity-40">Approve this version</button></>}
       {props.approvedAt && !props.superseded && !dirty && !props.demo ? <Link href={`/marketing/buffer/send/${props.draftId}`} className="ml-3 mt-4 inline-block rounded-xl bg-teal-800 px-4 py-3 text-sm font-semibold text-white">Send to Buffer</Link> : null}
     </section>
