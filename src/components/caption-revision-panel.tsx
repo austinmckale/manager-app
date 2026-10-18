@@ -187,21 +187,19 @@ export function CaptionRevisionPanel({
 
   function startWatch(hash: string) {
     clearPoll();
-    const deadline = { at: 0 };
+    const started = Date.now();
     pollRef.current = setInterval(async () => {
-      if (!deadline.at) deadline.at = Date.now() + 3 * 60 * 1000;
-      if (Date.now() > deadline.at) {
-        clearPoll();
-        setStatus("The rewrite did not finish in time. Refresh this page. It may still finish on this PC.");
-        setBusy(false);
-        return;
-      }
       try {
         const body = await loadRevision(hash);
         if (!body) return;
-        if (applyBody(body, hash, true) === "done") {
+        const result = applyBody(body, hash, true);
+        if (result === "done") {
           clearPoll();
           setBusy(false);
+          return;
+        }
+        if (result === "wait" && Date.now() - started > 600_000) {
+          setStatus("Still writing on this PC. This page will show the suggestion when it finishes.");
         }
       } catch {
         /* network hiccup — keep polling */

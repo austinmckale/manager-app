@@ -17,6 +17,9 @@ const cosmeticPatterns = [
   /\bno visible construction activity\b/i,
   /\bdoes not indicate that our company built\b/i,
   /\bunrelated to the visual content\b/i,
+  /\bverification purposes\b/i,
+  /\bnot necessarily showing completed work\b/i,
+  /\bno explicit connection\b/i,
 ];
 
 export function cosmeticFinding(detail: string): boolean {
