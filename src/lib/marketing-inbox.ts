@@ -95,15 +95,26 @@ function newest<T extends { createdAt: string }>(rows: T[]) {
   return rows.reduce<T | null>((best, row) => !best || row.createdAt > best.createdAt ? row : best, null);
 }
 
+function eastern(iso: string) {
+  const date = new Date(iso);
+  if (!iso || Number.isNaN(date.getTime())) return "";
+  return `${date.toLocaleString("en-US", { timeZone: "America/New_York", dateStyle: "medium", timeStyle: "short" })} Eastern`;
+}
+
 function bufferDelivery(logs: InboxLogInput[], draftId: string) {
   const rank: Record<string, number> = { published: 6, sending: 5, queued: 4, draft: 3, unknown: 2, preparing: 2, needs_approval: 2, failed: 1, rejected: 1 };
   const rows = logs.filter((log) => log.action === BUFFER_DELIVERY && text(meta(log.metadata)?.draftId) === draftId);
   const best = rows.reduce<InboxLogInput | null>((chosen, row) => {
     if (!chosen) return row;
-    return (rank[text(meta(row.metadata)?.status)] ?? 0) >= (rank[text(meta(chosen.metadata)?.status)] ?? 0) ? row : chosen;
+    const chosenRank = rank[text(meta(chosen.metadata)?.status)] ?? 0;
+    const rowRank = rank[text(meta(row.metadata)?.status)] ?? 0;
+    if (rowRank !== chosenRank) return rowRank > chosenRank ? row : chosen;
+    return row.createdAt > chosen.createdAt ? row : chosen;
   }, null);
   if (!best) return null;
-  return { status: text(meta(best.metadata)?.status), dueAt: text(meta(best.metadata)?.dueAt), sentAt: text(meta(best.metadata)?.sentAt) };
+  const status = text(meta(best.metadata)?.status);
+  const otherFailed = rows.some((row) => row !== best && ["failed", "rejected"].includes(text(meta(row.metadata)?.status)));
+  return { status, dueAt: text(meta(best.metadata)?.dueAt), sentAt: text(meta(best.metadata)?.sentAt), otherFailed };
 }
 
 function derive(input: {
@@ -113,8 +124,31 @@ function derive(input: {
   generation: "none" | "queued" | "running" | "completed" | "failed" | "held";
   draft: boolean;
   approved: boolean;
-  buffer: { status: string; dueAt: string; sentAt: string } | null;
+  buffer: { status: string; dueAt: string; sentAt: string; otherFailed: boolean } | null;
 }) {
+  if (input.draft && input.approved && input.buffer) {
+    const extra = input.generation === "queued" || input.generation === "running" ? " Another generation is still in progress." : input.generation === "held" ? " An earlier generation pass is still waiting on details." : "";
+    const channel = input.buffer.otherFailed ? " Another channel did not finish. Check Buffer before sending that one again." : "";
+    const sent = eastern(input.buffer.sentAt);
+    const due = eastern(input.buffer.dueAt);
+    if (input.buffer.status === "published") {
+      const when = sent ? ` at ${sent}` : ". The publication time was not saved";
+      return { status: "posted" as const, statusLabel: "Posted", detail: `Buffer published this${when}.${channel}${extra}`, actionLabel: "View delivery", action: "review" as const };
+    }
+    if (input.buffer.status === "queued" || input.buffer.status === "sending") {
+      const when = input.buffer.status === "sending" && !due ? " Buffer is publishing this now." : due ? ` Buffer's slot is ${due}.` : " Buffer will publish it at the next open slot on your Buffer schedule.";
+      return { status: "scheduled" as const, statusLabel: "Scheduled", detail: `This is in Buffer's queue.${when}${channel}${extra}`, actionLabel: "View delivery", action: "review" as const };
+    }
+    if (input.buffer.status === "draft") {
+      return { status: "ready_to_schedule" as const, statusLabel: "Draft in Buffer", detail: `Buffer is holding this as a draft. It posts when you set a time in Buffer.${channel}${extra}`, actionLabel: "View delivery", action: "review" as const };
+    }
+    if (input.buffer.status === "failed" || input.buffer.status === "rejected") {
+      return { status: "ready_to_schedule" as const, statusLabel: "Send failed", detail: `This send did not finish. Check Buffer before sending again.${extra}`, actionLabel: "View delivery", action: "review" as const };
+    }
+    if (input.buffer.status === "preparing" || input.buffer.status === "unknown" || input.buffer.status === "needs_approval") {
+      return { status: "ready_to_schedule" as const, statusLabel: "Send unconfirmed", detail: `Buffer has not confirmed this yet. Check Buffer before sending again.${extra}`, actionLabel: "View delivery", action: "review" as const };
+    }
+  }
   if (input.voice === "pending") {
     return { status: "processing" as const, statusLabel: "Processing", detail: "Voice transcription is not finished. The recording stays saved.", actionLabel: "View progress", action: "open" as const };
   }
@@ -126,17 +160,6 @@ function derive(input: {
   }
   if (input.draft && input.approved) {
     const extra = input.generation === "queued" || input.generation === "running" ? " Another generation is still in progress." : "";
-    if (input.buffer?.status === "published") {
-      const when = input.buffer.sentAt ? ` at ${input.buffer.sentAt}` : "";
-      return { status: "posted" as const, statusLabel: "Posted", detail: `Buffer published this${when}.${extra}`, actionLabel: "View delivery", action: "review" as const };
-    }
-    if (input.buffer?.status === "queued" || input.buffer?.status === "sending") {
-      const when = input.buffer.dueAt ? ` Buffer's slot is ${input.buffer.dueAt}.` : " Buffer will publish it at the next open slot on your Buffer schedule.";
-      return { status: "scheduled" as const, statusLabel: "Scheduled", detail: `This is in Buffer's queue.${when}${extra}`, actionLabel: "View delivery", action: "review" as const };
-    }
-    if (input.buffer?.status === "draft") {
-      return { status: "ready_to_schedule" as const, statusLabel: "Draft in Buffer", detail: `Buffer is holding this as a draft. It posts when you set a time in Buffer.${extra}`, actionLabel: "Open approved draft", action: "review" as const };
-    }
     return { status: "ready_to_schedule" as const, statusLabel: "Ready to schedule", detail: `This saved version is approved. Approval is not a scheduled or published post.${extra}`, actionLabel: "Open approved draft", action: "review" as const };
   }
   if (input.generation === "queued" || input.generation === "running") {

@@ -20,6 +20,7 @@ import { buildInboxCards, type InboxCardModel } from "@/lib/marketing-inbox";
 import { processingId, processingSettings } from "@/lib/marketing-processing";
 import { bufferSelectionId } from "@/lib/publishing/buffer";
 import { BUFFER_DELIVERY } from "@/lib/publishing/buffer-delivery";
+import { isDashboardOwnerEmail } from "@/lib/client-portal-policy";
 
 export const dynamic = "force-dynamic";
 
@@ -54,13 +55,14 @@ function inboxQuery(input: { tests?: boolean; page?: number; jobId?: string; ope
   return `/marketing${query ? `?${query}` : ""}${input.hash ?? ""}`;
 }
 
-function cardHref(card: InboxCardModel, tests: boolean, jobId: string) {
-  if (card.draftId && (card.status === "scheduled" || card.status === "posted")) return `/marketing/buffer/send/${card.draftId}`;
+function cardHref(card: InboxCardModel, tests: boolean, jobId: string, owner: boolean) {
+  const delivery = card.status === "scheduled" || card.status === "posted" || card.statusLabel === "Draft in Buffer" || card.statusLabel === "Send failed" || card.statusLabel === "Send unconfirmed";
+  if (owner && card.draftId && delivery) return `/marketing/buffer/send/${card.draftId}`;
   if ((card.action === "review") && card.draftId) return `/marketing/review/${card.draftId}`;
   return inboxQuery({ tests, jobId, open: card.id, hash: card.action === "notes" ? "#submission-notes" : "#submission-editor" });
 }
 
-function InboxCard({ card, tests, jobId, thumbs }: { card: InboxCardModel; tests: boolean; jobId: string; thumbs: { id: string; url: string; name: string }[] }) {
+function InboxCard({ card, tests, jobId, owner, thumbs }: { card: InboxCardModel; tests: boolean; jobId: string; owner: boolean; thumbs: { id: string; url: string; name: string }[] }) {
   const when = new Date(card.submittedAt).toLocaleString("en-US", { timeZone: "America/New_York", dateStyle: "medium", timeStyle: "short" });
   return <article className="rounded-2xl border border-slate-300 bg-white p-3">
     <div className="flex gap-3">
@@ -74,7 +76,7 @@ function InboxCard({ card, tests, jobId, thumbs }: { card: InboxCardModel; tests
     <p className="mt-2 text-sm text-slate-800">{card.summary || "No note or transcript is saved."}</p>
     <p className="mt-1 text-sm text-slate-800">{card.detail}</p>
     {card.websitePhotoCount > 0 ? <p className="mt-1 text-sm text-slate-800">{card.websitePhotoCount} {card.websitePhotoCount === 1 ? "photo is" : "photos are"} on the website. That is separate from a social post.</p> : null}
-    <Link href={cardHref(card, tests, jobId)} className={`${primaryLink} mt-3 w-full sm:w-auto`}>{card.actionLabel}</Link>
+    <Link href={cardHref(card, tests, jobId, owner)} className={`${primaryLink} mt-3 w-full sm:w-auto`}>{card.actionLabel}</Link>
   </article>;
 }
 
@@ -98,6 +100,7 @@ export default async function MarketingPage({ searchParams }: { searchParams: Pr
     </div>;
   }
 
+  const owner = isDashboardOwnerEmail(auth.email);
   const showTests = params.tests === "1";
   const jobFilter = /^[0-9a-f-]{36}$/i.test(params.jobId ?? "") ? params.jobId! : "";
   const page = Math.max(1, Math.min(10000, Number.parseInt(params.page ?? "1", 10) || 1));
@@ -119,7 +122,7 @@ export default async function MarketingPage({ searchParams }: { searchParams: Pr
   const baseLogs = [...contextLogs, ...draftLogs].map(mapLog);
   const preliminary = buildInboxCards(photoList, baseLogs);
   const draftIds = [...new Set(preliminary.flatMap((card) => card.draftId ? [card.draftId] : []))];
-  const reviewLogs = draftIds.length ? await prisma.activityLog.findMany({ where: { orgId: auth.orgId, action: { in: [REVIEW_APPROVAL, REVIEW_SUPERSEDED, BUFFER_DELIVERY] }, OR: draftIds.map((id) => ({ metadata: { path: ["draftId"], equals: id } })) }, take: 200 }) : [];
+  const reviewLogs = draftIds.length ? await prisma.activityLog.findMany({ where: { orgId: auth.orgId, action: { in: [REVIEW_APPROVAL, REVIEW_SUPERSEDED, BUFFER_DELIVERY] }, OR: draftIds.map((id) => ({ metadata: { path: ["draftId"], equals: id } })) }, orderBy: { createdAt: "desc" }, take: 400 }) : [];
   const cards = reviewLogs.length ? buildInboxCards(photoList, [...baseLogs, ...reviewLogs.map(mapLog)]) : preliminary;
   const scoped = jobFilter ? cards.filter((card) => card.jobId === jobFilter) : cards;
   const hiddenTests = scoped.filter((card) => card.test).length;
@@ -150,7 +153,7 @@ export default async function MarketingPage({ searchParams }: { searchParams: Pr
       <h2 className="mt-1 text-xl font-semibold text-slate-900">{next ? next.actionLabel : "Nothing is waiting"}</h2>
       <p className="mt-2 text-sm text-slate-800">{next ? `${next.title}. ${next.statusLabel}.` : "New submissions will appear here."}</p>
       <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-        {next ? <Link href={cardHref(next, showTests, jobFilter)} className={primaryLink}>{next.actionLabel}</Link> : <Link href="/capture" className={primaryLink}>Upload photos</Link>}
+        {next ? <Link href={cardHref(next, showTests, jobFilter, owner)} className={primaryLink}>{next.actionLabel}</Link> : <Link href="/capture" className={primaryLink}>Upload photos</Link>}
         {next ? <Link href="/capture" className={secondaryLink}>Upload photos</Link> : null}
       </div>
     </section>
@@ -166,7 +169,7 @@ export default async function MarketingPage({ searchParams }: { searchParams: Pr
       {jobFilter ? <Link href={inboxQuery({ tests: showTests })} className="font-semibold text-slate-900 underline">Show every submission</Link> : null}
       {!showTests && hiddenTests > 0 ? <p className="text-slate-800">{hiddenTests} marked test {hiddenTests === 1 ? "upload is" : "uploads are"} hidden.</p> : null}
     </div>
-    {pageCards.length ? <div className="space-y-3">{pageCards.map((card) => <InboxCard key={card.id} card={card} tests={showTests} jobId={jobFilter} thumbs={card.photoIds.slice(0, 4).map((id) => { const photo = photos.get(id); return { id, url: photo ? signedUrls.get(photo.storageKey) ?? "" : "", name: photo?.fileName ?? "Photo" }; })} />)}</div> : <section className="rounded-2xl border border-dashed border-slate-400 p-6"><h3 className="font-semibold text-slate-900">{listed.length ? "No submissions on this page." : "No submissions in this view."}</h3><p className="mt-2 text-sm text-slate-800">Uploads with a note show up here. Marked test uploads stay hidden until you ask for them.</p></section>}
+    {pageCards.length ? <div className="space-y-3">{pageCards.map((card) => <InboxCard key={card.id} card={card} tests={showTests} jobId={jobFilter} owner={owner} thumbs={card.photoIds.slice(0, 4).map((id) => { const photo = photos.get(id); return { id, url: photo ? signedUrls.get(photo.storageKey) ?? "" : "", name: photo?.fileName ?? "Photo" }; })} />)}</div> : <section className="rounded-2xl border border-dashed border-slate-400 p-6"><h3 className="font-semibold text-slate-900">{listed.length ? "No submissions on this page." : "No submissions in this view."}</h3><p className="mt-2 text-sm text-slate-800">Uploads with a note show up here. Marked test uploads stay hidden until you ask for them.</p></section>}
     <div className="flex justify-between text-sm font-semibold">{page > 1 ? <Link href={inboxQuery({ tests: showTests, jobId: jobFilter, page: page - 1 })} className="text-slate-900 underline">Previous</Link> : <span />}{page * pageSize < listed.length ? <Link href={inboxQuery({ tests: showTests, jobId: jobFilter, page: page + 1 })} className="text-slate-900 underline">Next</Link> : null}</div>
   </div>;
 }
