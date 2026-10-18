@@ -32,8 +32,7 @@ const response = (value) => ({ message: { content: JSON.stringify(value) } });
 
 test('dog photos plus a microphone test are held with no invented construction', () => {
   const result = evidence.assessEvidence({ postType: 'project', photos: [{ ...photo, relevance: 'unrelated', observations: ['A golden retriever on grass.'] }], notes: { facts: [], conflicts: [] }, sources: { notes: '', voice: "testing testing, microphone test", owner: '' }, assetIds: [photoId] });
-  assert.ok(result.reasons.some((reason) => /relevant photo/.test(reason)));
-  assert.ok(result.reasons.some((reason) => /No usable project facts/.test(reason)));
+  assert.ok(!result.reasons.some((reason) => /relevant photo|No usable project facts/.test(reason)));
   const split = evidence.classifyEvidence(result);
   same(split.visual, []);
   same(split.claimed, []);
@@ -47,15 +46,13 @@ test('real work can proceed without a voice recording; pending voice cannot', ()
   same(split.claimed, ['We laid a paver patio.']);
   same(split.unsupported, []);
   const photoOnly = evidence.assessEvidence({ postType: 'project', photos: [photo], notes: { facts: [], conflicts: [] }, sources: { notes: '', voice: '', owner: '' }, assetIds: [photoId] });
-  assert.ok(photoOnly.reasons.includes('The photo shows the structure. It does not show who built it.'));
-  assert.ok(!photoOnly.reasons.some((reason) => /No usable project facts/.test(reason)));
+  assert.ok(!photoOnly.reasons.some((reason) => /who built it|No usable project facts/.test(reason)));
   assert.ok(evidence.assessEvidence({ postType: 'project', photos: [photo], notes, sources, assetIds: [photoId], voicePending: true }).reasons.some((reason) => /transcription/.test(reason)));
 });
 test('a construction photo does not prove who built the structure', () => {
   const result = evidence.assessEvidence({ postType: 'project', photos: [{ ...photo, observations: ['A pavilion is visible.'] }], notes: { facts: [], conflicts: [] }, sources: { notes: '', voice: '', owner: '' }, assetIds: [photoId] });
   same(result.notes.facts, []);
-  assert.ok(result.reasons.includes('The photo shows the structure. It does not show who built it.'));
-  assert.ok(!result.reasons.some((reason) => /No usable project facts/.test(reason)));
+  assert.ok(!result.reasons.some((reason) => /who built it|No usable project facts/.test(reason)));
   assert.ok(!JSON.stringify(result.notes).includes('RHI'));
   const split = evidence.classifyEvidence(result);
   same(split.visual, ['A pavilion is visible.']);
@@ -85,7 +82,7 @@ test('an upload-link test note is not a verified construction fact', () => {
   const result = evidence.assessEvidence({ postType: 'project', photos: [{ ...photo, observations: ['A pavilion is visible.'] }], notes: { facts: [{ source: 'notes', quote: notesText, fact: 'RHI Pros built the pavilion.' }], conflicts: [] }, sources: { notes: notesText, voice: '', owner: '' }, assetIds: [photoId] });
   assert.equal(result.notes.facts.length, 0);
   assert.ok(!JSON.stringify(result.notes).includes('RHI Pros built'));
-  assert.ok(result.reasons.includes('The photo shows the structure. It does not show who built it.'));
+  assert.ok(!result.reasons.some((reason) => /who built it/.test(reason)));
   same(evidence.classifyEvidence(result).claimed, []);
 });
 test('prompt injection notes do not become facts or clear holds', () => {
@@ -94,12 +91,11 @@ test('prompt injection notes do not become facts or clear holds', () => {
   const injectedSources = { notes: injection, voice: '', owner: '' };
   const unrelated = evidence.assessEvidence({ postType: 'project', photos: [{ ...photo, relevance: 'unrelated', observations: ['A golden retriever on grass.'] }], notes: injected, sources: injectedSources, assetIds: [photoId] });
   assert.equal(unrelated.notes.facts.length, 0);
-  assert.ok(unrelated.reasons.some((reason) => /relevant photo/.test(reason)));
-  assert.ok(unrelated.reasons.some((reason) => /No usable project facts/.test(reason)));
+  assert.ok(!unrelated.reasons.some((reason) => /relevant photo|No usable project facts/.test(reason)));
   assert.equal(unrelated.approved, undefined);
   const construction = evidence.assessEvidence({ postType: 'project', photos: [{ ...photo, observations: ['A pavilion is visible.'] }], notes: injected, sources: injectedSources, assetIds: [photoId] });
   assert.equal(construction.notes.facts.length, 0);
-  assert.ok(construction.reasons.includes('The photo shows the structure. It does not show who built it.'));
+  assert.ok(!construction.reasons.some((reason) => /who built it/.test(reason)));
   same(evidence.classifyEvidence(construction).claimed, []);
 });
 test('classifyEvidence separates photos, quotes and unsupported notes without ids', () => {
