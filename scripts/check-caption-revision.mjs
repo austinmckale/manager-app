@@ -57,3 +57,23 @@ test("two different instructions produce different ids", () => {
   const second = caption.captionRevisionId(orgId, draftId, inputHash, "Lead with the finished patio.");
   assert.notEqual(first, second);
 });
+
+test("older revision records still load as plain caption requests", () => {
+  const old = { draftId, inputHash, instruction, status: "ready", social: "A", googleBusiness: "B", error: null, approved: false, published: false };
+  const parsed = caption.captionRevisionSchema.parse(old);
+  assert.equal(parsed.mode, "caption");
+  assert.deepEqual({ ...parsed.locked }, {});
+  assert.equal(parsed.remaining, null);
+});
+
+test("a regenerate request takes kept captions within their limits and nothing else", () => {
+  const ok = { draftId, inputHash, mode: "regenerate", locked: { social: "Kept text.", googleHeadlines: ["One", "Two", "Three"] }, note: "shorter" };
+  assert.equal(caption.captionRegenerateBodySchema.safeParse(ok).success, true);
+  assert.equal(caption.captionRegenerateBodySchema.safeParse({ ...ok, locked: { metaHeadline: "x".repeat(41) } }).success, false);
+  assert.equal(caption.captionRegenerateBodySchema.safeParse({ ...ok, locked: { sourceNotes: "private" } }).success, false);
+  assert.equal(caption.captionRegenerateBodySchema.safeParse({ ...ok, approved: true }).success, false);
+  assert.match(caption.regenerateInstruction("mention the landing"), /^Regenerate the unlocked captions: mention the landing$/);
+  const a = caption.captionRevisionId("org", draftId, inputHash, "Regenerate the unlocked captions", JSON.stringify({ social: "A" }));
+  const b = caption.captionRevisionId("org", draftId, inputHash, "Regenerate the unlocked captions", JSON.stringify({ social: "B" }));
+  assert.notEqual(a, b);
+});

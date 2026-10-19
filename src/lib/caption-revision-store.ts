@@ -1,5 +1,5 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
-import { CAPTION_REVISION_ACTION, captionRevisionId, captionRevisionSchema, emptyRevision } from "./caption-revision";
+import { CAPTION_REVISION_ACTION, captionRevisionId, captionRevisionSchema, emptyRevision, type CaptionValues } from "./caption-revision";
 
 type Revision = ReturnType<typeof captionRevisionSchema.parse>;
 type Social = Revision["social"];
@@ -71,8 +71,10 @@ export async function queueCaptionRevision(
   instruction: string,
   social: Social,
   googleBusiness: GoogleBusiness,
+  regenerate?: { locked: CaptionValues },
 ): Promise<{ id: string; status: Revision["status"]; deduped: boolean; approved: false }> {
-  const id = captionRevisionId(orgId, draftId, inputHash, instruction);
+  // A different set of kept captions is a different request.
+  const id = captionRevisionId(orgId, draftId, inputHash, instruction, regenerate ? JSON.stringify(regenerate.locked) : "");
   const queued = (base: Revision): Revision => {
     const next = {
       ...base,
@@ -82,6 +84,8 @@ export async function queueCaptionRevision(
       status: "queued",
       social,
       googleBusiness,
+      ...(regenerate ? { mode: "regenerate", locked: regenerate.locked, proposal: {}, remaining: null } : {}),
+      requestedAt: new Date().toISOString(),
       approved: false,
       published: false,
       error: null,
@@ -126,7 +130,8 @@ export async function readCaptionRevision(
   draftId: string,
   inputHash: string,
 ): Promise<Revision | null> {
-  const row = await store.activityLog.findFirst({
+  // Regenerate requests have their own reader; this one serves the Facebook/Google rewrite panel.
+  const rows = await store.activityLog.findMany({
     where: {
       orgId,
       action: CAPTION_REVISION_ACTION,
@@ -136,8 +141,13 @@ export async function readCaptionRevision(
       ],
     },
     orderBy: { createdAt: "desc" },
+    take: 12,
   });
-  return row ? parseRevision(row.metadata) : null;
+  for (const row of rows) {
+    const parsed = parseRevision(row.metadata);
+    if (parsed && parsed.mode !== "regenerate") return parsed;
+  }
+  return null;
 }
 
 /** Newest finished suggestion for this saved version, even when a later ask is still waiting. */
@@ -161,7 +171,7 @@ export async function readLatestReadyCaptionRevision(
   });
   for (const row of rows) {
     const parsed = parseRevision(row.metadata);
-    if (parsed?.status === "ready" && (parsed.social.trim() || parsed.googleBusiness.trim())) return parsed;
+    if (parsed?.status === "ready" && parsed.mode !== "regenerate" && (parsed.social.trim() || parsed.googleBusiness.trim())) return parsed;
   }
   return null;
 }
@@ -216,5 +226,32 @@ export async function failCaptionRevision(store: PrismaClient, id: string, error
 export async function markCaptionRevisionStale(store: PrismaClient, id: string): Promise<boolean> {
   return transition(store, id, (current) =>
     captionRevisionSchema.parse({ ...current, status: "stale", approved: false }),
+  );
+}
+
+/** Newest "regenerate unlocked captions" request for this saved version, by when it was last asked. */
+export async function readLatestRegenerate(store: PrismaClient, orgId: string, draftId: string, inputHash: string): Promise<(Revision & { id: string }) | null> {
+  const rows = await store.activityLog.findMany({
+    where: {
+      orgId,
+      action: CAPTION_REVISION_ACTION,
+      AND: [
+        { metadata: { path: ["draftId"], equals: draftId } },
+        { metadata: { path: ["inputHash"], equals: inputHash } },
+        { metadata: { path: ["mode"], equals: "regenerate" } },
+      ],
+    },
+    orderBy: { createdAt: "desc" },
+    take: 12,
+  });
+  const parsed = rows.flatMap((row) => { const revision = parseRevision(row.metadata); return revision ? [{ ...revision, id: row.id }] : []; });
+  return parsed.sort((a, b) => b.requestedAt.localeCompare(a.requestedAt))[0] ?? null;
+}
+
+export async function saveRegenerateProposal(store: PrismaClient, id: string, proposal: CaptionValues, remaining: number): Promise<boolean> {
+  return transition(store, id, (current) =>
+    current.status === "running" && current.mode === "regenerate"
+      ? captionRevisionSchema.parse({ ...current, status: "ready", proposal, remaining, social: proposal.social ?? current.social, googleBusiness: proposal.googleBusiness ?? current.googleBusiness, error: null, approved: false, published: false })
+      : null,
   );
 }

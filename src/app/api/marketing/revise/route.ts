@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
-import { captionRevisionBodySchema } from "@/lib/caption-revision";
-import { queueCaptionRevision, readCaptionRevision, readLatestReadyCaptionRevision } from "@/lib/caption-revision-store";
+import { CAPTION_FIELDS, captionRegenerateBodySchema, captionRevisionBodySchema, regenerateInstruction } from "@/lib/caption-revision";
+import { queueCaptionRevision, readCaptionRevision, readLatestReadyCaptionRevision, readLatestRegenerate } from "@/lib/caption-revision-store";
 import { appendCaptionTurn, readCaptionThread } from "@/lib/caption-thread";
 import { isDashboardOwnerEmail } from "@/lib/client-portal-policy";
 import { loadContentReview } from "@/lib/content-review-store";
@@ -33,7 +33,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Preview only. Nothing was queued." }, { status: 409 });
   }
 
-  const parsed = captionRevisionBodySchema.safeParse(await request.json().catch(() => null));
+  const raw = await request.json().catch(() => null);
+  if (raw && typeof raw === "object" && (raw as { mode?: unknown }).mode === "regenerate") return regenerate(raw, auth);
+  const parsed = captionRevisionBodySchema.safeParse(raw);
   if (!parsed.success) {
     return NextResponse.json({ error: "Write a short change, up to 400 characters." }, { status: 400 });
   }
@@ -76,6 +78,24 @@ export async function POST(request: Request) {
   }
 }
 
+async function regenerate(raw: unknown, auth: { orgId: string; userId: string }) {
+  const parsed = captionRegenerateBodySchema.safeParse(raw);
+  if (!parsed.success) return NextResponse.json({ error: "Check the kept captions and keep the note under 300 characters." }, { status: 400 });
+  const body = parsed.data;
+  if (CAPTION_FIELDS.every((field) => body.locked[field] !== undefined)) return NextResponse.json({ error: "Every caption is kept. Unlock one to regenerate it." }, { status: 400 });
+  const context = await loadContentReview(auth.orgId, body.draftId);
+  if (!context) return NextResponse.json({ error: "Draft not found." }, { status: 404 });
+  if (context.inputHash !== body.inputHash || context.superseded) return NextResponse.json({ error: "This version changed. Reload before asking again." }, { status: 409 });
+  try {
+    const instruction = regenerateInstruction(body.note);
+    const queued = await queueCaptionRevision(prisma, auth.orgId, auth.userId, context.jobId, context.draftId, context.inputHash, instruction, context.draft.social, context.draft.googleBusiness, { locked: body.locked });
+    await appendCaptionTurn(prisma, auth.orgId, auth.userId, context.draftId, { at: new Date().toISOString(), instruction, status: "queued" });
+    return NextResponse.json({ ok: true, id: queued.id, status: queued.status, approved: false, published: false });
+  } catch {
+    return NextResponse.json({ error: "Could not queue the request. The draft is still saved." }, { status: 503 });
+  }
+}
+
 export async function GET(request: Request) {
   let auth;
   try {
@@ -98,6 +118,15 @@ export async function GET(request: Request) {
   });
   if (!parsed.success) {
     return NextResponse.json({ error: "Choose a saved version." }, { status: 400 });
+  }
+
+  if (searchParams.get("mode") === "regenerate") {
+    try {
+      const latest = await readLatestRegenerate(prisma, auth.orgId, parsed.data.draftId, parsed.data.inputHash);
+      return NextResponse.json({ ok: true, regenerate: latest ? { status: latest.status, requestedAt: latest.requestedAt, locked: latest.locked, proposal: latest.proposal, remaining: latest.remaining, error: latest.error, approved: false, published: false } : null }, { headers: { "Cache-Control": "no-store" } });
+    } catch {
+      return NextResponse.json({ error: "Could not load the request." }, { status: 503 });
+    }
   }
 
   try {

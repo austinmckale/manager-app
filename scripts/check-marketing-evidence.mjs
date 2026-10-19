@@ -294,3 +294,17 @@ test('one-shot tests leave automatic processing off; held corrections preserve h
   assert.equal(h.writes[2].create.metadata.testSubmissionId, submissionId);
   assert.equal(h.writes[2].create.metadata.enabled, false);
 });
+
+test('a checker that prefixes field names or skips captions is asked again only for the skipped ones', async () => {
+  const copy = { social: 'We laid a paver patio.', googleBusiness: 'Paver patio laid.' };
+  const entry = (field, text) => ({ field, text, supported: true, factIds: ['note:0'], issues: [] });
+  const asked = [];
+  const result = await pipeline.auditDraft('test', copy, validEvidence(), async (body) => {
+    const fields = JSON.parse(body.messages[1].content).publicFields;
+    asked.push(Object.keys(fields));
+    return response({ fields: asked.length === 1 ? [entry('publicFields.social', copy.social)] : [entry('googleBusiness', copy.googleBusiness)] });
+  });
+  assert.equal(JSON.stringify(asked), JSON.stringify([['social', 'googleBusiness'], ['googleBusiness']]));
+  assert.equal(result.issues.length, 0);
+  assert.equal(evidence.auditFieldName('publicFields.googleHeadlines.0'), 'googleHeadlines.0');
+});

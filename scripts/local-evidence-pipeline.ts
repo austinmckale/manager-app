@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { assessEvidence, auditIssues, claimAuditSchema, evidenceFacts, mergeNoteReads, mergePhotoReads, noteEvidenceSchema, photoEvidenceSchema, publicFields, type EvidenceSources, type MarketingEvidence } from "../src/lib/marketing-evidence";
+import { assessEvidence, auditFieldName, auditIssues, claimAuditSchema, evidenceFacts, mergeNoteReads, mergePhotoReads, noteEvidenceSchema, photoEvidenceSchema, publicFields, type EvidenceSources, type MarketingEvidence } from "../src/lib/marketing-evidence";
 import { localReviewRequest } from "./local-review-request";
 import { localAiSettings } from "./local-ai-settings";
 
@@ -46,10 +46,20 @@ export async function inspectSubmission(input: { model: string; photos: { id: st
   }
 }
 export async function auditDraft(model: string, copy: Record<string, unknown>, evidence: MarketingEvidence, request: RequestAI = localReviewRequest) {
-  const result = await request({ model, stream: false, think: false, format: z.toJSONSchema(claimAuditSchema), options: { temperature: 0, num_ctx: 8192, num_predict: 3000, ...localAiSettings().options }, messages: [
-    { role: "system", content: `${rules} Act as a critical reviewer in a separate pass from the writer. Review EVERY supplied public field against source facts. Return one field entry with the EXACT full text for each supplied field. Check every claim in that text: materials, town, completion, company involvement, guarantees, offers, praise and comparisons. Spoken facts may describe hidden work, but do not say photos prove it. A finished-looking patio, pavilion, or hardscape is a valid project photo. Do not require visible equipment or unfinished work. Do not require a logo, company name, or ownership marking on the photo. Spoken notes may describe work that is not painted on the photo. Do not fail a field because the transcript text is absent from the pixels. Do not fail a company-personality post for a dog, yard, or other everyday scene when the owner notes explicitly ask for that kind of post. A project post that names a town, a job, an offer, or that RHI Pros did the work is an unsupported claim when the source facts do not say so. Do not fail a field only because a finished project photo has no equipment, no logo, or no words painted on it. Do not label owner or voice notes "internal test data" unless the supplied source text itself says TEST, do not publish, or microphone test. Reject irrelevant generic contractor copy, missing important voice-note details, text contradicting the intended post, personal details, or misleading imagery. A call to action or company name can use the facts establishing the post subject; it must not add unsupported factual promises. Use only supplied fact IDs. If unsure, supported=false and give a specific fix. A field is supported only if ALL of its claims are supported.` },
-    { role: "user", content: JSON.stringify({ postType: evidence.postType, facts: evidenceFacts(evidence), photos: evidence.photos, publicFields: publicFields(copy) }) },
-  ] });
-  const audit = claimAuditSchema.parse(JSON.parse(result.message?.content || ""));
+  const ask = async (fields: Record<string, string>) => {
+    const result = await request({ model, stream: false, think: false, format: z.toJSONSchema(claimAuditSchema), options: { temperature: 0, num_ctx: 8192, num_predict: 3000, ...localAiSettings().options }, messages: [
+      { role: "system", content: `${rules} Act as a critical reviewer in a separate pass from the writer. Review EVERY supplied public field against source facts. Return one field entry with the EXACT full text for each supplied field. Check every claim in that text: materials, town, completion, company involvement, guarantees, offers, praise and comparisons. Spoken facts may describe hidden work, but do not say photos prove it. A finished-looking patio, pavilion, or hardscape is a valid project photo. Do not require visible equipment or unfinished work. Do not require a logo, company name, or ownership marking on the photo. Spoken notes may describe work that is not painted on the photo. Do not fail a field because the transcript text is absent from the pixels. Do not fail a company-personality post for a dog, yard, or other everyday scene when the owner notes explicitly ask for that kind of post. A project post that names a town, a job, an offer, or that RHI Pros did the work is an unsupported claim when the source facts do not say so. Do not fail a field only because a finished project photo has no equipment, no logo, or no words painted on it. Do not label owner or voice notes "internal test data" unless the supplied source text itself says TEST, do not publish, or microphone test. Reject irrelevant generic contractor copy, missing important voice-note details, text contradicting the intended post, personal details, or misleading imagery. A call to action or company name can use the facts establishing the post subject; it must not add unsupported factual promises. Use only supplied fact IDs. If unsure, supported=false and give a specific fix. A field is supported only if ALL of its claims are supported.` },
+      { role: "user", content: JSON.stringify({ postType: evidence.postType, facts: evidenceFacts(evidence), photos: evidence.photos, publicFields: fields }) },
+    ] });
+    return claimAuditSchema.parse(JSON.parse(result.message?.content || ""));
+  };
+  const fields = publicFields(copy);
+  const first = await ask(fields);
+  // A small checker sometimes skips captions. Check only the skipped ones again instead of failing them.
+  const answered = (name: string) => first.fields.some((check) => auditFieldName(check.field) === name && check.text.trim() === fields[name].trim());
+  const skipped = Object.keys(fields).filter((name) => !answered(name));
+  if (!skipped.length) return { audit: first, issues: auditIssues(copy, evidence, first) };
+  const second = await ask(Object.fromEntries(skipped.map((name) => [name, fields[name]])));
+  const audit = { fields: [...first.fields.filter((check) => !skipped.includes(auditFieldName(check.field))), ...second.fields].slice(0, 40) };
   return { audit, issues: auditIssues(copy, evidence, audit) };
 }

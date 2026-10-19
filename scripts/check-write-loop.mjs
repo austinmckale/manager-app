@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { z } from 'zod';
-import { proposeCaptionFixes, writeCheckedCopy, writeLoopPlan } from './local-write-loop.ts';
+import { captionsLookComplete, proposeCaptionFixes, regenerateUnlocked, writeCheckedCopy, writeLoopPlan } from './local-write-loop.ts';
 
 const schema = z.object({ social: z.string(), googleBusiness: z.string() });
 const evidence = { postType: 'project', photos: [{ assetId: 'p1', observations: ['Gray paver patio'] }], notes: { facts: [{ source: 'voice', quote: 'We laid a paver patio.' }] }, reasons: [] };
@@ -101,4 +101,29 @@ test('no suggestion is stored when the fix is not better than the current captio
   const audit = async () => ({ audit: { fields: [] }, issues: ['social: claims every family in town'] });
   assert.equal(await proposeCaptionFixes({ request, audit, model: 'writer', evidence, draft: pack, issues: ['social: claims every family in town'], options: {} }), undefined);
   assert.equal(await proposeCaptionFixes({ request, audit, model: 'writer', evidence, draft: pack, issues: [], options: {} }), undefined);
+});
+
+test('regenerate rewrites only the unlocked captions and sends the kept ones as fixed context', async () => {
+  const asks = [];
+  const locked = { social: pack.social, googleHeadlines: pack.googleHeadlines, publicLocation: 'Bethlehem, PA', service: 'Exterior stairs', metaPrimary: pack.metaPrimary, metaHeadline: pack.metaHeadline, imageHeadline: pack.imageHeadline };
+  const request = async (body) => {
+    asks.push(JSON.parse(body.messages[1].content));
+    assert.deepEqual(Object.keys(body.format.properties).sort(), ['googleBusiness', 'googleDescriptions']);
+    return { message: { content: JSON.stringify({ googleBusiness: 'New exterior staircase and landing in Bethlehem.', googleDescriptions: ['White posts, black railings.', 'Safer entry from the driveway.'] }) } };
+  };
+  const audit = async () => ({ audit: { fields: [] }, issues: [] });
+  const result = await regenerateUnlocked({ request, audit, model: 'writer', evidence, locked, note: 'mention the landing', options: {} });
+  assert.deepEqual(Object.keys(result.proposal).sort(), ['googleBusiness', 'googleDescriptions']);
+  assert.equal(result.remaining, 0);
+  assert.deepEqual(asks[0].keptCaptions, locked);
+  assert.equal(asks[0].ownerNote, 'mention the landing');
+  await assert.rejects(regenerateUnlocked({ request, audit, model: 'writer', evidence, locked: { ...locked, googleBusiness: 'x', googleDescriptions: ['a.', 'b.'] }, note: '', options: {} }), /Every caption is kept/);
+});
+
+test('captions with stray CJK characters or a dangling last word are not accepted from the writer', () => {
+  assert.equal(captionsLookComplete({ ...pack }), true);
+  assert.equal(captionsLookComplete({ ...pack, googleDescriptions: ['White treads and wooden支持.', 'Black railings.'] }), false);
+  assert.equal(captionsLookComplete({ ...pack, googleDescriptions: ['Safer entry access in.', 'Black railings.'] }), false);
+  assert.equal(captionsLookComplete({ ...pack, metaHeadline: 'Stairs with' }), false);
+  assert.equal(captionsLookComplete({ googleBusiness: 'Only this caption.' }), true);
 });

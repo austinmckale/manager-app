@@ -10,13 +10,21 @@ import { loadContentReview } from "@/lib/content-review-store";
 import { CHAT_EDIT_TAG, REVIEW_APPROVAL, REVIEW_REQUEST, REVIEW_SUPERSEDED, allowedPhotoSelection, canApproveContent, copyChecks, editedFromTag, needsResolutionNote } from "@/lib/content-review";
 import { PROCESSING_SETTINGS, processingId, processingSettingsSchema } from "@/lib/marketing-processing";
 import { draftPublishability } from "@/lib/publishability";
+import { CAPTION_FIELDS, CAPTION_LOCKS_ACTION, captionFieldSchema, captionLocksId } from "@/lib/caption-revision";
 
 const schema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("check"), draftId: z.string().uuid(), inputHash: z.string().length(64) }),
   // check: true saves the version and queues the AI check of every caption on it, in one step.
-  z.object({ action: z.literal("save"), draftId: z.string().uuid(), inputHash: z.string().length(64), draft: marketingDraftSchema, check: z.boolean().optional() }),
+  z.object({ action: z.literal("save"), draftId: z.string().uuid(), inputHash: z.string().length(64), draft: marketingDraftSchema, check: z.boolean().optional(), lockedFields: z.array(captionFieldSchema).max(CAPTION_FIELDS.length).optional() }),
+  // Which captions the owner kept. Stored beside the version, so keeping a caption never changes the version or its checks.
+  z.object({ action: z.literal("locks"), draftId: z.string().uuid(), inputHash: z.string().length(64), fields: z.array(captionFieldSchema).max(CAPTION_FIELDS.length) }),
   z.object({ action: z.literal("approve"), draftId: z.string().uuid(), inputHash: z.string().length(64), factsChecked: z.literal(true), photosCleared: z.literal(true), resolution: z.string().trim().max(2000) }),
 ]);
+async function saveLocks(tx: Prisma.TransactionClient, base: { orgId: string; actorId: string; jobId: string }, draftId: string, fields: string[]) {
+  const id = captionLocksId(base.orgId, draftId);
+  const metadata = { draftId, fields: [...new Set(fields)] };
+  await tx.activityLog.upsert({ where: { id }, create: { ...base, id, action: CAPTION_LOCKS_ACTION, metadata }, update: { metadata } });
+}
 async function queueCheck(tx: Prisma.TransactionClient, base: { orgId: string; actorId: string; jobId: string }, target: { draftId: string; inputHash: string; reviewId: string }) {
   const metadata = { draftId: target.draftId, inputHash: target.inputHash, status: "queued", requestedAt: new Date().toISOString() };
   await tx.activityLog.upsert({ where: { id: target.reviewId }, create: { ...base, id: target.reviewId, action: REVIEW_REQUEST, metadata }, update: { metadata } });
@@ -39,6 +47,10 @@ export async function POST(request: Request) {
     const result = await prisma.$transaction(async (tx) => {
       const context = await loadContentReview(auth.orgId, body.draftId, tx);
       if (!context || context.inputHash !== body.inputHash || context.superseded) throw new Error("This version changed or was replaced. Reload before continuing.");
+      if (body.action === "locks") {
+        await saveLocks(tx, { orgId: auth.orgId, actorId: auth.userId, jobId: context.jobId }, context.draftId, body.fields);
+        return { locked: body.fields.length };
+      }
       const publishability = draftPublishability(context.draft, context.originals, context.assets);
       const incoming = body.action === "save" ? draftPublishability(body.draft) : { blocked: false, reasons: [] as string[] };
       if (publishability.blocked || incoming.blocked) throw new Error(`This submission cannot be saved, checked, approved, queued, or posted. ${(publishability.blocked ? publishability : incoming).reasons.join(", ")}.`);
@@ -49,6 +61,7 @@ export async function POST(request: Request) {
         if (!allowedPhotoSelection(body.draft.assetIds, [...context.draft.assetIds, ...edits.map((edit) => edit.id)])) throw new Error("Photo selection cannot add photos that are not already on this version.");
         const version = await tx.activityLog.create({ data: { ...base, action: DRAFT_SAVED_ACTION, metadata: { ...body.draft, photoNotes: context.draft.photoNotes, parentDraftId: context.draftId } } });
         await tx.activityLog.create({ data: { ...base, action: REVIEW_SUPERSEDED, metadata: { draftId: context.draftId, replacementDraftId: version.id } } });
+        if (body.lockedFields) await saveLocks(tx, base, version.id, body.lockedFields);
         if (body.check) {
           const saved = await loadContentReview(auth.orgId, version.id, tx);
           if (saved && !saved.voicePending) {

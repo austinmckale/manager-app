@@ -4,7 +4,9 @@ import { localReviewRequest } from "./local-review-request";
 import { localAiSettings } from "./local-ai-settings";
 import { installedLocalModels } from "../src/lib/local-models";
 import { loadContentReview } from "../src/lib/content-review-store";
-import { claimCaptionRevision, failCaptionRevision, listQueuedCaptionRevisions, markCaptionRevisionStale, saveCaptionProposal } from "../src/lib/caption-revision-store";
+import { claimCaptionRevision, failCaptionRevision, listQueuedCaptionRevisions, markCaptionRevisionStale, saveCaptionProposal, saveRegenerateProposal } from "../src/lib/caption-revision-store";
+import { latestCheckedEvidence, regenerateNote } from "./local-regenerate";
+import { regenerateUnlocked } from "./local-write-loop";
 import { appendCaptionTurn } from "../src/lib/caption-thread";
 
 const proposalSchema = z.object({ social: z.string().max(2200), googleBusiness: z.string().max(1500) });
@@ -41,6 +43,16 @@ export async function runCaptionRevision(prisma: PrismaClient, orgId: string): P
       await markCaptionRevisionStale(prisma, queued.id);
       return { revised: false };
     }
+    if (queued.mode === "regenerate") {
+      // Reuses what the last AI check saw instead of reading the photos again.
+      const evidence = await latestCheckedEvidence(prisma, orgId, queued.draftId);
+      if (!evidence) throw new Error("NO_CHECK");
+      const writer = (await installedLocalModels()).writer;
+      const result = await regenerateUnlocked({ request: localReviewRequest, model: writer, evidence, locked: queued.locked, note: regenerateNote(queued.instruction), options: { num_ctx: 8192, num_predict: 2200, ...localAiSettings().options } });
+      await saveRegenerateProposal(prisma, queued.id, result.proposal, result.remaining);
+      await appendRevisionTurn(prisma, orgId, queued.draftId, queued.instruction, "ready");
+      return { revised: true };
+    }
     const current = { social: context.draft.social, googleBusiness: context.draft.googleBusiness };
     const rawVoiceFull = context.audio.map((item) => item.transcript).filter(Boolean).join("\n\n");
     const rawVoice = rawVoiceFull.slice(0, 12000);
@@ -70,7 +82,8 @@ export async function runCaptionRevision(prisma: PrismaClient, orgId: string): P
     await appendRevisionTurn(prisma, orgId, queued.draftId, queued.instruction, "ready");
     return { revised: true };
   } catch (error) {
-    const reason = error instanceof Error && error.message === "UNCHANGED" ? "The local model did not change the caption."
+    const reason = error instanceof Error && error.message === "NO_CHECK" ? "Press Check all captions with AI once first. Regenerate uses what that check saw in the photos."
+      : error instanceof Error && error.message === "UNCHANGED" ? "The local model did not change the caption."
       : error instanceof z.ZodError || error instanceof SyntaxError ? "The local model returned an invalid caption."
       : error instanceof Error && /^Local reviewer returned HTTP \d{3}$/.test(error.message) ? `${error.message}.`
       : error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError") ? "The local model timed out."

@@ -176,12 +176,16 @@ export function checkedFieldsMatch(copy: Record<string, unknown>, checked?: Reco
   const fields = publicFields(copy);
   return !!checked && Object.keys(fields).length === Object.keys(checked).length && Object.entries(fields).every(([key, value]) => checked[key] === value);
 }
+/** The checker sometimes prefixes field names with "publicFields."; they still name the same caption. */
+export function auditFieldName(field: string) {
+  return field.trim().replace(/^publicFields./, "");
+}
 export function auditIssues(copy: Record<string, unknown>, evidence: MarketingEvidence, audit: z.infer<typeof claimAuditSchema>) {
   const facts = new Set(evidenceFacts(evidence).map((fact) => fact.id));
   const issues = evidence.reasons.filter((reason) => !cosmeticFinding(reason));
   for (const [field, text] of Object.entries(publicFields(copy))) {
-    const checks = audit.fields.filter((check) => check.field === field);
-    if (checks.length !== 1 || checks[0].text !== text) { issues.push(`${field}: the reviewer did not check the exact current text.`); continue; }
+    const checks = audit.fields.filter((check) => auditFieldName(check.field) === field);
+    if (checks.length !== 1 || checks[0].text.trim() !== text.trim()) { issues.push(`${field}: the reviewer did not check the exact current text.`); continue; }
     const check = checks[0];
     const reported = check.issues.filter((issue) => !cosmeticFinding(issue));
     if ((!check.supported || reported.length) && (reported.length || check.issues.length === 0)) issues.push(`${field}: ${reported.join(" ") || "Unsupported claim or unsuitable copy."}`);

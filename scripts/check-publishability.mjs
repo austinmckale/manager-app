@@ -78,6 +78,7 @@ const processing = load("src/lib/marketing-processing.ts", { zod: require("zod")
 const findings = load("src/lib/review-findings.ts", {});
 const copyChecks = load("src/lib/copy-checks.ts", { "@/lib/marketing": marketing, "@/lib/review-findings": findings });
 const review = load("src/lib/content-review.ts", { zod: require("zod"), "node:crypto": require("node:crypto"), "@/lib/marketing": marketing, "@/lib/marketing-evidence": evidence, "@/lib/review-findings": findings, "@/lib/copy-checks": copyChecks });
+const captions = load("src/lib/caption-revision.ts", { zod: require("zod"), "node:crypto": require("node:crypto") });
 const handoff = load("src/lib/marketing-handoff.ts", { zod: require("zod"), "@/lib/marketing": marketing, "@/lib/publishability": publishability });
 const types = load("src/lib/publishing/types.ts", {});
 const approval = load("src/lib/publishing/approval.ts", {
@@ -189,6 +190,7 @@ function reviewHarness(context) {
     "@/lib/content-review": review,
     "@/lib/marketing-processing": processing,
     "@/lib/publishability": publishability,
+    "@/lib/caption-revision": captions,
     "@/lib/content-review-store": { loadContentReview: async () => context },
     "@/lib/prisma": { prisma: { $transaction: async (fn) => fn(tx) } },
   });

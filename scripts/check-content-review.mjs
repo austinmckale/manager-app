@@ -20,6 +20,7 @@ const repair = load('src/lib/repair-checked-copy.ts', {});
 const copyChecks = load('src/lib/copy-checks.ts', { '@/lib/marketing': marketing, '@/lib/review-findings': findings });
 const review = load('src/lib/content-review.ts', { zod: require('zod'), 'node:crypto': require('node:crypto'), '@/lib/marketing': marketing, '@/lib/marketing-evidence': evidence, '@/lib/review-findings': findings, '@/lib/copy-checks': copyChecks });
 const publishability = load('src/lib/publishability.ts', {});
+const captions = load('src/lib/caption-revision.ts', { zod: require('zod'), 'node:crypto': require('node:crypto') });
 const draftId = '10000000-0000-4000-8000-000000000001';
 const photoId = '20000000-0000-4000-8000-000000000001';
 const nextId = '30000000-0000-4000-8000-000000000001';
@@ -137,7 +138,7 @@ function harness(options = {}) {
     'next/server': { NextResponse: { json: (body, init) => Response.json(body, init) } }, zod: require('zod'),
     '@/lib/auth': { requireAuth: async () => { if (options.unauthenticated) throw new Error('Unauthorized'); return { orgId: 'org', userId: 'owner', email: options.client ? 'rhisolutions316@gmail.com' : 'austinmck17@gmail.com' }; } },
     '@/lib/client-portal-policy': { isDashboardOwnerEmail: (email) => email === 'austinmck17@gmail.com' },
-    '@/lib/demo': { isDemoMode: () => options.demo || false }, '@/lib/marketing': marketing, '@/lib/content-review': review, '@/lib/marketing-processing': processing, '@/lib/publishability': publishability,
+    '@/lib/demo': { isDemoMode: () => options.demo || false }, '@/lib/marketing': marketing, '@/lib/content-review': review, '@/lib/marketing-processing': processing, '@/lib/publishability': publishability, '@/lib/caption-revision': captions,
     '@/lib/content-review-store': { loadContentReview: async (orgId) => { assert.equal(orgId, 'org'); return options.missing ? null : context; } },
     '@/lib/prisma': { prisma: { $transaction: async (fn) => fn(tx) } },
   });
