@@ -3295,7 +3295,7 @@ export async function sendClockRemindersAction(formData: FormData) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        text: `FieldFlow reminders sent: ${count} (${reminderType})`,
+        text: `RHI Pros reminders sent: ${count} (${reminderType})`,
       }),
     }).catch(() => { });
   }

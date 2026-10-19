@@ -13,7 +13,7 @@ async function buildPdf(title: string, lines: string[]) {
   const page = pdf.addPage([612, 792]);
   const font = await pdf.embedFont(StandardFonts.Helvetica);
 
-  page.drawText("FieldFlow Manager", { x: 40, y: 760, size: 12, font });
+  page.drawText("RHI Pros", { x: 40, y: 760, size: 12, font });
   page.drawText(title, { x: 40, y: 736, size: 18, font });
 
   let y = 708;

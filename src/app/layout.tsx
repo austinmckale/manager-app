@@ -14,9 +14,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "FieldFlow Manager",
-  description: "Mobile-first job management for contractors",
-  applicationName: "FieldFlow Manager",
+  title: "RHI Pros Manager",
+  description: "Job photos, posts, leads and jobs for RHI Pros.",
+  applicationName: "RHI Pros Manager",
   icons: {
     icon: [{ url: "/brand/chat-logo.png", type: "image/png" }],
     shortcut: [{ url: "/brand/chat-logo.png", type: "image/png" }],
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "FieldFlow",
+    title: "RHI Pros",
   },
 };
 

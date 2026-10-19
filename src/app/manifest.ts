@@ -2,14 +2,15 @@
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "FieldFlow Manager",
-    short_name: "FieldFlow",
-    description: "Lightweight job management for contractors.",
-    start_url: "/today",
+    name: "RHI Pros Manager",
+    short_name: "RHI Pros",
+    description: "Job photos, posts, leads and jobs for RHI Pros.",
+    // The home page sends the owner to the marketing inbox and a client to their portal.
+    start_url: "/",
     display: "standalone",
     background_color: "#f8fafc",
     theme_color: "#0f766e",
-    orientation: "portrait",
+    orientation: "any",
     shortcuts: [
       { name: "Add job photos", short_name: "Photos", url: "/capture" },
       { name: "Review photos", short_name: "Review", url: "/marketing" },
