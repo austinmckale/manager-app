@@ -67,7 +67,9 @@ test("website projects keep the town and description and prefer finished photos"
   assert.equal(lib.websiteCaption(deck).includes("123 Oak"), false);
   const kitchen = first.projects.find((project) => project.slug === "allentown-kitchen-layout-upgrade");
   assert.equal(kitchen.location, "Allentown, PA");
-  assert.match(kitchen.description, /layout flow/);
+  // The description is the website's own published summary for that project.
+  assert.equal(kitchen.description, siteCatalog.websiteProjectCatalog.find((project) => project.slug === "allentown-kitchen-layout-upgrade").description);
+  assert.ok(kitchen.description.length > 20);
   assert.equal(first.projects.filter((project) => project.slug).length, siteCatalog.websiteProjectCatalog.length);
   const draft = marketing.marketingDraftSchema.parse(lib.draftFromWebsiteProject(deck));
   assert.equal(draft.publicLocation, "Reading, PA");
@@ -78,9 +80,10 @@ test("website projects keep the town and description and prefer finished photos"
 
 test("an older website project is shuffled ahead of only using the newest", async () => {
   const { lib } = catalog(sampleRows);
-  const { projects, featured } = await lib.rememberWebsiteProjects(orgId);
+  const day = new Date("2026-10-17T22:00:00.000Z");
+  const { projects, featured } = await lib.rememberWebsiteProjects(orgId, day);
   assert.equal(projects[0].name, "Newest deck");
-  const sameDay = lib.pickShuffledProject(projects, new Date("2026-10-17T22:00:00.000Z"));
+  const sameDay = lib.pickShuffledProject(projects, day);
   assert.equal(featured.id, sameDay.id);
   assert.notEqual(featured.name, "Newest deck");
   assert.equal(lib.featureWebsiteProject(projects, featured.id)[0].id, featured.id);

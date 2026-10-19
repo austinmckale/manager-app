@@ -23,6 +23,16 @@ On a draft's **Review & approve** page, **Check all captions with AI** is the la
 
 When a caption fails, the worker runs the fix loop on the owner's current text (`proposeCaptionFixes` in `scripts/local-write-loop.ts`) and stores only the captions it improved, with how many problems remain, in the review record's `fixes`. Nothing is applied. The page lists each suggested fix with **Accept** and **Accept all fixes**; accepting puts it in the editor, and pressing the button again saves and checks it. A suggestion that does not parse is dropped without hiding the review. Owner approval is still separate.
 
+## Keep and regenerate
+
+Every caption on the review page has a **Keep** toggle (stored per version as `marketing.caption.locks`, beside the version so keeping a caption never changes it or its checks, and carried to the next version on save). Typing in a caption keeps it. **Regenerate unlocked captions** queues a caption revision with `mode: "regenerate"`, the kept captions' current text and an optional note. The worker (`scripts/local-caption-revision.ts` → `regenerateUnlocked` in `scripts/local-write-loop.ts`) writes only the unlocked captions with the kept ones as fixed context, rejects text that copies a kept caption, then fact-checks and fixes like any draft. It uses the evidence from the latest completed AI check on this version or the versions it was saved from (`scripts/local-regenerate.ts`); it does not read photos or transcribe, so a never-checked draft gets "Press Check all captions with AI once first." The page fills only unlocked boxes and offers Undo. Accept all fixes and ChatGPT/Claude imports skip kept captions.
+
+The fact-check accepts field names prefixed with `publicFields.` and checks captions the checker skipped in a second, smaller call. Written captions are rejected before checking when they contain Chinese, Japanese or Korean characters, when a headline or Google description ends on a dangling word, or when a regenerated caption copies a kept one.
+
+## Past jobs
+
+`/marketing/past-jobs` lists the website's gallery projects from `src/lib/website-project-catalog.ts`, which `node --import tsx scripts/sync-website-projects.ts <website repo>` rebuilds (retired and gallery-hidden projects and the website's hidden photos are left out). **Make a post from this** (`/api/marketing/past-jobs`, `src/lib/past-jobs.ts`) copies that project's website photos once into the internal job "Website past jobs" (tagged `website-project` and `website:<slug>`, stage AFTER unless the path says before or during), saves a pack with `source: "website-project"` whose captions start from the website's published summary and solution (`src/lib/past-jobs-copy.ts`), and queues the AI check without taking the single test slot, so the worker checks packs in order. The page shows each project's newest version and whether it is approved.
+
 ## ChatGPT / Claude round trip
 
 Open a saved draft's **Review & approve** page and expand **Ask ChatGPT or Claude instead**. Download the bundle and follow its START-HERE.txt: attach every photo, `review-prompt.txt` and `raw-input.json` to the chat. The bundle contains private notes and voice transcripts; inspect what you share. The prompt asks the chat to pick and order the photos (best first), improve the text in Ryan's own way of talking using only the evidence, and, if it can edit images (ChatGPT can, Claude cannot), return lightly improved copies named `edited-photo-<n>-<id>.jpg` with nothing added, removed or restyled.
@@ -46,7 +56,7 @@ Before pointing the scheduled task at a release folder, run `node --import tsx s
 The installer `scripts/install-marketing-worker.ps1 -WorkerRoot <release-folder>` points the scheduled task at that release. It requires installed dependencies and the private worker environment file. `scripts/marketing-worker-status.ps1 -WorkerRoot <release-folder>` shows process status. The app uses a separate database heartbeat to show when this worker version last checked in. These paths must refer to the installed release, not an unrelated development checkout.
 
 - `node --test scripts/check-marketing-evidence.mjs scripts/check-content-review.mjs scripts/check-generation-queue.mjs scripts/check-marketing.mjs scripts/check-worker-bugs.mjs`
-- `node --import tsx --test scripts/check-write-loop.mjs`
+- `node --import tsx --test scripts/check-write-loop.mjs scripts/check-past-jobs.mjs`
 - `npx tsc --noEmit --incremental false`
 - `npx tsx scripts/evaluate-marketing-evidence.ts <private-source.json>` performs read-only local evaluation without database writes, paid calls or notifications. Treat actual model evaluations separately from mocked regression tests.
 

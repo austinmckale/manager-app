@@ -87,6 +87,8 @@ export function catalogProjects(orgId: string): WebsiteProject[] {
 }
 
 export function websiteCaption(project: Pick<WebsiteProject, "description" | "location" | "area" | "assetIds">) {
+  // The published description is real, owner-approved copy; the generic starter is only a fallback.
+  if (project.description.trim()) return project.description.slice(0, 2200);
   return prepareMarketingDraft({
     assetIds: project.assetIds.length ? project.assetIds : ["00000000-0000-4000-8000-000000000001"],
     notes: project.description ? [project.description] : [],
@@ -97,7 +99,7 @@ export function websiteCaption(project: Pick<WebsiteProject, "description" | "lo
 }
 
 export function draftFromWebsiteProject(project: WebsiteProject) {
-  return prepareMarketingDraft({
+  const draft = prepareMarketingDraft({
     assetIds: project.assetIds,
     notes: project.description ? [project.description] : [],
     area: project.area,
@@ -105,9 +107,12 @@ export function draftFromWebsiteProject(project: WebsiteProject) {
     packName: project.name,
     photoNotes: [],
   });
+  // Start from the published description instead of the generic starter caption.
+  const description = project.description.trim();
+  return description ? { ...draft, social: description.slice(0, 2200), googleBusiness: description.slice(0, 1500), metaPrimary: description.slice(0, 2200) } : draft;
 }
 
-export async function rememberWebsiteProjects(orgId: string) {
+export async function rememberWebsiteProjects(orgId: string, now = new Date()) {
   let portfolio: WebsiteProject[] = [];
   try {
     const jobs = await prisma.job.findMany({
@@ -131,5 +136,5 @@ export async function rememberWebsiteProjects(orgId: string) {
     create: { id: project.id, orgId, jobId: project.jobId, action: WEBSITE_PROJECT, metadata: project },
     update: { jobId: project.jobId, metadata: project },
   })));
-  return { projects, featured: pickShuffledProject(projects) };
+  return { projects, featured: pickShuffledProject(projects, now) };
 }

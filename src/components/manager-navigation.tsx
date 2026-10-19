@@ -10,7 +10,7 @@ const primary = [
   { href: "/marketing/results", label: "Results", icon: ChartColumnBig },
 ];
 const secondary = [
-  { title: "Marketing tools", links: [["/capture", "Add photos"], ["/marketing/intake", "Upload access"], ["/marketing/delivery", "AI processing"], ["/marketing/buffer", "Buffer"]] },
+  { title: "Marketing tools", links: [["/marketing/past-jobs", "Past jobs"], ["/capture", "Add photos"], ["/marketing/intake", "Upload access"], ["/marketing/delivery", "AI processing"], ["/marketing/buffer", "Buffer"]] },
   { title: "Business tools", links: [["/today", "Overview"], ["/leads", "Leads"], ["/jobs", "Jobs & Joist imports"], ["/reports", "Business reports"], ["/settings/targets", "Settings"]] },
 ];
 export function ManagerNavigation() {
