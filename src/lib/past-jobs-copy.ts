@@ -35,3 +35,24 @@ export function pastJobDraft(project: WebsiteCatalogProject, assetIds: string[])
   });
 }
 
+const OUTDOOR = /patio|deck|pool|exterior|staircase|stair|roof|siding|window|pavilion|porch|landscap|log home|driveway|fence/i;
+/** Decks and patios in spring and summer, interiors in fall and winter. */
+export function inSeason(project: Pick<WebsiteCatalogProject, "slug" | "title" | "service">, now = new Date()) {
+  const outdoor = OUTDOOR.test(`${project.slug} ${project.title} ${project.service}`);
+  const warm = now.getMonth() >= 2 && now.getMonth() <= 8;
+  return outdoor === warm;
+}
+
+// Monday-to-Sunday weeks. Day 0 of Unix time was a Thursday, so shift by three days.
+const weekNumber = (now: Date) => Math.floor((Math.floor(now.getTime() / (24 * 60 * 60 * 1000)) + 3) / 7);
+
+/**
+ * When Ryan has sent no photos for 7 days, one past job to post instead: not sent to Buffer in the
+ * last 90 days, in season when possible, and the same pick all week.
+ */
+export function pickPastJob<T extends Pick<WebsiteCatalogProject, "slug" | "title" | "service"> & { versionIds: string[] }>(jobs: T[], recentlySent: Set<string>, now = new Date()) {
+  const fresh = jobs.filter((job) => !job.versionIds.some((id) => recentlySent.has(id)));
+  const seasonal = fresh.filter((job) => inSeason(job, now));
+  const pool = seasonal.length ? seasonal : fresh;
+  return pool.length ? pool[weekNumber(now) % pool.length] : null;
+}

@@ -12,6 +12,7 @@ import { publicFields } from "../src/lib/marketing-evidence";
 import { marketingAiRequest } from "./marketing-ai-request";
 import { installedLocalModels } from "../src/lib/local-models";
 import { WRITER_SYSTEM, completeCopy, publicCopy, writeCheckedCopy, writeLoopPlan } from "./local-write-loop";
+import { voiceContext } from "./local-voice";
 
 const workerFile = resolve("scripts/intake-marketing-worker.ts");
 function runWorker(args: string[]) {
@@ -91,6 +92,7 @@ export async function runLocalIntake({ prisma, supabaseAdmin, orgId, folder, aud
           evidence,
           schema: publicCopy,
           plan: writeLoopPlan(mode),
+          context: await voiceContext(prisma, orgId),
           options: { num_ctx: 8192, num_predict: 2200, ...settings.options },
           complete: completeCopy,
           system: WRITER_SYSTEM,

@@ -2,6 +2,10 @@ import type { PrismaClient } from "@prisma/client";
 import { REVIEW_REQUEST, reviewRecordSchema } from "../src/lib/content-review";
 import { DRAFT_SAVED_ACTION } from "../src/lib/marketing";
 import type { MarketingEvidence } from "../src/lib/marketing-evidence";
+import { loadContentReview } from "../src/lib/content-review-store";
+import { localModels } from "../src/lib/local-models";
+import { localAiSettings } from "./local-ai-settings";
+import { inspectSubmission } from "./local-evidence-pipeline";
 
 /**
  * What the last AI check saw (photo observations and note facts) for this draft, or for the
@@ -20,6 +24,26 @@ export async function latestCheckedEvidence(prisma: PrismaClient, orgId: string,
     id = typeof parent === "string" ? parent : null;
   }
   return null;
+}
+
+/**
+ * For a draft that was never checked: read its photos and notes now with the fast reader, the same
+ * way the AI check does (scripts/local-content-review.ts), so regenerating never needs a check first.
+ */
+export async function freshEvidence(prisma: PrismaClient, orgId: string, draftId: string): Promise<MarketingEvidence | null> {
+  const context = await loadContentReview(orgId, draftId, prisma);
+  if (!context) return null;
+  const { supabaseAdmin } = await import("../src/lib/supabase/admin");
+  const sharp = (await import("sharp")).default;
+  const { imageSize } = localAiSettings();
+  const photos: { id: string; image: string }[] = [];
+  for (const asset of context.assets) {
+    const { data, error } = await supabaseAdmin.storage.from(process.env.SUPABASE_STORAGE_BUCKET || "job-assets").download(asset.storageKey);
+    if (error || !data) return null;
+    photos.push({ id: asset.id, image: (await sharp(Buffer.from(await data.arrayBuffer())).resize({ width: imageSize, height: imageSize, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer()).toString("base64") });
+  }
+  const sources = { notes: context.originals.receiptNotes.join("\n\n"), voice: context.audio.map((audio) => audio.transcript).join("\n\n"), owner: context.draft.sourceNotes };
+  return inspectSubmission({ model: localModels().reader, photos, postType: context.draft.postType, sources });
 }
 
 /** The owner's steering note, stored inside the request's instruction text. */

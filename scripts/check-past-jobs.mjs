@@ -33,3 +33,20 @@ test('the notes the AI may quote are the published summary, how the job was done
 test('cover pictures use the website image resizer, not multi-megabyte originals', () => {
   assert.equal(websiteThumb('/images/projects/a b.jpg'), 'https://www.rhipros.com/_next/image?url=%2Fimages%2Fprojects%2Fa%20b.jpg&w=640&q=75');
 });
+
+const job = (slug, title, service, versionIds = []) => ({ slug, title, service, versionIds });
+
+test('the weekly past job is in season, skips anything sent in the last 90 days, and stays the same all week', async () => {
+  const { inSeason, pickPastJob } = await import('../src/lib/past-jobs-copy.ts');
+  const summer = new Date('2026-07-01T12:00:00Z');
+  const winter = new Date('2026-12-01T12:00:00Z');
+  assert.equal(inSeason(job('reading-paver-patio-buildout', 'Paver patio', 'Patios'), summer), true);
+  assert.equal(inSeason(job('reading-paver-patio-buildout', 'Paver patio', 'Patios'), winter), false);
+  assert.equal(inSeason(job('ryan-kitchen-remodel', 'Kitchen remodel', 'Kitchen Remodeling'), winter), true);
+  const jobs = [job('patio', 'Paver patio', 'Patios', ['d1']), job('deck', 'New deck', 'Decks'), job('kitchen', 'Kitchen', 'Kitchen Remodeling')];
+  assert.equal(pickPastJob(jobs, new Set(['d1']), summer).slug, 'deck');
+  assert.equal(pickPastJob(jobs, new Set(), winter).slug, 'kitchen');
+  const sameWeek = new Date(summer.getTime() + 24 * 60 * 60 * 1000);
+  assert.equal(pickPastJob(jobs, new Set(), summer).slug, pickPastJob(jobs, new Set(), sameWeek).slug);
+  assert.equal(pickPastJob([job('a', 'Kitchen', 'Kitchen', ['x'])], new Set(['x']), summer), null);
+});

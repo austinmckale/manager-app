@@ -68,3 +68,28 @@ export function PastJobsList({ items, demo }: { items: Item[]; demo: boolean }) 
     </ul>
   </div>;
 }
+
+/** The inbox's weekly idea when Ryan has sent no new photos. */
+export function PastJobIdea({ item, quietDays }: { item: Item; quietDays: number | null }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  async function make() {
+    setBusy(true); setMessage("");
+    try { router.push(`/marketing/review/${await makePack(item.slug)}`); }
+    catch (error) { setMessage(error instanceof Error ? error.message : "Could not make the pack."); setBusy(false); }
+  }
+  return <section className="flex gap-3 rounded-2xl border border-teal-200 bg-teal-50 p-3">
+    <img src={item.coverUrl} alt="" className="h-20 w-20 shrink-0 rounded-xl object-cover" />
+    <div className="min-w-0">
+      <p className="text-xs font-semibold uppercase tracking-wide text-teal-800">{quietDays === null ? "No photos from Ryan yet" : `No new photos from Ryan in ${quietDays} days`}</p>
+      <p className="mt-1 text-sm text-slate-900">Post a past job this week: <span className="font-semibold">{item.title}</span> · {item.location}</p>
+      <div className="mt-2 flex flex-wrap items-center gap-3">
+        {item.draftId ? <Link href={`/marketing/review/${item.draftId}`} className="inline-flex min-h-11 items-center rounded-xl bg-teal-800 px-4 py-2 text-sm font-semibold text-white">Open the pack</Link>
+          : <button type="button" onClick={() => void make()} disabled={busy} className="min-h-11 rounded-xl bg-teal-800 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Making the pack…" : "Make a post from this"}</button>}
+        <Link href="/marketing/past-jobs" className="text-sm text-teal-900 underline">All past jobs</Link>
+      </div>
+      {message ? <p role="status" className="mt-1 text-sm text-red-700">{message}</p> : null}
+    </div>
+  </section>;
+}

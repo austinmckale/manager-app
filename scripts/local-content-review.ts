@@ -6,6 +6,7 @@ import { localReviewRequest } from "./local-review-request";
 import { localAiSettings } from "./local-ai-settings";
 import { localModels } from "../src/lib/local-models";
 import { proposeCaptionFixes, type CaptionFixes } from "./local-write-loop";
+import { voiceContext } from "./local-voice";
 import { DRAFT_SAVED_ACTION } from "../src/lib/marketing";
 import { loadContentReview } from "../src/lib/content-review-store";
 import { REVIEW_REQUEST, copyChecks, reviewRecordSchema, type ReviewFinding } from "../src/lib/content-review";
@@ -67,7 +68,7 @@ export async function runContentReview(prisma: PrismaClient, supabase: typeof Su
     // and a failed suggestion never fails the review.
     let fixes: CaptionFixes | undefined;
     if (audit?.issues.length) {
-      try { fixes = await proposeCaptionFixes({ request: ai?.request ?? localReviewRequest, model: checker, evidence, draft: current.draft, issues: audit.issues, options: { num_ctx: 8192, num_predict: 2200, ...settings.options } }); }
+      try { fixes = await proposeCaptionFixes({ voice: await voiceContext(prisma, orgId), request: ai?.request ?? localReviewRequest, model: checker, evidence, draft: current.draft, issues: audit.issues, options: { num_ctx: 8192, num_predict: 2200, ...settings.options } }); }
       catch { fixes = undefined; }
     }
     // Re-read evidence before committing a result for an immutable input hash.

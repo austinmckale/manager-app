@@ -14,6 +14,8 @@ import { INTAKE_PACK } from "@/lib/intake-delivery";
 import { REVIEW_APPROVAL, REVIEW_SUPERSEDED } from "@/lib/content-review";
 import { MarketingGenerateButton } from "@/components/marketing-generate-button";
 import { RyanRequestButton } from "@/components/ryan-request-button";
+import { PastJobIdea } from "@/components/past-jobs-list";
+import { demoPastJobIdea, suggestPastJob } from "@/lib/past-jobs";
 import { MarketingJobReview } from "@/components/marketing-job-review";
 import { exampleDraft, exampleJobId, examplePhotos } from "@/lib/marketing-example";
 import { parseSavedPack } from "@/lib/saved-marketing";
@@ -86,8 +88,11 @@ export default async function MarketingPage({ searchParams }: { searchParams: Pr
   if (!canManageOrg(auth.role)) return <p className="rounded-xl bg-slate-50 p-4 text-slate-900">Photo review and marketing drafts are available to the owner and admins. <Link href="/capture" className="font-semibold text-teal-900 underline">Add job photos</Link></p>;
   const params = await searchParams;
   const demo = isDemoMode();
+  // When Ryan has sent nothing for a week, suggest a past job to post instead.
+  const pastJobIdea = demo ? demoPastJobIdea() : await suggestPastJob(prisma, auth.orgId).catch(() => null);
   if (demo) {
     return <div className="space-y-4">
+      {pastJobIdea ? <PastJobIdea quietDays={pastJobIdea.quietDays} item={{ slug: pastJobIdea.job.slug, title: pastJobIdea.job.title, location: pastJobIdea.job.location, service: pastJobIdea.job.service, description: pastJobIdea.job.description, coverUrl: pastJobIdea.job.coverUrl, photoCount: pastJobIdea.job.images.length, draftId: pastJobIdea.job.draftId, status: pastJobIdea.job.status }} /> : null}
       <section className="rounded-2xl border border-slate-300 p-4">
         <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">Next</p>
         <h2 className="mt-1 text-xl font-semibold text-slate-900">Preview inbox</h2>
@@ -159,6 +164,7 @@ export default async function MarketingPage({ searchParams }: { searchParams: Pr
       </div>
       <RyanRequestButton demo={demo} />
     </section>
+    {pastJobIdea ? <PastJobIdea quietDays={pastJobIdea.quietDays} item={{ slug: pastJobIdea.job.slug, title: pastJobIdea.job.title, location: pastJobIdea.job.location, service: pastJobIdea.job.service, description: pastJobIdea.job.description, coverUrl: pastJobIdea.job.coverUrl, photoCount: pastJobIdea.job.images.length, draftId: pastJobIdea.job.draftId, status: pastJobIdea.job.status }} /> : null}
     <p className="text-sm text-slate-800">{setup ? <>{setup.ai} <Link href="/marketing/delivery" className="font-semibold text-teal-950 underline">AI setup</Link>. {setup.buffer} <Link href="/marketing/buffer" className="font-semibold text-teal-950 underline">Buffer setup</Link>.</> : "AI and Buffer status could not be read."} {setup ? null : <Link href="/marketing/delivery" className="font-semibold text-teal-950 underline">AI setup</Link>}</p>
     {showProcessingBanner ? <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-950">{setup?.heartbeat?.state === "error" ? "This submission is still processing, and the worker’s last stored state is error." : "This submission is still processing, and no worker check-in is stored."} <Link href="/marketing/delivery" className="font-semibold underline">Open AI setup</Link></p> : null}
     {params.draftId && !savedPack ? <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-950">This saved pack is unavailable. Open <Link href="/marketing/saved" className="font-semibold underline">Content</Link> to choose another.</p> : null}

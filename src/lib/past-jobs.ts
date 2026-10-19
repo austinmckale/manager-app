@@ -3,10 +3,12 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import { REVIEW_APPROVAL, REVIEW_REQUEST, REVIEW_SUPERSEDED } from "@/lib/content-review";
 import { loadContentReview } from "@/lib/content-review-store";
 import { DRAFT_SAVED_ACTION } from "@/lib/marketing";
-import { pastJobBySlug, pastJobDraft, websiteThumb } from "@/lib/past-jobs-copy";
+import { PHOTO_RECEIVED } from "@/lib/field-intake";
+import { BUFFER_DELIVERY } from "@/lib/publishing/buffer-delivery";
+import { pastJobBySlug, pastJobDraft, pickPastJob, websiteThumb } from "@/lib/past-jobs-copy";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { WEBSITE_ORIGIN, websiteProjectCatalog, type WebsiteCatalogProject } from "@/lib/website-project-catalog";
-export { pastJobBySlug, pastJobDraft, pastJobNotes, websiteThumb } from "@/lib/past-jobs-copy";
+export { inSeason, pastJobBySlug, pastJobDraft, pastJobNotes, pickPastJob, websiteThumb } from "@/lib/past-jobs-copy";
 
 /**
  * Past jobs: the projects on rhipros.com, turned into marketing packs so there is something true to
@@ -16,7 +18,7 @@ export const PAST_JOBS_TAG = "website-project";
 export const websiteSlugTag = (slug: string) => `website:${slug}`;
 const PAST_JOBS_NAME = "Website past jobs";
 
-export type PastJob = WebsiteCatalogProject & { draftId: string | null; status: "new" | "draft" | "approved"; coverUrl: string };
+export type PastJob = WebsiteCatalogProject & { draftId: string | null; versionIds: string[]; status: "new" | "draft" | "approved"; coverUrl: string };
 
 async function pastJobsJob(db: PrismaClient, orgId: string) {
   const existing = await db.job.findFirst({ where: { orgId, categoryTags: { has: PAST_JOBS_TAG } }, select: { id: true } });
@@ -51,10 +53,11 @@ async function importPhotos(db: PrismaClient, orgId: string, jobId: string, proj
 }
 
 /** The newest version of a draft, following "replaced by" links. */
-function latestVersion(draftId: string, replacedBy: Map<string, string>) {
-  let id = draftId;
-  for (let step = 0; step < 50 && replacedBy.has(id); step++) id = replacedBy.get(id)!;
-  return id;
+/** Every version of a draft, oldest first, following "replaced by" links. */
+function versionChain(draftId: string, replacedBy: Map<string, string>) {
+  const ids = [draftId];
+  for (let step = 0; step < 50 && replacedBy.has(ids[ids.length - 1]); step++) ids.push(replacedBy.get(ids[ids.length - 1])!);
+  return ids;
 }
 
 export async function listPastJobs(db: PrismaClient, orgId: string): Promise<PastJob[]> {
@@ -65,10 +68,11 @@ export async function listPastJobs(db: PrismaClient, orgId: string): Promise<Pas
   ]);
   const replacedBy = new Map(superseded.flatMap((row) => { const meta = row.metadata as { draftId?: string; replacementDraftId?: string } | null; return meta?.draftId && meta.replacementDraftId ? [[meta.draftId, meta.replacementDraftId] as const] : []; }));
   const approved = new Set(approvals.flatMap((row) => { const id = (row.metadata as { draftId?: string } | null)?.draftId; return id ? [id] : []; }));
-  const bySlug = new Map(drafts.flatMap((row) => { const slug = (row.metadata as { websiteSlug?: string } | null)?.websiteSlug; return slug ? [[slug, latestVersion(row.id, replacedBy)] as const] : []; }));
+  const bySlug = new Map(drafts.flatMap((row) => { const slug = (row.metadata as { websiteSlug?: string } | null)?.websiteSlug; return slug ? [[slug, versionChain(row.id, replacedBy)] as const] : []; }));
   return websiteProjectCatalog.map((project) => {
-    const draftId = bySlug.get(project.slug) ?? null;
-    return { ...project, draftId, status: !draftId ? "new" : approved.has(draftId) ? "approved" : "draft", coverUrl: project.images[0] ? websiteThumb(project.images[0].src) : "" };
+    const versionIds = bySlug.get(project.slug) ?? [];
+    const draftId = versionIds.at(-1) ?? null;
+    return { ...project, draftId, versionIds, status: !draftId ? "new" : approved.has(draftId) ? "approved" : "draft", coverUrl: project.images[0] ? websiteThumb(project.images[0].src) : "" };
   });
 }
 
@@ -93,4 +97,25 @@ export async function makePastJobPack(db: PrismaClient, auth: { orgId: string; u
     await db.activityLog.upsert({ where: { id: context.reviewId }, create: { id: context.reviewId, orgId: auth.orgId, actorId: auth.userId, jobId, action: REVIEW_REQUEST, metadata }, update: { metadata } });
   }
   return { draftId: saved.id, created: true };
+}
+
+export async function suggestPastJob(db: PrismaClient, orgId: string, now = new Date()) {
+  const lastUpload = await db.activityLog.findFirst({ where: { orgId, action: PHOTO_RECEIVED }, orderBy: { createdAt: "desc" }, select: { createdAt: true } });
+  const quietDays = lastUpload ? Math.floor((now.getTime() - lastUpload.createdAt.getTime()) / (24 * 60 * 60 * 1000)) : null;
+  if (quietDays !== null && quietDays < 7) return null;
+  const since = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+  const [jobs, sent] = await Promise.all([
+    listPastJobs(db, orgId),
+    db.activityLog.findMany({ where: { orgId, action: BUFFER_DELIVERY, createdAt: { gte: since } }, select: { metadata: true }, take: 500 }),
+  ]);
+  const recentlySent = new Set(sent.flatMap((row) => { const id = (row.metadata as { draftId?: unknown } | null)?.draftId; return typeof id === "string" ? [id] : []; }));
+  const job = pickPastJob(jobs, recentlySent, now);
+  return job ? { job, quietDays } : null;
+}
+
+/** Demo mode has no database: suggest from the website list so the inbox card can be previewed. */
+export function demoPastJobIdea(now = new Date()) {
+  const jobs = websiteProjectCatalog.map((project) => ({ ...project, draftId: null, versionIds: [], status: "new" as const, coverUrl: project.images[0] ? websiteThumb(project.images[0].src) : "" }));
+  const job = pickPastJob(jobs, new Set(), now);
+  return job ? { job, quietDays: null } : null;
 }

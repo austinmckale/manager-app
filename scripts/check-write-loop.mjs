@@ -127,3 +127,30 @@ test('captions with stray CJK characters or a dangling last word are not accepte
   assert.equal(captionsLookComplete({ ...pack, metaHeadline: 'Stairs with' }), false);
   assert.equal(captionsLookComplete({ googleBusiness: 'Only this caption.' }), true);
 });
+
+test('the writer is told exactly what to fix, and gets the house voice and approved posts as tone examples', async () => {
+  const seen = [];
+  const request = async (body) => {
+    seen.push(body.messages);
+    return { message: { content: JSON.stringify(seen.length === 1 ? { social: 'X', googleBusiness: 'Same.' } : { social: 'Paver patio.', googleBusiness: 'Gray pavers.' }) } };
+  };
+  const audit = async () => ({ audit: { fields: [] }, issues: [] });
+  const complete = (copy) => (copy.social.length > 3 ? true : 'social is too short.');
+  await writeCheckedCopy({ request, audit, model: 'writer', system: 'system', evidence, schema, plan: { candidates: 1, fixRounds: 0 }, options: {}, complete, context: { houseVoice: ['Plain words.'], voiceExamples: ['We laid this patio last spring.'] } });
+  const retry = seen[1].at(-1).content;
+  assert.match(retry, /The problem: social is too short\./);
+  const ask = JSON.parse(seen[0][1].content);
+  assert.deepEqual(ask.houseVoice, ['Plain words.']);
+  assert.deepEqual(ask.voiceExamples, ['We laid this patio last spring.']);
+});
+
+test('voice examples are the newest approved posts, without repeats', async () => {
+  const { voiceExamples, HOUSE_VOICE } = await import('./local-voice.ts');
+  assert.ok(HOUSE_VOICE.some((line) => /scope/.test(line)));
+  const prisma = { activityLog: { findMany: async (query) => (query.where.action === 'marketing.content.approved'
+    ? [{ metadata: { draftId: 'b' } }, { metadata: { draftId: 'a' } }, { metadata: { draftId: 'b' } }]
+    : [{ id: 'a', metadata: { social: 'Older post.' } }, { id: 'b', metadata: { social: 'Newest post.' } }]) } };
+  assert.deepEqual(await voiceExamples(prisma, 'org'), ['Newest post.', 'Older post.']);
+  const none = { activityLog: { findMany: async () => [] } };
+  assert.deepEqual(await voiceExamples(none, 'org'), []);
+});
