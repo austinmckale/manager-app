@@ -59,7 +59,10 @@ export default async function MarketingResultsPage() {
         <h2 className="mt-2 text-2xl font-semibold">{report.period.label}</h2>
         <p className="mt-2 text-sm text-teal-50">Last refresh {new Date(report.generatedAt).toLocaleString()}. {report.source}</p>
         {savedAt ? <p className="mt-1 text-sm text-teal-100">Saved weekly snapshot {new Date(savedAt).toLocaleString()}.</p> : <p className="mt-1 text-sm text-teal-100">No saved weekly snapshot for this period yet.</p>}
-        <Link href="/marketing/buffer" className="mt-4 inline-flex min-h-11 items-center rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-950">Buffer</Link>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Link href="/marketing/schedule" prefetch={false} className="inline-flex min-h-11 items-center rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-950">Schedule</Link>
+          <Link href="/marketing/buffer" className="inline-flex min-h-11 items-center rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-950">Buffer</Link>
+        </div>
       </section>
       <section aria-label="Past seven days" className="rounded-2xl border border-slate-300 p-4">
         <h3 className="text-sm font-semibold text-slate-900">Past 7 days</h3>

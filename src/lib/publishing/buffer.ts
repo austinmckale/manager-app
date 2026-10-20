@@ -8,7 +8,7 @@ export function bufferSelectionId(orgId: string) {
   const hex = createHash("sha256").update(`rhi-buffer-channels-v1:${orgId}`).digest("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
-async function bufferQuery(query: string, variables: Record<string, unknown>, key: string, fetcher: typeof fetch) {
+export async function bufferQuery(query: string, variables: Record<string, unknown>, key: string, fetcher: typeof fetch) {
   const response = await fetcher("https://api.buffer.com", { method: "POST", redirect: "error", cache: "no-store", signal: AbortSignal.timeout(15000), headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify({ query, variables }) });
   if (!response.ok) throw new Error("Buffer connection could not be verified. Check the private API key and its permissions.");
   const body = await response.json() as { data?: unknown; errors?: unknown[] };
@@ -28,7 +28,7 @@ export async function discoverBufferChannels(key: string, fetcher: typeof fetch 
 
 export const bufferPostSchema = z.object({ id: z.string().min(1), channelId: z.string(), text: z.string(), status: z.string(), dueAt: z.string().nullable(), sentAt: z.string().nullable(), externalLink: z.string().nullable(), assets: z.array(z.object({ id: z.string().nullable(), mimeType: z.string() })) });
 export type BufferPost = z.infer<typeof bufferPostSchema>;
-const postFields = "id channelId text status dueAt sentAt externalLink assets { id mimeType }";
+export const postFields = "id channelId text status dueAt sentAt externalLink assets { id mimeType }";
 export class BufferRejected extends Error {}
 export async function createBufferPost(input: { channel: BufferChannel; text: string; imageUrls: string[]; mode: "draft" | "queue" }, key: string, fetcher: typeof fetch = fetch): Promise<BufferPost> {
   if (!key.trim()) throw new Error("Buffer key unavailable.");

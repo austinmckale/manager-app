@@ -13,7 +13,8 @@ export function bufferDeliveryId(orgId: string, draftId: string, inputHash: stri
 }
 export function bufferStatus(post: BufferPost): BufferDelivery["status"] {
   if (post.status === "sent" && post.sentAt) return "published";
-  return ({ draft: "draft", scheduled: "queued", sending: "sending", error: "failed", needs_approval: "needs_approval" } as const)[post.status] || "unknown";
+  // Buffer's docs also call a queued post "buffer" (createPost's saveToDraft), so both mean queued.
+  return ({ draft: "draft", scheduled: "queued", buffer: "queued", sending: "sending", error: "failed", needs_approval: "needs_approval" } as const)[post.status] || "unknown";
 }
 export function postPatch(post: BufferPost): Partial<BufferDelivery> {
   const status = bufferStatus(post);
