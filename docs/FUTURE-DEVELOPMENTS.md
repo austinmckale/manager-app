@@ -2,7 +2,7 @@
 
 Last updated: October 19, 2026. This is the handoff for the next model. Product boundaries stay in [MARKETING-VISION-AND-ROADMAP.md](MARKETING-VISION-AND-ROADMAP.md). This file says what is done, what this commit includes, and how to finish the rest without breaking the rules.
 
-A code push is not a deployment. The live site is https://app.rhipros.com and follows GitHub `master` only after Vercel deploys. The installed worker folder is `C:\Users\Alivia\Projects\Manager App\manager-app-marketing-20261018-696d28e` (a clean export of commit `696d28e`, installed October 19, 2026; see its RELEASE-COMMIT.txt), not this git tree. Releases are clean exports since October 18, when the hand-patched `manager-app-marketing-hybrid-20261017` crashed 86 cycles in a row because two files were never copied into it. A website deploy does not update the worker folder. To update it, build a new release folder from `master`, run `node --import tsx scripts/worker-preflight.ts` inside it, then point the task at it with `scripts/install-marketing-worker.ps1 -WorkerRoot <folder>`. Do not hand-copy single files into a live release. Do not restart the worker unless a restart is required. Do not click the desktop shortcut `RHI AI` while working. It toggles the live scheduled task `RHI Pros Local Marketing Worker`.
+A code push is not a deployment. The live site is https://app.rhipros.com and follows GitHub `master` only after Vercel deploys. The installed worker folder is `C:\Users\Alivia\Projects\Manager App\manager-app-marketing-20261019-532181f` (a clean export of commit `532181f`, installed October 19, 2026 at 8:44 PM Eastern; see its RELEASE-COMMIT.txt), not this git tree. Releases are clean exports since October 18, when the hand-patched `manager-app-marketing-hybrid-20261017` crashed 86 cycles in a row because two files were never copied into it. A website deploy does not update the worker folder. To update it, build a new release folder from `master`, run `node --import tsx scripts/worker-preflight.ts` inside it, then point the task at it with `scripts/install-marketing-worker.ps1 -WorkerRoot <folder>`. Do not hand-copy single files into a live release. Do not restart the worker unless a restart is required. Do not click the desktop shortcut `RHI AI` while working. It toggles the live scheduled task `RHI Pros Local Marketing Worker`.
 
 ## Do not do these unless the owner asks again
 
@@ -62,9 +62,9 @@ The milestone is one real Ryan upload becoming one owner-approved Buffer draft, 
 
 Ordered by what gets Ryan posting soonest. Each item is its own piece of work.
 
-### Done October 19, 2026 (branch `app/polish-and-locks`)
+### Done October 19, 2026 (live: master `532181f`, worker release `532181f`)
 
-- **Worker release `696d28e` installed** at `C:\Users\Alivia\Projects\Manager App\manager-app-marketing-20261018-696d28e` (preflight passed; first cycle idle, 0 failures). It has the write loop, the 9B writer, Check all captions and the suggested fixes.
+- **Worker releases.** `696d28e` was installed in the morning; `532181f` (everything below) replaced it at 8:44 PM Eastern at `C:\Users\Alivia\Projects\Manager App\manager-app-marketing-20261019-532181f`. Preflight passed and the first cycle was idle with 0 failures.
 - **App speed checked.** Requests enter Vercel at the Virginia edge (`iad1`, near the owner) and the server code runs in Oregon (`pdx1`, next to the Supabase database in `us-west-2`): `x-vercel-id: iad1::pdx1::…` on dynamic routes. Moving the server east would put every database query across the country; moving everything east means a new Supabase project. Signed-in pages answer in about 200 to 470 ms and the review page is ready in about 0.5 s with no long tasks. The earlier "iad1" was the edge, not the server.
 - **Installed app is "RHI Pros Manager".** Manifest, browser tab, PDFs and Discord reminders no longer say FieldFlow. The installed app opens on `/` (owner to the marketing inbox, a client to the portal). Chrome or Edge can install it from the address bar; no .exe is needed.
 - **Keep and regenerate on the review page.** Every caption has a Keep toggle; a hand edit keeps that caption. "Regenerate unlocked captions" (with an optional note) rewrites only the others with the kept ones as fixed context, fact-checks and fixes them, and fills only unlocked boxes with Undo. Accept all fixes and ChatGPT/Claude imports leave kept captions alone. It reuses the last AI check's evidence, or reads the photos itself when the draft was never checked. Measured on this PC with nothing else using the GPU: 28 to 92 seconds, 0 problems left in three runs. (An earlier 8-minute measurement was the live worker using the GPU at the same time.)
@@ -72,7 +72,7 @@ Ordered by what gets Ryan posting soonest. Each item is its own piece of work.
 
 ### Still to do
 
-1. **Push `app/polish-and-locks` to master, then build and install a worker release from it** (the worker runs the regenerate requests and the sturdier fact-check).
+1. **Make the first Past jobs packs on the live app** (owner clicks "Make a post from this" or "Make packs for all"); the AI checks then run one at a time on this PC.
 2. **Evergreen past jobs:** done for the inbox. When Ryan has sent no photos for 7 days, the inbox suggests one past job: not sent to Buffer in the last 90 days, in season (outdoor work March to September, indoor work October to February), the same pick Monday to Sunday. Still to try: post formats such as "From the project files", a detail-shot carousel and project of the month, and before/after only where real before photos exist (the website has `beforeImages` for some projects; they are not imported yet).
 3. **Write in Ryan's voice.** Started: every writer call (new posts, suggested fixes, regenerate, Shorter / More direct) gets a house voice from the website's copy rules (`scripts/local-voice.ts`) and the owner's three newest approved Facebook/Instagram posts as tone examples, never as facts. There are no approved posts yet, so only the house voice applies until the owner approves some. Still to do: phrases from Ryan's real voice notes once he records some.
 4. **Prove the website lead path.** No website lead has reached the app since the October 16 intake fix. Send one quote request marked TEST from rhipros.com (owner's go-ahead first: it emails the business inbox) and confirm it shows on Leads.
@@ -81,7 +81,7 @@ Ordered by what gets Ryan posting soonest. Each item is its own piece of work.
 7. **Optional Hybrid mode.** Add `OPENAI_API_KEY` (a billing account) to the worker's `.env.marketing-ai.local` for stronger photo reading and writing; voice stays local.
 8. **Results.** Read real Buffer outcomes into Results once posts go out. Do not invent metrics.
 9. **Navigation choice for Ryan.** The app opens on marketing (Inbox / Content / Results) with Today, Leads, Jobs and Money under More. Ryan may want Today and Leads first; one option is a per-person landing page.
-10. **Small fixes:** delete the old worker folders `manager-app-marketing-hybrid-20261017` and `manager-app-marketing-20261018` once the new release has run a few days. Keep `manager-app-intake-release-20261016-152445`: every release links to its Python packages for voice transcription.
+10. **Small fixes:** delete the old worker folders `manager-app-marketing-hybrid-20261017`, `manager-app-marketing-20261018` and `manager-app-marketing-20261018-696d28e` once the new release has run a few days. Keep `manager-app-intake-release-20261016-152445`: every release links to its Python packages for voice transcription. `src/components/marketing-processing-controls.tsx` has a lint error (Date.now() during render) from earlier work; it does not block the build.
 
 ### Ideas from the owner, October 19, 2026
 
