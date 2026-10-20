@@ -58,10 +58,25 @@ test("internal test data alone is not a withhold", () => {
   assert.equal(findings.cosmeticFinding("internal test data"), false);
 });
 
-test("contradictions, privacy, and an unsupported RHI claim are not cosmetic", () => {
+test("contradictions, privacy, and unsupported claims are not cosmetic", () => {
   assert.equal(findings.cosmeticFinding("Voice says unfinished, typed notes say finished."), false);
   assert.equal(findings.cosmeticFinding("Customer address visible."), false);
-  assert.equal(findings.cosmeticFinding("The caption says RHI built it, and the notes do not."), false);
+  assert.equal(findings.cosmeticFinding("The caption names the town Bethlehem, and the notes do not."), false);
+  assert.equal(findings.cosmeticFinding("The caption says RHI installed quartz counters, and the facts do not mention quartz."), false);
+  assert.equal(findings.cosmeticFinding("The notes do not say RHI built it, and the caption names a town."), false);
+});
+
+test("RHI Pros did the work in its photos, so doubting who did it is cosmetic", () => {
+  for (const detail of [
+    "The caption says RHI built it, and the notes do not.",
+    "The caption says RHI Pros did this work, and the notes do not.",
+    "Unsupported claim: the notes do not say RHI built it.",
+    "The photo does not show who built the pavilion.",
+    "Company involvement is not supported by the facts.",
+  ]) {
+    assert.equal(findings.cosmeticFinding(detail), true, detail);
+    assert.equal(evidence.auditIssues({}, { photos: [], notes: { facts: [] }, reasons: [detail] }, { fields: [] }).length, 0, detail);
+  }
 });
 
 test("auditIssues drops cosmetic photo lines and keeps real blocks", () => {
@@ -69,12 +84,12 @@ test("auditIssues drops cosmetic photo lines and keeps real blocks", () => {
     `Photo ${photoId}: Do not publish this photo.`,
     "Voice says unfinished, typed notes say finished.",
     "Customer address visible.",
-    "The caption says RHI built it, and the notes do not.",
+    "The caption names the town Bethlehem, and the notes do not.",
   ];
   const issues = evidence.auditIssues({}, {
     photos: [{ assetId: photoId, observations: ["A finished paver patio."] }],
     notes: { facts: [{ source: "voice", quote: "We laid a paver patio.", fact: "Patio" }] },
-    reasons: [...prefixed, ...kept],
+    reasons: [...prefixed, ...kept, "The caption says RHI built it, and the notes do not."],
   }, { fields: [] });
   same(issues, kept);
   const copy = { social: "We laid a paver patio." };
@@ -95,7 +110,7 @@ test("auditIssues drops cosmetic photo lines and keeps real blocks", () => {
     notes: { facts: [{ source: "voice", quote: "We laid a paver patio.", fact: "Patio" }] },
     reasons: [],
   }, { fields: [{ field: "social", text: copy.social, supported: false, factIds: ["note:0"], issues: ["The caption says RHI built it, and the notes do not."] }] });
-  same(authorship, ["social: The caption says RHI built it, and the notes do not."]);
+  same(authorship, []);
 });
 
 test("assessEvidence does not turn cosmetic photo notes into blocking reasons", () => {

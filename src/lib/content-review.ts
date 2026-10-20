@@ -2,10 +2,10 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { MarketingDraft } from "@/lib/marketing";
 import { evidenceSchema } from "@/lib/marketing-evidence";
-import { copyChecks } from "@/lib/copy-checks";
+import { copyChecks, postedCopyChecks } from "@/lib/copy-checks";
 import { cosmeticFinding } from "@/lib/review-findings";
 
-export { copyChecks };
+export { copyChecks, postedCopyChecks };
 
 export const REVIEW_POLICY_VERSION = 3 as const;
 export const REVIEW_REQUEST = "marketing.content.review";

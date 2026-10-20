@@ -3,15 +3,17 @@ import { REVIEW_APPROVAL } from "../src/lib/content-review";
 import { DRAFT_SAVED_ACTION } from "../src/lib/marketing";
 
 /**
- * How RHI Pros posts sound, from the website's copy rules (CODEX.md, "Two voices"). The owner's own
- * approved posts are better examples, so they are sent too once there are some.
+ * How RHI Pros posts sound, from the website's copy rules (CODEX.md, "Two voices") and the owner's
+ * direction: RHI Pros did everything in its job photos, and the posts are about the work, with life.
+ * The owner's own approved posts are better examples, so they are sent too once there are some.
  */
 export const HOUSE_VOICE = [
-  "Write like Ryan, the owner, telling a neighbor about a job he is proud of: plain, specific, friendly, first person plural (we).",
-  "Say what was there and what we did with plain trade verbs: built, set, hung, laid, poured, tore out, primed.",
+  "Write like Ryan, the owner, telling a neighbor about a recent job: warm, specific and alive, never stiff.",
+  "RHI Pros did everything shown in the photos. Say so lightly or not at all; the post is about the work, not about us.",
+  "Bring the work to life: the materials, colors, textures and light, the craftsmanship in the details, and how the space looks and feels now.",
   "Talk about the space the way a homeowner would see it. Use plain homeowner words (patio, not surround).",
-  "No slogans, puns, punchlines or lines any contractor could post. Never use the word scope, or jargon like closeout, punch list or milestones.",
-  "Less text beats weak text. Every fact must come from the facts given.",
+  "No slogans, hype or lines any contractor could post about any job. Never use the word scope, or jargon like closeout, punch list or milestones.",
+  "Short and vivid beats long and flat. Be creative in how you say it, never in what you claim: every fact comes from the facts given.",
 ];
 
 /** The owner's newest approved Facebook/Instagram posts, as tone examples only. */

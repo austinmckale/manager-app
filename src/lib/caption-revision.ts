@@ -18,6 +18,8 @@ export const captionRevisionBodySchema = z
 /** Every public caption a draft has. The owner can keep (lock) any of them before regenerating. */
 export const CAPTION_FIELDS = ["social", "googleBusiness", "metaPrimary", "metaHeadline", "imageHeadline", "googleHeadlines", "googleDescriptions", "publicLocation", "service"] as const;
 export type CaptionField = (typeof CAPTION_FIELDS)[number];
+/** The captions Buffer posts. "Rewrite with AI" and the AI check only touch these. */
+export const POSTED_CAPTION_FIELDS = ["social", "googleBusiness"] as const satisfies readonly CaptionField[];
 export const captionFieldSchema = z.enum(CAPTION_FIELDS);
 export const captionValuesSchema = z.object({
   social: z.string().max(2200), googleBusiness: z.string().max(1500), metaPrimary: z.string().max(2200), metaHeadline: z.string().max(40), imageHeadline: z.string().max(60),

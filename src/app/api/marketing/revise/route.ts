@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
-import { CAPTION_FIELDS, captionRegenerateBodySchema, captionRevisionBodySchema, regenerateInstruction } from "@/lib/caption-revision";
+import { POSTED_CAPTION_FIELDS, captionRegenerateBodySchema, captionRevisionBodySchema, regenerateInstruction } from "@/lib/caption-revision";
 import { queueCaptionRevision, readCaptionRevision, readLatestReadyCaptionRevision, readLatestRegenerate } from "@/lib/caption-revision-store";
 import { appendCaptionTurn, readCaptionThread } from "@/lib/caption-thread";
 import { isDashboardOwnerEmail } from "@/lib/client-portal-policy";
@@ -82,7 +82,7 @@ async function regenerate(raw: unknown, auth: { orgId: string; userId: string })
   const parsed = captionRegenerateBodySchema.safeParse(raw);
   if (!parsed.success) return NextResponse.json({ error: "Check the kept captions and keep the note under 300 characters." }, { status: 400 });
   const body = parsed.data;
-  if (CAPTION_FIELDS.every((field) => body.locked[field] !== undefined)) return NextResponse.json({ error: "Every caption is kept. Unlock one to regenerate it." }, { status: 400 });
+  if (POSTED_CAPTION_FIELDS.every((field) => body.locked[field] !== undefined)) return NextResponse.json({ error: "Both posts are kept. Unlock one to rewrite it." }, { status: 400 });
   const context = await loadContentReview(auth.orgId, body.draftId);
   if (!context) return NextResponse.json({ error: "Draft not found." }, { status: 404 });
   if (context.inputHash !== body.inputHash || context.superseded) return NextResponse.json({ error: "This version changed. Reload before asking again." }, { status: 409 });

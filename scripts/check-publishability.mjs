@@ -83,7 +83,7 @@ const handoff = load("src/lib/marketing-handoff.ts", { zod: require("zod"), "@/l
 const types = load("src/lib/publishing/types.ts", {});
 const approval = load("src/lib/publishing/approval.ts", {
   "@/lib/content-review-store": {},
-  "@/lib/content-review": { canApproveContent: () => true, copyChecks: () => [] },
+  "@/lib/content-review": { canApproveContent: () => true, postedCopyChecks: () => [] },
   "@/lib/publishing/types": types,
   "@/lib/publishability": publishability,
 });
@@ -251,12 +251,14 @@ test("blocked chat handoff shows the reason and does not offer an import", () =>
   assert.match(blockedHtml, /The notes say not to publish it/);
   assert.equal(blockedHtml.includes(reason), false);
   assert.equal(blockedHtml.includes("RETURN JSON"), false);
-  assert.equal(blockedHtml.includes("Import as unapproved edits"), false);
-  assert.equal(blockedHtml.includes("Imported into the editor"), false);
+  assert.equal(blockedHtml.includes("Choose the ZIP ChatGPT gave back"), false);
+  assert.equal(blockedHtml.includes("Import the text"), false);
   const micHtml = renderToStaticMarkup(React.createElement(ui.MarketingChatHandoff, { draftId, inputHash: hash, draft: { ...draft, sourceNotes: "testing testing" }, originalNotes: "", photos: [{ id: photoId, fileName: "patio.jpg", url: "https://example.test/patio.jpg", description: "" }], audio: [{ id: "audio", transcript: "testing testing", status: "ready" }], onImport() {}, disabled: false }));
   assert.match(micHtml, /held from posting/);
-  assert.match(micHtml, /Import as unapproved edits/);
+  assert.match(micHtml, /Choose the ZIP ChatGPT gave back/);
+  assert.match(micHtml, /Import the text/);
   const openHtml = renderToStaticMarkup(React.createElement(ui.MarketingChatHandoff, { draftId, inputHash: hash, draft, originalNotes: "Paver patio and pavilion in Reading.", photos: [{ id: photoId, fileName: "patio.jpg", url: "https://example.test/patio.jpg", description: "Paver patio." }], audio: [], onImport() {}, disabled: false }));
-  assert.match(openHtml, /Import as unapproved edits/);
+  assert.match(openHtml, /Choose the ZIP ChatGPT gave back/);
+  assert.equal(openHtml.includes("held from posting"), false);
   assert.equal(openHtml.includes(reason), false);
 });

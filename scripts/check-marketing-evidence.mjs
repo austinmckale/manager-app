@@ -180,13 +180,33 @@ test('"None" in a concerns list does not hold a draft, but a real concern still 
   assert.equal(real.reasons.length, 1);
   assert.equal(evidence.isNonConcern('No railing on the upper landing.'), false);
 });
-test('missing-detail demands only hold a submission when the notes gave no usable facts', async () => {
-  const demands = { missing: ['Add proof of permit approval.'] };
+test('only privacy or a reason not to post holds a photo; commentary and quality notes do not', () => {
+  const base = { postType: 'project', notes, sources, assetIds: [photoId] };
+  const commentary = ['The cabinets appear finished.', 'Lighting is slightly dim in the corner.', 'Dishwasher fronts are not paneled yet.', 'No people, faces or house numbers are visible.', 'The address is not visible.', 'Cabinet faces are painted navy.'];
+  same(evidence.assessEvidence({ ...base, photos: [{ ...photo, concerns: commentary }] }).reasons, []);
+  for (const concern of ['Address near the front door.', 'Customer address visible.', 'House number visible on the mailbox.', 'A person is visible in the window reflection.', 'Do not publish this photo.', 'This photo is unrelated to the kitchen job.', 'License plate readable on the truck.', 'No faces visible, but a house number is on the mailbox.']) {
+    assert.ok(evidence.blockingConcern(concern), concern);
+    assert.equal(evidence.assessEvidence({ ...base, photos: [{ ...photo, concerns: [concern] }] }).reasons.length, 1, concern);
+  }
+  for (const concern of commentary) assert.equal(evidence.blockingConcern(concern), false, concern);
+});
+test('a quote filed under the wrong source, or with other capitals and spacing, is kept in the source words', () => {
+  const website = { notes: '', voice: '', owner: 'Navy island cabinets with a white quartz top.\nTwo  pendant lights over the seating.' };
+  const merged = evidence.mergeNoteReads([{ facts: [
+    { source: 'notes', quote: 'Navy island cabinets with a white quartz top.', fact: 'Navy island' },
+    { source: 'voice', quote: 'two pendant lights over the seating', fact: 'Pendants' },
+    { source: 'notes', quote: 'A farmhouse sink.', fact: 'Invented' },
+  ], conflicts: [] }], website);
+  same(merged.facts.map((fact) => [fact.source, fact.quote]), [['owner', 'Navy island cabinets with a white quartz top.'], ['owner', 'Two  pendant lights over the seating']]);
+  same(evidence.assessEvidence({ postType: 'project', photos: [photo], notes: merged, sources: website, assetIds: [photoId] }).reasons, []);
+});
+test('missing-detail demands only hold a submission when the notes gave no usable facts, and never ask for paperwork', async () => {
+  const demands = { missing: ['Add proof of permit approval.', 'Add the dishwasher model numbers.', 'Add the installation date.', 'Say what was built in the yard.'] };
   const look = { relevance: 'construction', observations: ['Paver patio.'], concerns: [] };
   const withFacts = await pipeline.inspectSubmission({ model: 'test', sources, postType: 'project', photos: [{ id: photoId, image: 'image' }] }, async (body) => response(body.messages[1].images ? look : body.format?.properties?.missing ? demands : notes));
   assert.deepEqual(withFacts.reasons, []);
   const noFacts = await pipeline.inspectSubmission({ model: 'test', sources, postType: 'project', photos: [{ id: photoId, image: 'image' }] }, async (body) => response(body.messages[1].images ? look : body.format?.properties?.missing ? demands : { facts: [], conflicts: [] }));
-  assert.ok(noFacts.reasons.includes('Add proof of permit approval.'));
+  same(noFacts.reasons, ['Say what was built in the yard.']);
 });
 test('malformed model inspection never becomes a pass', async () => {
   await assert.rejects(pipeline.inspectSubmission({ model: 'test', sources, postType: 'project', photos: [{ id: photoId, image: 'image' }] }, async () => response({ facts: 'bad' })));

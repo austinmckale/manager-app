@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { z } from 'zod';
-import { captionsLookComplete, proposeCaptionFixes, regenerateUnlocked, writeCheckedCopy, writeLoopPlan } from './local-write-loop.ts';
+import { WRITER_SYSTEM, captionsLookComplete, mentionsTarget, proposeCaptionFixes, regenerateUnlocked, removalTargets, withoutMentions, writeCheckedCopy, writeLoopPlan } from './local-write-loop.ts';
 
 const schema = z.object({ social: z.string(), googleBusiness: z.string() });
 const evidence = { postType: 'project', photos: [{ assetId: 'p1', observations: ['Gray paver patio'] }], notes: { facts: [{ source: 'voice', quote: 'We laid a paver patio.' }] }, reasons: [] };
@@ -103,21 +103,84 @@ test('no suggestion is stored when the fix is not better than the current captio
   assert.equal(await proposeCaptionFixes({ request, audit, model: 'writer', evidence, draft: pack, issues: [], options: {} }), undefined);
 });
 
-test('regenerate rewrites only the unlocked captions and sends the kept ones as fixed context', async () => {
+test('regenerate rewrites only the posted caption the owner did not keep, with the kept one as fixed context', async () => {
   const asks = [];
-  const locked = { social: pack.social, googleHeadlines: pack.googleHeadlines, publicLocation: 'Bethlehem, PA', service: 'Exterior stairs', metaPrimary: pack.metaPrimary, metaHeadline: pack.metaHeadline, imageHeadline: pack.imageHeadline };
+  const locked = { social: pack.social, googleHeadlines: pack.googleHeadlines, metaPrimary: pack.metaPrimary };
   const request = async (body) => {
     asks.push(JSON.parse(body.messages[1].content));
-    assert.deepEqual(Object.keys(body.format.properties).sort(), ['googleBusiness', 'googleDescriptions']);
-    return { message: { content: JSON.stringify({ googleBusiness: 'New exterior staircase and landing in Bethlehem.', googleDescriptions: ['White posts, black railings.', 'Safer entry from the driveway.'] }) } };
+    assert.deepEqual(Object.keys(body.format.properties), ['googleBusiness']);
+    return { message: { content: JSON.stringify({ googleBusiness: 'New exterior staircase and landing in Bethlehem.', googleDescriptions: ['Ignored.', 'Ignored too.'] }) } };
+  };
+  const audit = async (_model, copy) => {
+    assert.deepEqual(Object.keys(copy), ['googleBusiness']);
+    return { audit: { fields: [] }, issues: [] };
+  };
+  const result = await regenerateUnlocked({ request, audit, model: 'writer', evidence, locked, note: 'mention the landing', options: {} });
+  assert.deepEqual(Object.keys(result.proposal), ['googleBusiness']);
+  assert.equal(result.remaining, 0);
+  assert.deepEqual(asks[0].keptCaptions, { social: pack.social });
+  assert.equal(asks[0].ownerNote, 'mention the landing');
+  assert.equal(asks[0].leaveOut, undefined);
+  await assert.rejects(regenerateUnlocked({ request, audit, model: 'writer', evidence, locked: { social: 'x', googleBusiness: 'y' }, note: '', options: {} }), /Both posts are kept/);
+});
+
+test('suggested fixes cover only the two posted captions', async () => {
+  const request = async (body) => {
+    assert.deepEqual(Object.keys(body.format.properties).sort(), ['googleBusiness', 'social']);
+    return { message: { content: JSON.stringify({ ...pack, metaHeadline: 'Changed', social: 'A new exterior staircase with white posts.' }) } };
+  };
+  const audit = async (_model, copy) => {
+    assert.deepEqual(Object.keys(copy).sort(), ['googleBusiness', 'social']);
+    return { audit: { fields: [] }, issues: [] };
+  };
+  const result = await proposeCaptionFixes({ request, audit, model: 'writer', evidence, draft: pack, issues: ['social: claims every family in town'], options: {} });
+  assert.deepEqual(Object.keys(result.copy), ['social']);
+});
+
+test('"remove the dishwasher description" is read as dishwasher, and style asks are not read as things to remove', () => {
+  const labels = (note) => removalTargets(note).map((target) => target.label);
+  assert.deepEqual(labels('remove the dishwasher description'), ['dishwasher']);
+  assert.deepEqual(labels("Don't mention the dishwashers and make it shorter"), ['dishwashers']);
+  assert.deepEqual(labels('take out the part about the panel-ready fronts, and the microwave'), ['panel ready fronts', 'microwave']);
+  assert.deepEqual(labels('Remove any mention of the protective film.'), ['protective film']);
+  assert.deepEqual(labels("don't say anything about the dishwashers"), ['dishwashers']);
+  assert.deepEqual(labels('cut it down to two sentences without changing the tone'), []);
+  assert.deepEqual(labels('remove the last sentence and the hashtags'), []);
+  assert.deepEqual(labels('Make it shorter. Mention the town.'), []);
+  const dishwasher = removalTargets('remove the dishwasher')[0];
+  assert.ok(mentionsTarget('Two new dishwashers sit under the counter.', dishwasher));
+  assert.equal(mentionsTarget('A navy island with a white quartz top.', dishwasher), false);
+  assert.equal(withoutMentions('Navy island. Two dishwashers hide behind panels. White quartz on top.', [dishwasher]), 'Navy island. White quartz on top.');
+  assert.equal(withoutMentions('Two dishwashers.', [dishwasher]), 'Two dishwashers.');
+});
+
+test('a rewrite that keeps what the owner asked to remove is sent back, then cut, and the writer never gets that fact', async () => {
+  const kitchen = { ...evidence, photos: [{ assetId: 'p1', observations: ['Navy island cabinets', 'Two panel-ready dishwashers'] }], notes: { facts: [{ source: 'owner', quote: 'Navy island with a quartz top.' }, { source: 'owner', quote: 'Two dishwashers in the island.' }] } };
+  const asks = [];
+  const messages = [];
+  const replies = [
+    { social: 'A navy island with a quartz top. Two dishwashers sit in the island.', googleBusiness: 'Navy kitchen island. Two dishwashers built in.' },
+    { social: 'A navy island with a quartz top. The dishwashers hide behind panels.', googleBusiness: 'New navy kitchen island, quartz on top.' },
+  ];
+  const request = async (body) => {
+    asks.push(JSON.parse(body.messages[1].content));
+    messages.push(body.messages);
+    return { message: { content: JSON.stringify(replies.shift()) } };
   };
   const audit = async () => ({ audit: { fields: [] }, issues: [] });
-  const result = await regenerateUnlocked({ request, audit, model: 'writer', evidence, locked, note: 'mention the landing', options: {} });
-  assert.deepEqual(Object.keys(result.proposal).sort(), ['googleBusiness', 'googleDescriptions']);
-  assert.equal(result.remaining, 0);
-  assert.deepEqual(asks[0].keptCaptions, locked);
-  assert.equal(asks[0].ownerNote, 'mention the landing');
-  await assert.rejects(regenerateUnlocked({ request, audit, model: 'writer', evidence, locked: { ...locked, googleBusiness: 'x', googleDescriptions: ['a.', 'b.'] }, note: '', options: {} }), /Every caption is kept/);
+  const result = await regenerateUnlocked({ request, audit, model: 'writer', evidence: kitchen, locked: {}, note: 'remove the dishwasher description', options: {} });
+  assert.equal(result.proposal.social, 'A navy island with a quartz top.');
+  assert.equal(result.proposal.googleBusiness, 'New navy kitchen island, quartz on top.');
+  assert.deepEqual(asks[0].leaveOut, ['dishwasher']);
+  assert.ok(!JSON.stringify(asks[0].facts).toLowerCase().includes('dishwasher'));
+  assert.match(messages[1].at(-1).content, /The owner asked to remove "dishwasher"/);
+});
+
+test('a Google Business update that repeats the Facebook post is sent back to the writer', () => {
+  const social = 'New navy kitchen island with a white quartz top and pendant lights over the seating.';
+  assert.equal(captionsLookComplete({ social, googleBusiness: social }), false);
+  assert.equal(captionsLookComplete({ social: `${social} Planning a project of your own? Contact RHI Pros.`, googleBusiness: social }), false);
+  assert.equal(captionsLookComplete({ social, googleBusiness: 'Navy island, quartz top, new pendants.' }), true);
 });
 
 test('captions with stray CJK characters or a dangling last word are not accepted from the writer', () => {
@@ -142,6 +205,15 @@ test('the writer is told exactly what to fix, and gets the house voice and appro
   const ask = JSON.parse(seen[0][1].content);
   assert.deepEqual(ask.houseVoice, ['Plain words.']);
   assert.deepEqual(ask.voiceExamples, ['We laid this patio last spring.']);
+});
+
+test('the writer and house voice treat the photographed work as RHI Pros work and keep the post about the work', async () => {
+  const { HOUSE_VOICE } = await import('./local-voice.ts');
+  assert.match(WRITER_SYSTEM, /RHI Pros did all the work shown in the job photos/);
+  assert.match(WRITER_SYSTEM, /never make it the focus/);
+  assert.doesNotMatch(WRITER_SYSTEM, /Refuse unsupported claims that RHI Pros built/);
+  assert.ok(HOUSE_VOICE.some((line) => /RHI Pros did everything shown in the photos/.test(line)));
+  assert.ok(!HOUSE_VOICE.some((line) => /tore out|poured|primed/.test(line)));
 });
 
 test('voice examples are the newest approved posts, without repeats', async () => {

@@ -7,7 +7,7 @@ import { isDemoMode } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
 import { DRAFT_SAVED_ACTION, marketingDraftSchema } from "@/lib/marketing";
 import { loadContentReview } from "@/lib/content-review-store";
-import { CHAT_EDIT_TAG, REVIEW_APPROVAL, REVIEW_REQUEST, REVIEW_SUPERSEDED, allowedPhotoSelection, canApproveContent, copyChecks, editedFromTag, needsResolutionNote } from "@/lib/content-review";
+import { CHAT_EDIT_TAG, REVIEW_APPROVAL, REVIEW_REQUEST, REVIEW_SUPERSEDED, allowedPhotoSelection, canApproveContent, editedFromTag, postedCopyChecks, needsResolutionNote } from "@/lib/content-review";
 import { PROCESSING_SETTINGS, processingId, processingSettingsSchema } from "@/lib/marketing-processing";
 import { draftPublishability } from "@/lib/publishability";
 import { CAPTION_FIELDS, CAPTION_LOCKS_ACTION, captionFieldSchema, captionLocksId } from "@/lib/caption-revision";
@@ -78,7 +78,7 @@ export async function POST(request: Request) {
         await queueCheck(tx, base, context);
         return { queued: true };
       }
-      if (!canApproveContent(context.inputHash, context.review, context.superseded, context.voicePending) || copyChecks(context.draft).some((finding) => finding.severity === "blocker")) throw new Error("A completed review with no blocking findings is required.");
+      if (!canApproveContent(context.inputHash, context.review, context.superseded, context.voicePending) || postedCopyChecks(context.draft).some((finding) => finding.severity === "blocker")) throw new Error("A completed review with no blocking findings is required.");
       if (needsResolutionNote(context.review?.result?.findings ?? []) && body.resolution.length < 10) throw new Error("Explain how you checked the warnings before approving.");
       if (!context.approvedAt) await tx.activityLog.create({ data: { ...base, action: REVIEW_APPROVAL, metadata: { draftId: context.draftId, inputHash: context.inputHash, reviewId: context.reviewId, factsChecked: true, photosCleared: true, resolution: body.resolution } } });
       return { approved: true };

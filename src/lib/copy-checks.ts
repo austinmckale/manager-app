@@ -3,10 +3,9 @@ import { cosmeticFinding } from "@/lib/review-findings";
 
 export type CopyFinding = { category: "facts" | "privacy" | "copy" | "images"; severity: "blocker" | "warning"; detail: string; evidence: string; suggestion: string };
 
+// RHI Pros did all the work shown in its job photos, so a post may say we built or installed it.
+// There is no check for that claim.
 const danglingEnding = /\b(?:in|and|or|with|the|a|to|for|of)$/i;
-const workClaim = /\b(?:we|our crew|RHI Pros)\b.{0,40}\b(?:built|installed|completed|finished)\b/i;
-const workNote = /\b(?:we|our|built|installed|completed)\b/i;
-const templateCta = "Planning a project of your own? Contact RHI Pros.";
 
 function endsMidToken(value: string) {
   const text = value.trim();
@@ -45,6 +44,12 @@ function nearDuplicate(left: string, right: string) {
   if (!a || !b) return false;
   if (a === b) return true;
   return 1 - editDistance(a, b) / Math.max(a.length, b.length) >= 0.86;
+}
+/** True when the Google Business update is the Facebook post again, or most of it copied word for word. */
+export function repeatsPost(social: string, googleBusiness: string) {
+  if (nearDuplicate(social, googleBusiness)) return true;
+  const [shorter, longer] = [normalizedCopy(social), normalizedCopy(googleBusiness)].sort((left, right) => left.length - right.length);
+  return shorter.length >= 40 && shorter.length >= 0.6 * longer.length && longer.includes(shorter);
 }
 const descriptionDangling = /(?:^|\s)(?:enhance|in|and|or|with|for|the|a|an|to|of|your)$/i;
 function splitDescription(current: string, next: string | undefined) {
@@ -89,7 +94,26 @@ export function copyChecks(draft: MarketingDraft): CopyFinding[] {
   if (draft.social.trim() && draft.social.trim() === draft.metaPrimary.trim()) add("copy", "Rewrite the Meta ad so it is not the same as the Facebook post.", "Facebook and Meta primary text match after trim.", "Write a separate Meta ad or change the Facebook post.", "warning");
   if (/\S/.test(draft.imageHeadline) && draft.imageHeadline.includes("  ")) add("copy", "Remove the double space from the graphic headline.", `Graphic headline: "${draft.imageHeadline}".`, "Use a single space.", "warning");
   for (const [label, value, severity] of [["public town", draft.publicLocation, "blocker"], ["work performed", draft.service, "blocker"], ["Facebook post", draft.social, "blocker"], ["Google Business update", draft.googleBusiness, "blocker"], ["Meta ad", draft.metaPrimary, "warning"], ["Meta headline", draft.metaHeadline, "warning"], ...draft.googleHeadlines.map((value, index) => [`Google headline ${index + 1}`, value, "warning"] as [string, string, "warning"]), ...draft.googleDescriptions.map((value, index) => [`Google description ${index + 1}`, value, "warning"] as [string, string, "warning"])] as [string, string, "blocker" | "warning"][]) if (value.trim() && value.includes("  ")) add("copy", `Remove the double space from the ${label}.`, `${label}: "${value.trim().slice(0, 160)}".`, "Use a single space.", severity);
-  const claimed = [draft.social, draft.googleBusiness, draft.metaPrimary].some((value) => workClaim.test(value.split(templateCta).join(" ")));
-  if (claimed && !workNote.test(draft.sourceNotes)) add("facts", "The caption says RHI Pros did this work, and the notes do not.", "Public copy says RHI Pros built, installed, or completed the work, and the notes do not.", "Add a first-person note if RHI Pros did the work, or remove the claim.");
+  return findings;
+}
+
+/**
+ * Checks only what Buffer posts: the Facebook/Instagram text and the Google Business text. Ad drafts
+ * are not posted yet and are hidden on the review page, so they must not block approval of a post.
+ */
+export function postedCopyChecks(draft: MarketingDraft): CopyFinding[] {
+  const findings: CopyFinding[] = [];
+  const add = (category: CopyFinding["category"], detail: string, evidence: string, suggestion: string, severity: CopyFinding["severity"] = "blocker") => {
+    if (severity === "blocker" && cosmeticFinding(detail)) return;
+    findings.push({ category, severity, detail, evidence, suggestion });
+  };
+  if (!marketingDraftSchema.safeParse(draft).success) add("copy", "Draft format is invalid.", "Field validation failed.", "Correct text lengths and required fields.");
+  const posted = [["Facebook post", draft.social], ["Google Business update", draft.googleBusiness]] as const;
+  for (const [label, value] of posted) {
+    if (!value.trim()) add("copy", `The ${label} is empty.`, "No public copy supplied.", "Write it before approval.");
+    else if (value.includes("  ")) add("copy", `Remove the double space from the ${label}.`, `${label}: "${value.trim().slice(0, 160)}".`, "Use a single space.");
+  }
+  if (/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(`${draft.social}\n${draft.googleBusiness}`)) add("privacy", "An email address appears in the post.", "An email pattern was detected.", "Remove customer contact details.");
+  if (draft.social.trim() && repeatsPost(draft.social, draft.googleBusiness)) add("copy", "The Google Business update repeats the Facebook post.", "The two posts match or nearly match.", "Write a shorter, separate Google Business update.", "warning");
   return findings;
 }

@@ -57,8 +57,13 @@ export function verifiedNoteFacts(notes: z.infer<typeof noteEvidenceSchema>, sou
 // Same rule as cosmeticFinding in review-findings.ts. Kept in this file so the
 // evidence checks can load it with zod alone. A finished patio, a missing logo,
 // and a voice note that is not on the photo are not publish blocks.
+// RHI Pros did all the work shown in its job photos, so a finding that only doubts who did it is
+// not a block either.
 const cosmeticWithhold = /^TEST\b|do\s+not\s+publish|don['’]t\s+publish|not\s+for\s+publication|microphone\s+test/im;
-const cosmeticKeptBlock = /\bRHI\b|\baddress\b|\bemail\b|\bphone\b|\bcontradict|\bconflicts?\b|\bdisagree|\bwho built\b|\bunsupported claim\b|\bneeds details\b/i;
+const workDone = String.raw`(?:RHI(?: Pros)?|we|our (?:company|crew|team)|the company|the crew|the contractor)\s+(?:built|installed|did|completed|finished|performed|constructed)(?:\s+(?:it|this|that|them|anything|any work|the work|this work|the job|this job|the project|this project))?\s*(?:[,.;!?]|$|\s+(?:and|but|or)\b)`;
+const authorshipDoubt = new RegExp(String.raw`\bwho built\b|\bcompany involvement\b|\b(?:does not|doesn['’]t|do not|don['’]t|did not|didn['’]t|cannot|can['’]t|not)\s+(?:say|state|show|prove|establish|confirm|mention|indicate|support)\w*\s+(?:that\s+)?${workDone}|\b${workDone}[^.]{0,40}\b(?:notes|facts|sources?|evidence)\b[^.]{0,20}\b(?:do not|don['’]t|does not|doesn['’]t|never)\b`, "i");
+const otherClaim = /\btown\b|\bcity\b|\blocation\b|\boffers?\b|\bdiscount|\bwarrant|\bguarantee|\bprice|\bdates?\b|\bpraise\b|\breviews?\b|\bawards?\b|\blicen[sc]|\bcertif|\baddress\b|\bemail\b|\bphone\b|\bcontradict|\bconflicts?\b|\bdisagree/i;
+const cosmeticKeptBlock = /\bRHI\b|\baddress\b|\bemail\b|\bphone\b|\bcontradict|\bconflicts?\b|\bdisagree|\bunsupported claim\b|\bneeds details\b/i;
 const cosmeticPatterns = [
   /\bwork appears complete\b/i,
   /\bno\b[^.]{0,180}\bunfinished elements\b/i,
@@ -78,8 +83,10 @@ const cosmeticPatterns = [
   /\bno explicit connection\b/i,
 ];
 function cosmeticFinding(detail: string) {
-  if (cosmeticWithhold.test(detail) || cosmeticKeptBlock.test(detail)) return false;
+  if (cosmeticWithhold.test(detail)) return false;
   const text = detail.replace(/\s+/g, " ");
+  if (authorshipDoubt.test(text) && !otherClaim.test(text)) return true;
+  if (cosmeticKeptBlock.test(detail)) return false;
   return cosmeticPatterns.some((pattern) => pattern.test(text));
 }
 // Small models fill a concerns or conflicts list with "None" or "No visible privacy concerns".
@@ -88,13 +95,25 @@ const nonConcern = /^(?:none\b|n\/?a\b|nothing\b|no (?:visible |obvious |apparen
 export function isNonConcern(text: string) {
   return nonConcern.test(text.trim().replace(/^[-•*]\s*/, ""));
 }
+// A photo concern holds a draft only for privacy or a clear reason not to post the photo. Small
+// models also write commentary there ("lighting is dim", "cabinets look finished"); that never
+// holds a post, because the owner looks at every photo before approving.
+const privacyConcern = /\b(?:address(?:es)?|(?:house|street|mailbox|door) numbers?|mailbox(?:es)?|people|persons?|child(?:ren)?|kids?|licen[sc]e plates?|phone numbers?|e-?mail(?: address(?:es)?)?|documents?|paperwork|(?:customer|client|homeowner|owner|family|personal)['’]?s? (?:names?|info|information|details|photos?|pictures?|documents?|mail|faces?)|names? (?:is |are )?(?:visible|shown|readable|legible)|faces? (?:is |are )?(?:visible|shown|in (?:the )?(?:frame|photo|picture|background|reflection|mirror)))\b/i;
+const withholdConcern = /\b(?:do not|don['’]t|should not|shouldn['’]t) (?:publish|post|use|share)\b|\bnot for (?:publication|posting)\b|\bunrelated\b|\bnot related to (?:the|this) (?:job|project|work)\b|\bunsafe\b|\bnudity\b|\boffensive\b/i;
+const negatedConcern = /^(?:no|none|nothing|without|there (?:is|are) no)\b|\b(?:not|isn['’]t|aren['’]t|never) (?:visible|shown|readable|legible|present|seen|identifiable)\b/i;
+export function blockingConcern(concern: string) {
+  const text = concern.trim().replace(/^[-•*]\s*/, "");
+  if (!text || isNonConcern(text)) return false;
+  if (negatedConcern.test(text) && !/\b(?:but|however|except|although|though)\b/i.test(text)) return false;
+  return withholdConcern.test(text) || privacyConcern.test(text);
+}
 export function assessEvidence(input: { postType: z.infer<typeof postTypeSchema>; photos: z.infer<typeof photoEvidenceSchema>[]; notes: z.infer<typeof noteEvidenceSchema>; sources: EvidenceSources; assetIds: string[]; voicePending?: boolean }): MarketingEvidence {
   const reasons: string[] = [];
   const photos = input.photos.map((photo) => photoEvidenceSchema.parse(photo));
   if (input.voicePending) reasons.push("Wait for the voice recording to finish transcription.");
   if (new Set(photos.map((photo) => photo.assetId)).size !== input.assetIds.length || photos.length !== input.assetIds.length || input.assetIds.some((id) => !photos.some((photo) => photo.assetId === id))) reasons.push("Every selected photo must be inspected before drafting.");
   for (const photo of photos) {
-    reasons.push(...photo.concerns.filter((concern) => !isNonConcern(concern)).map((concern) => `Photo ${photo.assetId}: ${concern}`).filter((line) => !cosmeticFinding(line)));
+    reasons.push(...photo.concerns.filter(blockingConcern).map((concern) => `Photo ${photo.assetId}: ${concern}`).filter((line) => !cosmeticFinding(line)));
   }
   reasons.push(...input.notes.conflicts.filter((conflict) => !isNonConcern(conflict)));
   const traced = verifiedNoteFacts(input.notes, input.sources);
@@ -120,19 +139,35 @@ export function classifyEvidence(evidence: MarketingEvidence) {
 type NoteRead = z.infer<typeof noteEvidenceSchema>;
 type PhotoRead = z.infer<typeof photoEvidenceSchema>;
 
+// The exact words in the source for a quote that a model copied with other capitals, spacing or
+// curly quotes; null when the source does not contain it.
+function sourceQuote(source: string, quote: string) {
+  if (!quote.trim()) return null;
+  if (source.includes(quote)) return quote;
+  const words = quote.trim().split(/\s+/).map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/['’‘]/g, "['’‘]").replace(/["“”]/g, "[\"“”]"));
+  const match = new RegExp(words.join("\\s+"), "i").exec(source);
+  return match && match[0].length <= 500 ? match[0] : null;
+}
+const sourceNames = ["notes", "voice", "owner"] as const;
 // Two independent reads. A quoted fact from either read is kept when the quote
 // is really in the source, so a thin first read does not throw away a later one.
+// Small models often name the wrong source (website notes called "notes" when they
+// are the owner's), so a quote is filed under the source that really has it.
 // Observations are kept only when both looks agree on what the photo is.
 export function mergeNoteReads(reads: NoteRead[], sources: EvidenceSources): NoteRead {
   const facts: NoteRead["facts"] = [];
   const seen = new Set<string>();
   for (const read of reads) {
     for (const fact of read.facts) {
-      if (!sources[fact.source].includes(fact.quote)) continue;
-      const key = `${fact.source}:${fact.quote.trim().toLowerCase()}`;
+      const grounded = [fact.source, ...sourceNames.filter((name) => name !== fact.source)].flatMap((source) => {
+        const quote = sourceQuote(sources[source], fact.quote);
+        return quote ? [{ ...fact, source, quote }] : [];
+      })[0];
+      if (!grounded) continue;
+      const key = `${grounded.source}:${grounded.quote.trim().toLowerCase()}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      facts.push(fact);
+      facts.push(grounded);
     }
   }
   const conflicts = [...new Set(reads.flatMap((read) => read.conflicts.map((conflict) => conflict.trim())).filter(Boolean))].slice(0, 3);

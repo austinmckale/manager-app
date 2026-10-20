@@ -53,7 +53,7 @@ test('code checks stop empty copy, external destinations, contact details and re
   for (const change of [{ social: '' }, { landingUrl: 'https://example.com' }, { social: 'Contact customer@private.example' }]) assert.ok(review.copyChecks({ ...draft, ...change }).some((finding) => finding.severity === 'blocker'));
   assert.ok(review.copyChecks({ ...draft, googleHeadlines: ['Same', 'same', 'Same'] }).some((finding) => finding.severity === 'warning' && finding.detail === 'Google headlines repeat.'));
 });
-test('copy checks block cut-off headlines, repeated descriptions, cloned ads, double spaces and unsupported work claims', () => {
+test('copy checks flag cut-off headlines, repeated descriptions, cloned ads and double spaces, and allow saying RHI Pros did the work', () => {
   const claim = 'The caption says RHI Pros did this work, and the notes do not.';
   const cut = review.copyChecks({ ...draft, metaHeadline: 'Pavilion in', imageHeadline: 'Deck buildi', googleHeadlines: ['RHI Pros', 'Short headline', 'Another headline'] });
   assert.ok(cut.some((finding) => finding.category === 'copy' && finding.severity === 'warning' && finding.detail === 'Finish the Meta headline so it does not end on a dangling word.' && finding.evidence && finding.suggestion));
@@ -79,13 +79,15 @@ test('copy checks block cut-off headlines, repeated descriptions, cloned ads, do
   assert.equal(cloned.some((finding) => finding.severity === 'blocker' && finding.detail === sameAd.detail), false);
   assert.equal(review.copyChecks({ ...draft, social: 'Same public post.', metaPrimary: 'same public post.', googleHeadlines: ['RHI Pros', 'Short headline', 'Another headline'] }).some((finding) => finding.detail === 'Rewrite the Meta ad so it is not the same as the Facebook post.'), false);
   assert.ok(review.copyChecks({ ...draft, imageHeadline: 'Project  by RHI Pros', googleHeadlines: ['RHI Pros', 'Short headline', 'Another headline'] }).some((finding) => finding.detail === 'Remove the double space from the graphic headline.'));
-  const unsupported = review.copyChecks({ ...draft, sourceNotes: 'Photos of a finished pavilion.', social: 'Our crew built this pavilion.', googleBusiness: 'We installed the railing.', metaPrimary: 'RHI Pros completed this pavilion.', googleHeadlines: ['RHI Pros', 'Short headline', 'Another headline'] });
-  assert.equal(unsupported.filter((finding) => finding.detail === claim && finding.category === 'facts' && finding.severity === 'blocker').length, 1);
+  // RHI Pros did all the work shown in its job photos, so saying so is never a copy-check finding.
+  const ours = review.copyChecks({ ...draft, sourceNotes: 'Photos of a finished pavilion.', social: 'Our crew built this pavilion.', googleBusiness: 'We installed the railing.', metaPrimary: 'RHI Pros completed this pavilion.', googleHeadlines: ['RHI Pros', 'Short headline', 'Another headline'] });
+  assert.equal(ours.some((finding) => finding.detail === claim), false);
+  assert.equal(review.postedCopyChecks({ ...draft, sourceNotes: 'Photos of a finished pavilion.', social: 'Our crew built this pavilion.', googleBusiness: 'We installed the railing.' }).some((finding) => finding.detail === claim), false);
   assert.equal(review.copyChecks({ ...draft, sourceNotes: 'Photos of a pavilion.', social: 'Planning a project of your own? Contact RHI Pros.', googleBusiness: 'Have a project in mind?', metaPrimary: 'Tell RHI Pros what you have in mind.', googleHeadlines: ['RHI Pros', 'Short headline', 'Another headline'] }).some((finding) => finding.detail === claim), false);
   assert.equal(review.copyChecks({ ...draft, sourceNotes: 'We built a pavilion.', social: 'We built this pavilion.', googleHeadlines: ['RHI Pros', 'Short headline', 'Another headline'] }).some((finding) => finding.detail === claim), false);
   assert.equal(review.copyChecks({ ...draft, sourceNotes: 'Photos of a pavilion.', social: `We ${'x'.repeat(41)} built this.`, googleHeadlines: ['RHI Pros', 'Short headline', 'Another headline'] }).some((finding) => finding.detail === claim), false);
   for (const finding of [...cut, ...google, ...repeated]) assert.equal(finding.severity, 'warning');
-  for (const finding of [...cloned.filter((finding) => finding.severity === 'blocker'), ...unsupported]) {
+  for (const finding of cloned.filter((finding) => finding.severity === 'blocker')) {
     assert.equal(finding.severity, 'blocker');
     assert.ok(finding.evidence.length > 0);
     assert.ok(finding.suggestion.length > 0);
@@ -212,7 +214,7 @@ test('local model transport handles responses, deadlines, oversized output and H
   await assert.rejects(localReviewRequest({ mode: 'large' }, port, 1000));
   await assert.rejects(localReviewRequest({ mode: 'timeout' }, port, 10), /timed out/);
 });
-test('fixing copy checks clears ad-line blocks and leaves a real claim block in place', () => {
+test('fixing copy checks clears ad-line blocks; a doubt about who did the work is cosmetic and a town claim is not', () => {
   const broken = {
     ...draft,
     social: 'We built  a pavilion in Reading.',
@@ -228,8 +230,7 @@ test('fixing copy checks clears ad-line blocks and leaves a real claim block in 
   assert.match(fixed.social, /pavilion/);
   assert.equal(findings.cosmeticFinding('Photo abc: The image appears to be an existing photo used for verification purposes, not necessarily showing completed work by our company.'), true);
   assert.equal(findings.cosmeticFinding('Photo abc: No explicit connection to our company team or projects is visible in the image itself.'), true);
-  assert.equal(findings.cosmeticFinding('Unsupported claim: the notes do not say RHI built it.'), false);
+  assert.equal(findings.cosmeticFinding('Unsupported claim: the notes do not say RHI built it.'), true);
+  assert.equal(findings.cosmeticFinding('Unsupported claim: the caption names the town Reading.'), false);
   assert.equal(repair.repairCheckedCopy({ ...draft, imageHeadline: '' }).imageHeadline, 'Project photos');
-  const claim = review.copyChecks({ ...draft, sourceNotes: 'Photos of a finished pavilion.', social: 'Our crew built this pavilion.' });
-  assert.equal(claim.filter((finding) => finding.detail === 'The caption says RHI Pros did this work, and the notes do not.' && finding.severity === 'blocker').length, 1);
 });

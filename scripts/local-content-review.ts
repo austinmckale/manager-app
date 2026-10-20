@@ -9,7 +9,7 @@ import { proposeCaptionFixes, type CaptionFixes } from "./local-write-loop";
 import { voiceContext } from "./local-voice";
 import { DRAFT_SAVED_ACTION } from "../src/lib/marketing";
 import { loadContentReview } from "../src/lib/content-review-store";
-import { REVIEW_REQUEST, copyChecks, reviewRecordSchema, type ReviewFinding } from "../src/lib/content-review";
+import { REVIEW_REQUEST, postedCopyChecks, reviewRecordSchema, type ReviewFinding } from "../src/lib/content-review";
 import { cosmeticFinding } from "../src/lib/review-findings";
 import { publicationBlock } from "../src/lib/publishability";
 
@@ -58,13 +58,15 @@ export async function runContentReview(prisma: PrismaClient, supabase: typeof Su
     const sources = { notes: current.originals.receiptNotes.join("\n\n"), voice: current.audio.map((audio) => audio.transcript).join("\n\n"), owner: current.draft.sourceNotes };
     const evidence = await inspectSubmission({ model, photos: images, postType: current.draft.postType, sources }, ai?.request);
     const block = publicationBlock(sources);
-    const audit = block || evidence.reasons.length ? null : await auditDraft(checker, current.draft, evidence, ai?.request);
+    // Buffer posts only the Facebook/Instagram text and the Google Business text, so only those are fact-checked.
+    const posted = { social: current.draft.social, googleBusiness: current.draft.googleBusiness };
+    const audit = block || evidence.reasons.length ? null : await auditDraft(checker, posted, evidence, ai?.request);
     const issues = audit?.issues || evidence.reasons;
     const findings: ReviewFinding[] = block
       ? block.lines.map((line) => ({ category: "facts" as const, severity: "blocker" as const, detail: line, evidence: "The notes match a publication block.", suggestion: "Use a new verified submission." }))
-      : [...copyChecks(current.draft), ...issues.map((issue) => ({ category: "facts" as const, severity: cosmeticFinding(issue) ? "warning" as const : "blocker" as const, detail: issue.slice(0, 800), evidence: "Compared with all selected photos and the original notes and voice transcript.", suggestion: "Correct the notes or public copy, or choose relevant photos, then save a new version and run checks again." }))];
-    const summary = block ? block.title : findings.length ? "Changes or context are required before approval." : "Every selected photo and public field was checked against source evidence. Owner approval is still required.";
-    // When captions fail the fact-check, suggest fixes the owner can accept. Nothing is applied here,
+      : [...postedCopyChecks(current.draft), ...issues.map((issue) => ({ category: "facts" as const, severity: cosmeticFinding(issue) ? "warning" as const : "blocker" as const, detail: issue.slice(0, 800), evidence: "Compared with all selected photos and the original notes and voice transcript.", suggestion: "Correct the notes or public copy, or choose relevant photos, then save a new version and run checks again." }))];
+    const summary = block ? block.title : findings.length ? "Changes or context are required before approval." : "Every selected photo and both posts were checked against source evidence. Owner approval is still required.";
+    // When the posts fail the fact-check, suggest fixes the owner can accept. Nothing is applied here,
     // and a failed suggestion never fails the review.
     let fixes: CaptionFixes | undefined;
     if (audit?.issues.length) {
