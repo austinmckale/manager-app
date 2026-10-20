@@ -35,6 +35,8 @@ export const captionRegenerateBodySchema = z
 export function regenerateInstruction(note: string) {
   return `Regenerate the unlocked captions${note.trim() ? `: ${note.trim()}` : ""}`.slice(0, 400);
 }
+/** The request Pick posts queues: rewrite both posts, save them as a new version, check it. */
+export const PICK_INSTRUCTION = "Prepare this post for Pick posts";
 
 export const CAPTION_LOCKS_ACTION = "marketing.caption.locks";
 export const captionLocksSchema = z.object({ draftId: draftIdSchema, fields: z.array(captionFieldSchema).max(CAPTION_FIELDS.length) });
@@ -61,6 +63,8 @@ export const captionRevisionSchema = z.object({
   proposal: captionValuesSchema.default({}),
   remaining: z.number().int().min(0).nullable().default(null),
   requestedAt: z.string().default(""),
+  // Pick posts: the worker saves the rewrite as a new, unapproved version and checks it.
+  apply: z.boolean().default(false),
   error: z.string().nullable(),
   approved: z.literal(false),
   published: z.literal(false),

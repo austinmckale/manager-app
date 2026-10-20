@@ -79,8 +79,9 @@ export async function listPastJobs(db: PrismaClient, orgId: string): Promise<Pas
 /**
  * Makes (or finds) the marketing pack for one website project and queues the AI check on it, so
  * the review page shows suggested fixes once this PC's worker has run. Nothing is approved or posted.
+ * Pick posts passes `check: false` because it queues a rewrite that checks the new version instead.
  */
-export async function makePastJobPack(db: PrismaClient, auth: { orgId: string; userId: string }, slug: string) {
+export async function makePastJobPack(db: PrismaClient, auth: { orgId: string; userId: string }, slug: string, options: { check?: boolean } = {}) {
   const project = pastJobBySlug(slug);
   if (!project) throw new Error("That project is not on the website.");
   const already = (await listPastJobs(db, auth.orgId)).find((item) => item.slug === slug)?.draftId;
@@ -91,7 +92,7 @@ export async function makePastJobPack(db: PrismaClient, auth: { orgId: string; u
   const draft = pastJobDraft(project, assetIds);
   const saved = await db.activityLog.create({ data: { orgId: auth.orgId, actorId: auth.userId, jobId, action: DRAFT_SAVED_ACTION, metadata: { ...draft, source: PAST_JOBS_TAG, websiteSlug: slug } as Prisma.InputJsonValue } });
   // Queue the AI check; the worker takes queued checks in order when no single test is waiting.
-  const context = await loadContentReview(auth.orgId, saved.id, db);
+  const context = options.check === false ? null : await loadContentReview(auth.orgId, saved.id, db);
   if (context) {
     const metadata = { draftId: context.draftId, inputHash: context.inputHash, status: "queued", requestedAt: new Date().toISOString() };
     await db.activityLog.upsert({ where: { id: context.reviewId }, create: { id: context.reviewId, orgId: auth.orgId, actorId: auth.userId, jobId, action: REVIEW_REQUEST, metadata }, update: { metadata } });

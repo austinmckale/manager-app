@@ -71,7 +71,7 @@ export async function queueCaptionRevision(
   instruction: string,
   social: Social,
   googleBusiness: GoogleBusiness,
-  regenerate?: { locked: CaptionValues },
+  regenerate?: { locked: CaptionValues; apply?: boolean },
 ): Promise<{ id: string; status: Revision["status"]; deduped: boolean; approved: false }> {
   // A different set of kept captions is a different request.
   const id = captionRevisionId(orgId, draftId, inputHash, instruction, regenerate ? JSON.stringify(regenerate.locked) : "");
@@ -84,7 +84,7 @@ export async function queueCaptionRevision(
       status: "queued",
       social,
       googleBusiness,
-      ...(regenerate ? { mode: "regenerate", locked: regenerate.locked, proposal: {}, remaining: null } : {}),
+      ...(regenerate ? { mode: "regenerate", locked: regenerate.locked, proposal: {}, remaining: null, apply: regenerate.apply ?? false } : {}),
       requestedAt: new Date().toISOString(),
       approved: false,
       published: false,
@@ -183,7 +183,8 @@ export async function listQueuedCaptionRevisions(
   const rows = await store.activityLog.findMany({
     where: { orgId, action: CAPTION_REVISION_ACTION, metadata: { path: ["status"], equals: "queued" } },
     orderBy: { createdAt: "asc" },
-    take: 5,
+    // Enough to find the owner's own request behind a Pick posts backlog.
+    take: 50,
   });
   const revisions: Array<Revision & { id: string }> = [];
   for (const row of rows) {
@@ -191,6 +192,11 @@ export async function listQueuedCaptionRevisions(
     if (parsed) revisions.push({ ...parsed, id: row.id });
   }
   return revisions;
+}
+
+/** The request to run next: the owner's own asks before Pick posts' background rewrites, oldest first. */
+export function nextCaptionRevision<T extends { apply: boolean }>(waiting: readonly T[]): T | undefined {
+  return waiting.find((item) => !item.apply) ?? waiting[0];
 }
 
 /** Compare-and-set queued -> running. True only for the single worker that wins the claim. */

@@ -4,11 +4,14 @@ import { localReviewRequest } from "./local-review-request";
 import { localAiSettings } from "./local-ai-settings";
 import { installedLocalModels } from "../src/lib/local-models";
 import { loadContentReview } from "../src/lib/content-review-store";
-import { claimCaptionRevision, failCaptionRevision, listQueuedCaptionRevisions, markCaptionRevisionStale, saveCaptionProposal, saveRegenerateProposal } from "../src/lib/caption-revision-store";
+import { claimCaptionRevision, failCaptionRevision, listQueuedCaptionRevisions, markCaptionRevisionStale, nextCaptionRevision, saveCaptionProposal, saveRegenerateProposal } from "../src/lib/caption-revision-store";
 import { freshEvidence, latestCheckedEvidence, regenerateNote } from "./local-regenerate";
 import { voiceContext } from "./local-voice";
 import { regenerateUnlocked } from "./local-write-loop";
 import { appendCaptionTurn } from "../src/lib/caption-thread";
+import { saveProposalVersion } from "../src/lib/draft-versions";
+import type { CaptionValues } from "../src/lib/caption-revision";
+import type { LocalModels } from "../src/lib/local-models";
 
 const proposalSchema = z.object({ social: z.string().max(2200), googleBusiness: z.string().max(1500) });
 
@@ -35,8 +38,17 @@ async function appendRevisionTurn(store: PrismaClient, orgId: string, draftId: s
   }
 }
 
+/** Pick posts: saves the rewrite as a new, unapproved version and runs the AI check on it now. */
+async function checkPickVersion(prisma: PrismaClient, orgId: string, request: { draftId: string; inputHash: string }, proposal: CaptionValues, models: LocalModels) {
+  const draftId = await saveProposalVersion(prisma, orgId, request.draftId, request.inputHash, proposal);
+  if (!draftId) return;
+  const { runContentReview } = await import("./local-content-review");
+  const { supabaseAdmin } = await import("../src/lib/supabase/admin");
+  await runContentReview(prisma, supabaseAdmin, orgId, true, { model: models.reader, writer: models.writer, request: localReviewRequest, draftId });
+}
+
 export async function runCaptionRevision(prisma: PrismaClient, orgId: string): Promise<{ revised: boolean }> {
-  const [queued] = await listQueuedCaptionRevisions(prisma, orgId);
+  const queued = nextCaptionRevision(await listQueuedCaptionRevisions(prisma, orgId));
   if (!queued) return { revised: false };
   const claimed = await claimCaptionRevision(prisma, queued.id);
   if (!claimed) return { revised: false };
@@ -48,12 +60,14 @@ export async function runCaptionRevision(prisma: PrismaClient, orgId: string): P
     }
     if (queued.mode === "regenerate") {
       // Reuses what the last AI check saw; a never-checked draft has its photos read once now.
-      const evidence = (await latestCheckedEvidence(prisma, orgId, queued.draftId)) ?? (await freshEvidence(prisma, orgId, queued.draftId));
+      // Pick posts always reads them fresh, so packs checked under older rules get the current ones.
+      const evidence = queued.apply ? await freshEvidence(prisma, orgId, queued.draftId) : (await latestCheckedEvidence(prisma, orgId, queued.draftId)) ?? (await freshEvidence(prisma, orgId, queued.draftId));
       if (!evidence) throw new Error("NO_CHECK");
-      const writer = (await installedLocalModels()).writer;
-      const result = await regenerateUnlocked({ voice: await voiceContext(prisma, orgId), request: localReviewRequest, model: writer, evidence, locked: queued.locked, note: regenerateNote(queued.instruction), options: { num_ctx: 8192, num_predict: 2200, ...localAiSettings().options } });
+      const models = await installedLocalModels();
+      const result = await regenerateUnlocked({ voice: await voiceContext(prisma, orgId), request: localReviewRequest, model: models.writer, evidence, locked: queued.locked, note: queued.apply ? "" : regenerateNote(queued.instruction), options: { num_ctx: 8192, num_predict: 2200, ...localAiSettings().options } });
       await saveRegenerateProposal(prisma, queued.id, result.proposal, result.remaining);
       await appendRevisionTurn(prisma, orgId, queued.draftId, queued.instruction, "ready");
+      if (queued.apply) await checkPickVersion(prisma, orgId, queued, result.proposal, models);
       return { revised: true };
     }
     const current = { social: context.draft.social, googleBusiness: context.draft.googleBusiness };
