@@ -262,3 +262,13 @@ test("blocked chat handoff shows the reason and does not offer an import", () =>
   assert.equal(openHtml.includes("held from posting"), false);
   assert.equal(openHtml.includes(reason), false);
 });
+
+test("an edited photo is matched by its id or photo number, and an unnamed one waits for the owner", () => {
+  const React = require("react");
+  const ui = load("src/components/marketing-chat-handoff.tsx", { react: React, "react/jsx-runtime": require("react/jsx-runtime"), "@/lib/marketing-handoff": handoff });
+  const second = "20000000-0000-4000-8000-000000000002";
+  const photos = [{ id: photoId, fileName: "a.jpg", url: "", description: "" }, { id: second, fileName: "b.jpg", url: "", description: "" }];
+  assert.equal(JSON.stringify(ui.guessOriginal(`edited-photo-2-${second}.jpg`, photos, new Set())), JSON.stringify({ id: second, sure: true }));
+  assert.equal(JSON.stringify(ui.guessOriginal("edited-photo-2.jpg", photos, new Set())), JSON.stringify({ id: second, sure: true }));
+  assert.equal(JSON.stringify(ui.guessOriginal("kitchen-clean.jpg", photos, new Set([photoId]))), JSON.stringify({ id: second, sure: false }));
+});

@@ -5,7 +5,8 @@ import { IMPORT_ZIP_NAME, bundlePhotoName, chatBundlePrompt, handoffPublishabili
 import type { MarketingDraft } from "@/lib/marketing";
 
 type HandoffPhoto = { id: string; fileName: string; url: string; description: string };
-type EditedChoice = { file: File; preview: string; replaces: string; status: string };
+// confirmed: the owner (or a file name that names the photo) says which photo it replaces.
+type EditedChoice = { file: File; preview: string; replaces: string; status: string; confirmed: boolean };
 
 const START_HERE = `How to use this bundle
 
@@ -18,14 +19,17 @@ const START_HERE = `How to use this bundle
    If the chat only replied with text, paste the whole reply instead.
 5. Check the photos and text, then press Save and check with AI. Importing never approves or posts anything.`;
 
-/** Uses the photo id or the photo number in the file name, then falls back to the next unused photo. */
-function guessOriginal(fileName: string, photos: HandoffPhoto[], taken: Set<string>) {
+/**
+ * The photo an edited file replaces, from the photo id or photo number in its name. When the name
+ * says neither, the next unused photo is only a suggestion (sure: false) for the owner to confirm.
+ */
+export function guessOriginal(fileName: string, photos: HandoffPhoto[], taken: Set<string>) {
   const byId = photos.find((photo) => fileName.toLowerCase().includes(photo.id.toLowerCase()));
-  if (byId) return byId.id;
+  if (byId) return { id: byId.id, sure: true };
   const numbered = /photo-(\d+)/i.exec(fileName) ?? /^(?:edited-)?(\d+)[-_. ]/i.exec(fileName);
   const index = numbered ? Number(numbered[1]) - 1 : -1;
-  if (photos[index]) return photos[index].id;
-  return photos.find((photo) => !taken.has(photo.id))?.id ?? photos[0]?.id ?? "";
+  if (photos[index]) return { id: photos[index].id, sure: true };
+  return { id: photos.find((photo) => !taken.has(photo.id))?.id ?? photos[0]?.id ?? "", sure: false };
 }
 
 /** Shrinks to at most 2400px and re-saves as JPG in the browser, which also drops photo metadata. */
@@ -99,12 +103,12 @@ export function MarketingChatHandoff({ draftId, inputHash, draft, originalNotes,
     }
   }
 
-  /** Uploads edited photos; each replaces the original it was made from. Returns how many were added. */
+  /** Uploads the confirmed edited photos; each replaces the original it was made from. Returns how many were added. */
   async function uploadEdited(items: EditedChoice[], update: (items: EditedChoice[]) => void) {
     let added = 0;
     const next = [...items];
     for (const [index, item] of next.entries()) {
-      if (item.status === "Added") continue;
+      if (item.status === "Added" || !item.confirmed) continue;
       try {
         const form = new FormData();
         form.set("draftId", draftId); form.set("inputHash", inputHash); form.set("originalPhotoId", item.replaces);
@@ -147,15 +151,19 @@ export function MarketingChatHandoff({ draftId, inputHash, draft, originalNotes,
       for (const entry of editedImages.slice(0, 24)) {
         const name = baseName(entry.name);
         const blob = new File([await entry.async("blob")], name, { type: imageType(name) });
-        const replaces = guessOriginal(name, photos, taken);
-        taken.add(replaces);
-        choices.push({ file: blob, preview: URL.createObjectURL(blob), replaces, status: "" });
+        const guess = guessOriginal(name, photos, taken);
+        taken.add(guess.id);
+        // A name that does not say which photo it is waits for the owner instead of taking a guessed slot.
+        choices.push({ file: blob, preview: URL.createObjectURL(blob), replaces: guess.id, confirmed: guess.sure, status: guess.sure ? "" : "Choose the photo it replaces, then press Add these photos." });
       }
       setEdited(choices);
       const added = choices.length ? await uploadEdited(choices, setEdited) : 0;
+      const waiting = choices.filter((choice) => !choice.confirmed).length;
       const skipped = images.length - editedImages.length;
       const parts = [imported ? "the text" : "", added ? `${added} edited photo${added === 1 ? "" : "s"}` : ""].filter(Boolean);
-      setImportMessage({ text: parts.length ? `Imported ${parts.join(" and ")}. Check them above, then press Save and check with AI.${skipped ? ` Skipped ${skipped} photo${skipped === 1 ? "" : "s"} not named "edited".` : ""}` : "Nothing in that ZIP could be imported.", error: !parts.length || choices.length > added });
+      const imports = parts.length ? `Imported ${parts.join(" and ")}. ` : "";
+      const choose = waiting ? `${waiting} edited photo${waiting === 1 ? " needs" : "s need"} you to choose which photo ${waiting === 1 ? "it replaces" : "they replace"} below. ` : "";
+      setImportMessage({ text: imports || choose ? `${imports}${choose}Check everything above, then press Save and check with AI.${skipped ? ` Skipped ${skipped} photo${skipped === 1 ? "" : "s"} not named "edited".` : ""}` : "Nothing in that ZIP could be imported.", error: (!imports && !choose) || choices.length > added + waiting });
     } catch (error) {
       setImportMessage({ text: error instanceof Error ? error.message : "Could not open that file.", error: true });
     } finally { setBusy(false); }
@@ -165,15 +173,16 @@ export function MarketingChatHandoff({ draftId, inputHash, draft, originalNotes,
     edited.forEach((item) => URL.revokeObjectURL(item.preview));
     const taken = new Set<string>();
     setEdited([...(files ?? [])].filter((file) => file.type.startsWith("image/")).slice(0, 24).map((file) => {
-      const replaces = guessOriginal(file.name, photos, taken);
-      taken.add(replaces);
-      return { file, preview: URL.createObjectURL(file), replaces, status: "" };
+      const guess = guessOriginal(file.name, photos, taken);
+      taken.add(guess.id);
+      return { file, preview: URL.createObjectURL(file), replaces: guess.id, status: "", confirmed: false };
     }));
     setPhotoMessage("");
   }
+  /** Add these photos: the owner has checked each "Replaces" choice. */
   async function addEdited() {
     setBusy(true); setPhotoMessage("");
-    const added = await uploadEdited(edited, setEdited);
+    const added = await uploadEdited(edited.map((item) => ({ ...item, confirmed: true })), setEdited);
     setBusy(false);
     setPhotoMessage(added ? `Added ${added} edited photo${added === 1 ? "" : "s"} in place of the originals. The originals stay saved.` : "No photos were added.");
   }
@@ -206,6 +215,8 @@ export function MarketingChatHandoff({ draftId, inputHash, draft, originalNotes,
         {item.status ? <span className={`mt-1 block text-xs ${item.status === "Added" ? "text-teal-700" : "text-red-700"}`}>{item.status}</span> : null}
       </label>
     </li>)}</ul> : null}
+    {edited.some((item) => item.status !== "Added") ? <button type="button" disabled={disabled || busy} onClick={() => void addEdited()} className="mt-2 rounded-xl bg-teal-800 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Add these photos</button> : null}
+    {photoMessage ? <p role="status" className="mt-2 text-sm text-slate-800">{photoMessage}</p> : null}
 
     <details className="mt-4 text-sm">
       <summary className="cursor-pointer font-medium text-slate-700">The chat replied with text, or sent photos separately</summary>
@@ -214,8 +225,7 @@ export function MarketingChatHandoff({ draftId, inputHash, draft, originalNotes,
       <label className="mt-4 block font-medium">Edited photos downloaded one by one
         <input type="file" accept="image/*" multiple disabled={disabled || busy} onChange={(event) => chooseEdited(event.target.files)} className="mt-1 block w-full font-normal" />
       </label>
-      {edited.length && edited.some((item) => item.status !== "Added") ? <button type="button" disabled={disabled || busy} onClick={() => void addEdited()} className="mt-2 rounded-xl bg-teal-800 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Add these photos</button> : null}
-      {photoMessage ? <p role="status" className="mt-2 text-sm text-slate-800">{photoMessage}</p> : null}
+      <p className="mt-1 text-slate-600">They show above with the photo each one replaces. Check it, then press Add these photos.</p>
     </details>
   </div>;
 }
